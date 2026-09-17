@@ -1,26 +1,113 @@
 @import "tailwindcss";
 
+/*
+ * Tallyvis design tokens.
+ *
+ * Centralized here (rather than in packages/ui) because apps/web is
+ * currently the only app consuming them — see docs/decisions for the
+ * reasoning. When apps/app is scaffolded in Phase 4, extract this block into
+ * a shared package/ui stylesheet instead of duplicating it.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-ink: #1b1815;
+  --color-ink-soft: #5b564f;
+  --color-ink-faint: #8a8377;
+
+  --color-paper: #faf7f1;
+  --color-paper-alt: #f1eae0;
+  --color-line: #e6dfd2;
+
+  --color-charcoal-950: #14110e;
+  --color-charcoal-900: #201b16;
+  --color-charcoal-800: #2b241d;
+  --color-charcoal-line: #3a332a;
+
+  --color-accent: #e35c0f;
+  --color-accent-strong: #b8480a;
+  --color-accent-strong-hover: #8f3907;
+  --color-accent-soft: #fbeadb;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-ink: var(--color-ink);
+  --color-ink-soft: var(--color-ink-soft);
+  --color-ink-faint: var(--color-ink-faint);
+
+  --color-paper: var(--color-paper);
+  --color-paper-alt: var(--color-paper-alt);
+  --color-line: var(--color-line);
+
+  --color-charcoal-950: var(--color-charcoal-950);
+  --color-charcoal-900: var(--color-charcoal-900);
+  --color-charcoal-800: var(--color-charcoal-800);
+  --color-charcoal-line: var(--color-charcoal-line);
+
+  --color-accent: var(--color-accent);
+  --color-accent-strong: var(--color-accent-strong);
+  --color-accent-strong-hover: var(--color-accent-strong-hover);
+  --color-accent-soft: var(--color-accent-soft);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Include packages/ui source in Tailwind's class scanner (Tailwind v4 skips
+   node_modules by default; our internal packages are symlinked there). */
+@source "../../../../packages/ui/src";
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes scan {
+  0%,
+  100% {
+    transform: translateY(0%);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(100%);
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+}
+
+/* Scroll-reveal: JS toggles .is-visible; without JS (or reduced motion),
+   content is visible by default via the no-js fallback below. */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 0.6s ease-out,
+    transform 0.6s ease-out;
+}
+
+[data-reveal].is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
 }
