@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Customer } from "@tallyvis/types";
+import type { Customer, CustomerInput } from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
 
 const TEXT_INPUT_CLASS =
@@ -8,16 +8,20 @@ const TEXT_INPUT_CLASS =
 export interface CustomerEditorProps {
   initial: Customer;
   onCancel: () => void;
-  onSave: (updated: Customer) => void;
+  onSave: (updated: CustomerInput) => void;
 }
 
 /**
  * Corrects a quote's customer contact details (a typo'd email, an added
- * phone number). Distinct from `CharacteristicsEditor`: customer info
- * doesn't feed pricing, so saving here never touches the estimate.
+ * phone number) — this edits the shared `Customer` record itself (see
+ * docs/decisions/0011-persistence-auth-and-multi-tenancy.md), so `onSave`
+ * only ever hands back the editable fields (`CustomerInput`), never the
+ * record's `id`/`businessId`. Distinct from `CharacteristicsEditor`:
+ * customer info doesn't feed pricing, so saving here never touches the
+ * estimate.
  */
 export function CustomerEditor({ initial, onCancel, onSave }: CustomerEditorProps) {
-  const [draft, setDraft] = useState<Customer>(initial);
+  const [draft, setDraft] = useState<CustomerInput>(initial);
   const canSave = draft.name.trim().length > 0 && /\S+@\S+\.\S+/.test(draft.email);
 
   return (

@@ -5,7 +5,7 @@
   "description": "Tallyvis — AI visual estimating and quoting platform for physical service businesses.",
   "packageManager": "pnpm@12.4.2",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5.0"
   },
   "scripts": {
     "build": "turbo run build",

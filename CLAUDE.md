@@ -23,32 +23,46 @@ provider, and never have `services/ai` compute a dollar amount.
 
 ```
 apps/web       Marketing website (Next.js) — live in Phase 1
-apps/app       Customer/business app (Next.js) — customer estimator live in Phase 4
-packages/types Shared types — the AI/pricing contract. Depends on nothing.
+apps/app       Customer/business app (Next.js) — customer estimator live in
+               Phase 4; authenticated business dashboard backed by
+               services/api since Phase 9
+packages/types Shared types — the AI/pricing/domain contract. Depends on nothing.
 packages/pricing  Pure pricing logic. Depends only on packages/types.
 packages/config   Vertical config (default rules, vertical registry, demo business).
 packages/ui    Shared React components + theme.css. Depends only on React.
 services/ai    AI provider abstraction (analyzeProperty). Mock implementation
                since Phase 4; real computer-vision backing is a future phase.
-services/api   Backend API. Still not scaffolded — apps/app talks to
-               services/ai and packages/pricing directly from the browser
-               for now (see docs/decisions/0005).
+services/api   Backend: SQLite persistence, authentication, and the
+               multi-tenant authorization boundary. Real since Phase 9 — see
+               docs/decisions/0011-persistence-auth-and-multi-tenancy.md.
+               apps/app imports it directly (in-process, not over HTTP) from
+               Server Components/Actions only, never from client components.
 docs/          Product, architecture, decisions (ADRs), research
 ```
 
 ## Module boundary rules
 
-1. `packages/pricing` must never import from `services/ai`, any app, or any
-   database/HTTP library. It stays pure and unit-testable.
-2. `services/ai` must never import from `packages/pricing` or any app.
+1. `packages/pricing` must never import from `services/ai`, `services/api`,
+   any app, or any database/HTTP library. It stays pure and unit-testable.
+2. `services/ai` must never import from `packages/pricing`, `services/api`,
+   or any app.
 3. Both depend only on `packages/types` for their shared contract.
 4. `apps/web` and `apps/app` stay separate Next.js apps — do not merge them
    into one app with route groups. See `docs/decisions/0002-app-separation.md`.
 5. Vertical-specific behavior (window cleaning today) belongs in
    `packages/config` and `packages/types`' discriminated unions, not as
    hardcoded branches scattered through app code.
-6. `services/api` (once built) owns all database access. Neither
-   `packages/pricing` nor `services/ai` may talk to a database.
+6. `services/api` owns all database access. Neither `packages/pricing` nor
+   `services/ai` may talk to a database. Within `services/api`, only
+   `repositories/*.ts` write SQL, and only `index.ts` should be imported
+   from outside the package — `apps/app` must never reach past it into
+   `repositories/`, `db/`, or `auth/` directly.
+7. Every business-owned table/type (`Business`, `Customer`,
+   `PricingConfiguration`, `Quote`) carries a `businessId`, and every
+   `services/api` service function takes a caller's `AuthSession` (never a
+   bare id) so a business can only ever act as itself. Never trust a
+   client-supplied `businessId`/`userId` — always derive it from a
+   validated session (`apps/app/src/lib/session.ts`'s `requireContext()`).
 
 ## Labeling mocks, stubs, and future work
 
@@ -56,28 +70,37 @@ Anything that is a mock, placeholder, or not-yet-implemented must say so
 explicitly — in code comments, in README stubs, and in conversation with the
 user. Do not present a stub or mock as production-ready. Current examples:
 `services/ai/src/index.ts` (a deterministic heuristic mock, clearly labeled
-as such — not real computer vision), `services/api` (README stub only),
-`packages/config`'s `demoBusiness` (a placeholder business, not a real
-Tallyvis customer).
+as such — not real computer vision), `packages/config`'s `demoBusiness` (used
+only as seed/dev data since Phase 9, never a production data source), and the
+public `/estimate/*` wizard's single-business resolution (a stated Phase 9
+simplification pending real multi-business public routing — see
+`getDefaultPublicBusiness` in `services/api`).
 
 ## Development workflow
 
 - Package manager: **pnpm** via Corepack. Run `corepack enable` once after
-  cloning, then `pnpm install`.
+  cloning, then `pnpm install`. Requires **Node ≥22.5** (for `node:sqlite`).
 - `pnpm build` / `pnpm dev` / `pnpm test` / `pnpm lint` / `pnpm typecheck` —
   all run through Turborepo across every workspace package.
+- First-time setup: `pnpm --filter @tallyvis/api seed` creates a demo
+  business, an owner login, and sample quotes in `services/api`'s local
+  SQLite file — prints the demo login to use signing in to `apps/app`. See
+  `services/api/README.md`.
 - Tests for a single package live next to it
   (`packages/pricing/src/__tests__`), not in the root `tests/` folder.
-  `tests/` is reserved for future cross-package/e2e coverage.
+  `tests/` is reserved for future cross-package/e2e coverage. Note
+  `apps/app` currently has no test suite of its own — its business logic
+  lives in `services/api`, which carries the corresponding coverage
+  (including multi-tenant authorization tests).
 - Secrets never get committed. `.env.example` documents the shape of future
   configuration with comments; real values go in untracked `.env.local`
-  files.
+  files. Phase 9 authentication needs no secret (see the ADR).
 
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 8 (Quote creation & customer workflow) —
-complete.**
+reason. Current phase: **Phase 9 (Real persistence, authentication &
+multi-tenant SaaS foundation) — complete.**
 
 1. Foundation
 2. Marketing website foundation
@@ -99,11 +122,18 @@ complete.**
    editing, pricing-configuration provenance on each quote, and a
    read-only customer-facing quote view at `/quote/[id]`; see
    `docs/decisions/0010-quote-creation-and-customer-view.md`
-9. Real AI / computer vision integration (replaces the Phase 4 mock)
-10. Human review / confidence system
-11. Database / data flywheel
-12. Payments / auth / billing
-13. Integrations and additional verticals
+9. Real persistence, authentication & multi-tenant SaaS foundation —
+   `services/api` becomes a real SQLite-backed service with real
+   signup/login/logout, and every business-owned record
+   (`Business`/`Customer`/`PricingConfiguration`/`Quote`) is tenant-isolated
+   and server-authorized; the `localStorage` mock store is retired. See
+   `docs/decisions/0011-persistence-auth-and-multi-tenancy.md`
+10. Real AI / computer vision integration (replaces the Phase 4 mock)
+11. Human review / confidence system
+12. Data flywheel — using the real usage data Phase 9's persistence now
+    captures to improve AI/pricing defaults over time
+13. Billing (Phase 9 already shipped real authentication)
+14. Integrations and additional verticals
 
 ## Product ownership
 

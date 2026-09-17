@@ -133,11 +133,31 @@ export interface Estimate {
  * Added in Phase 5 to connect the customer estimator (apps/app's /estimate/*)
  * to the business dashboard (apps/app's /dashboard/*) — see
  * docs/decisions/0008-quote-domain-model.md. These are pure type contracts;
- * the mock persistence implementing them lives in apps/app (app-local, since
- * it's the only current consumer) and will move to services/api once a real
- * backend exists.
+ * the real, persisted implementation lives in services/api (SQLite-backed
+ * since Phase 9 — see docs/decisions/0011-persistence-auth-and-multi-tenancy.md),
+ * not in apps/app, which only ever reaches it through services/api's
+ * session-scoped service layer.
  * ============================================================================
  */
+
+/**
+ * A real, persisted Tallyvis tenant (added in Phase 9 — see
+ * docs/decisions/0011-persistence-auth-and-multi-tenancy.md). Every
+ * business-owned record (`Customer`, `Quote`, `PricingConfiguration`)
+ * carries this id as its `businessId`, and every data-access function in
+ * `services/api` scopes its query by it. Supersedes `packages/config`'s
+ * `DemoBusiness`, which remains only as seed data for local development,
+ * never as a production data source.
+ */
+export interface Business {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  serviceArea: string;
+  defaultIndustry: "window-cleaning";
+  createdAt: string;
+}
 
 export type PropertyType = "single-family" | "townhouse" | "other";
 
@@ -157,10 +177,34 @@ export interface ServicePreferences {
   hardWaterTreatment: TriState;
 }
 
-export interface Customer {
+/**
+ * What's collected before a `Customer` record exists — no `id` yet, since
+ * the caller doesn't get to decide it (see `Customer`). Used wherever a UI
+ * gathers a customer's details as part of creating something else (a
+ * quote), not managing the customer record directly.
+ */
+export interface CustomerInput {
   name: string;
   email: string;
   phone?: string;
+}
+
+/**
+ * A business-owned customer record (added in Phase 9 — see
+ * docs/decisions/0011-persistence-auth-and-multi-tenancy.md). Normalized
+ * into its own table rather than only ever embedded on a `Quote`, so one
+ * customer can have more than one quote and a business can be queried for
+ * "this customer's quotes." `businessId` is the multi-tenant boundary:
+ * never trust one supplied by a client, only the one derived from the
+ * authenticated session.
+ */
+export interface Customer extends CustomerInput {
+  id: string;
+  businessId: string;
+  /** A default service/job address for this customer — distinct from a specific quote's `Property.address`, which may differ per job. */
+  address?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Property {
@@ -198,14 +242,19 @@ export function canTransitionQuoteStatus(from: QuoteStatus, to: QuoteStatus): bo
 }
 
 /**
- * A single request-for-estimate flowing through the system. Customer and
- * property are embedded rather than referenced by id — this is a mock,
- * single-business, no-database prototype (see docs/decisions/0008); a real
- * backend would normalize these into their own tables.
+ * A single request-for-estimate flowing through the system. `customerId`
+ * is the real foreign key a repository must use for multi-tenant scoping
+ * and ownership checks; `customer` is that same customer's current record,
+ * hydrated alongside it for convenience so every existing consumer that
+ * reads `quote.customer.name` keeps working unchanged (see
+ * docs/decisions/0011-persistence-auth-and-multi-tenancy.md). `property` is
+ * still embedded rather than normalized — it's job-specific, not a record
+ * with an identity or lifecycle of its own the way a customer has.
  */
 export interface Quote {
   id: string;
   businessId: string;
+  customerId: string;
   customer: Customer;
   property: Property;
   servicePreferences: ServicePreferences;

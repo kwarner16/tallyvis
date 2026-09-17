@@ -3,14 +3,15 @@ import type { ServicePreferences, WindowCleaningCharacteristics } from "@tallyvi
 /**
  * Reconciles what the AI observed with what the customer actually asked
  * for, producing the characteristics the pricing engine should charge
- * against. Shared by the estimator (fresh submissions) and the dashboard
- * (recalculating after a business owner edits the analysis) — there is
- * exactly one reconciliation rule set. See
- * docs/decisions/0006-estimator-data-pipeline.md.
+ * against. Originally an apps/app-local helper (see
+ * docs/decisions/0006-estimator-data-pipeline.md); moved here in Phase 9
+ * because `services/api`'s server-side quote pricing needs the exact same
+ * reconciliation the browser's live estimate preview uses — one rule set,
+ * usable from both sides of that boundary, not two copies of it.
  *
  * Example: the analyzer might detect 12 screens present, but if the
  * customer didn't request screen cleaning, pricing shouldn't charge for it
- * — so screens is zeroed out here rather than in packages/pricing.
+ * — so screens is zeroed out here rather than in `calculateWindowCleaningEstimate`.
  */
 export function reconcilePricingInput(
   servicePreferences: ServicePreferences,

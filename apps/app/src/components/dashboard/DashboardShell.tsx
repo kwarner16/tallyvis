@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { cn } from "@tallyvis/ui";
-import { demoBusiness } from "@tallyvis/config";
+import { cn, buttonVariants } from "@tallyvis/ui";
+import { logOutAction } from "@/lib/authActions";
 
 const NAV_LINKS = [
   { label: "Dashboard", href: "/dashboard" },
@@ -41,7 +41,13 @@ function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
   );
 }
 
-export function DashboardShell({ children }: { children: ReactNode }) {
+export function DashboardShell({
+  children,
+  businessName,
+}: {
+  children: ReactNode;
+  businessName: string;
+}) {
   const pathname = usePathname() ?? "/dashboard";
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -59,9 +65,19 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         <nav aria-label="Dashboard" className="flex flex-col gap-1">
           <NavLinks pathname={pathname} />
         </nav>
-        <div className="mt-auto rounded-lg border border-line bg-paper-alt px-3 py-2.5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Business</p>
-          <p className="mt-1 text-sm font-medium text-ink">{demoBusiness.name}</p>
+        <div className="mt-auto flex flex-col gap-3">
+          <div className="rounded-lg border border-line bg-paper-alt px-3 py-2.5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Business</p>
+            <p className="mt-1 text-sm font-medium text-ink">{businessName}</p>
+          </div>
+          <form action={logOutAction}>
+            <button
+              type="submit"
+              className={buttonVariants({ variant: "outline", className: "w-full" })}
+            >
+              Log out
+            </button>
+          </form>
         </div>
       </aside>
 
@@ -105,6 +121,14 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           className="flex flex-col gap-1 border-b border-line bg-paper px-4 py-3 lg:hidden"
         >
           <NavLinks pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+          <form action={logOutAction} className="mt-1">
+            <button
+              type="submit"
+              className={buttonVariants({ variant: "outline", className: "w-full" })}
+            >
+              Log out
+            </button>
+          </form>
         </nav>
       ) : null}
 

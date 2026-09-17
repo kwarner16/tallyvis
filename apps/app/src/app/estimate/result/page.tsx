@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import type { Business, Estimate } from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
-import { calculateEstimate } from "@tallyvis/pricing";
-import { demoBusiness } from "@tallyvis/config";
+import { reconcilePricingInput, calculateEstimate } from "@tallyvis/pricing";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
-import { reconcilePricingInput } from "@/lib/pricingReconciliation";
 import { getEstimateDisplay } from "@/lib/estimateDisplay";
-import { createQuote, getPricingConfiguration } from "@/lib/quotes/store";
+import {
+  createPublicQuoteAction,
+  getPublicActiveConfigurationAction,
+  getPublicBusinessAction,
+} from "@/lib/publicActions";
 import { CONTACT_URL } from "@/lib/urls";
 
 export default function ResultStepPage() {
@@ -17,6 +20,8 @@ export default function ResultStepPage() {
   const router = useRouter();
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [requested, setRequested] = useState(false);
+  const [business, setBusiness] = useState<Business | null>(null);
+  const [estimate, setEstimate] = useState<Estimate | null>(null);
   const hasCreatedQuote = useRef(false);
 
   useEffect(() => {
@@ -25,11 +30,22 @@ export default function ResultStepPage() {
     }
   }, [analysis, router]);
 
-  const estimate = useMemo(() => {
-    if (!analysis) return null;
-    const pricingInput = reconcilePricingInput(input.services, analysis.characteristics);
-    return calculateEstimate(pricingInput, getPricingConfiguration(), analysis.metadata.confidence);
-  }, [analysis, input.services]);
+  useEffect(() => {
+    if (!analysis) return;
+    let cancelled = false;
+    Promise.all([getPublicBusinessAction(), getPublicActiveConfigurationAction()]).then(
+      ([loadedBusiness, configuration]) => {
+        if (cancelled) return;
+        setBusiness(loadedBusiness);
+        const pricingInput = reconcilePricingInput(input.services, analysis.characteristics);
+        setEstimate(calculateEstimate(pricingInput, configuration, analysis.metadata.confidence));
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysis]);
 
   // Every completed analysis becomes a quote the business can see, whether
   // or not the customer goes on to click "Request this service" — see
@@ -37,7 +53,7 @@ export default function ResultStepPage() {
   useEffect(() => {
     if (!analysis || quoteId || hasCreatedQuote.current) return;
     hasCreatedQuote.current = true;
-    const quote = createQuote({
+    createPublicQuoteAction({
       customer: {
         name: input.contact.name,
         email: input.contact.email,
@@ -52,12 +68,11 @@ export default function ResultStepPage() {
       notes: input.notes,
       photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
       analysis,
-    });
-    setQuoteId(quote.id);
+    }).then((quote) => setQuoteId(quote.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis]);
 
-  if (!analysis || !estimate) return null;
+  if (!analysis || !estimate || !business) return null;
 
   const display = getEstimateDisplay(estimate);
   const { characteristics, metadata } = analysis;
@@ -75,12 +90,12 @@ export default function ResultStepPage() {
         <div className="flex flex-col gap-2">
           <h1 className="text-2xl font-semibold text-ink">Your request has been received.</h1>
           <p className="max-w-sm text-sm text-ink-soft">
-            Someone from {demoBusiness.name} can follow up with you about next steps.
+            Someone from {business.name} can follow up with you about next steps.
           </p>
         </div>
         <p className="max-w-sm text-xs text-ink-faint">
-          This is a prototype confirmation — no email or text message was actually sent, and{" "}
-          {demoBusiness.name} is a demo business, not a real Tallyvis customer.
+          This is a prototype confirmation — no email or text message delivery exists yet, so
+          nothing was actually sent.
         </p>
         <button
           type="button"
@@ -100,7 +115,7 @@ export default function ResultStepPage() {
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
         <p className="text-xs font-semibold uppercase tracking-[0.15em] text-accent-strong">
-          {demoBusiness.name}
+          {business.name}
         </p>
         <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
           Your estimate

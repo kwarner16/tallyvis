@@ -7,11 +7,11 @@
     "build": "next build",
     "start": "next start -p 3001",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tallyvis/ai": "workspace:*",
+    "@tallyvis/api": "workspace:*",
     "@tallyvis/config": "workspace:*",
     "@tallyvis/pricing": "workspace:*",
     "@tallyvis/types": "workspace:*",
@@ -22,13 +22,12 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24.0.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",
-    "typescript": "^5",
-    "vitest": "^2.1.4"
+    "typescript": "^5"
   }
 }

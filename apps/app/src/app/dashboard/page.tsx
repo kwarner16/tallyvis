@@ -1,10 +1,8 @@
-"use client";
-
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { Quote } from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
-import { listQuotes } from "@/lib/quotes/store";
+import { listQuotes } from "@tallyvis/api";
+import { requireContext } from "@/lib/session";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { QuoteList } from "@/components/dashboard/QuoteList";
 import { EmptyState } from "@/components/dashboard/EmptyState";
@@ -17,14 +15,9 @@ const ACTIVE_STATUSES: Quote["status"][] = [
   "sent",
 ];
 
-export default function DashboardHomePage() {
-  const [quotes, setQuotes] = useState<Quote[] | null>(null);
-
-  useEffect(() => {
-    queueMicrotask(() => setQuotes(listQuotes()));
-  }, []);
-
-  if (quotes === null) return null;
+export default async function DashboardHomePage() {
+  const { db, session } = await requireContext();
+  const quotes = listQuotes(db, session);
 
   const newCount = quotes.filter((q) => q.status === "new").length;
   const needsReviewCount = quotes.filter((q) => q.status === "needs_review").length;
@@ -60,9 +53,6 @@ export default function DashboardHomePage() {
           value={`$${pipelineTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
         />
       </div>
-      <p className="-mt-6 text-xs text-ink-faint">
-        Demo data for this prototype — not real Tallyvis customer metrics.
-      </p>
 
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">

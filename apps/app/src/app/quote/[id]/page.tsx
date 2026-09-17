@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import type { Quote } from "@tallyvis/types";
-import { demoBusiness } from "@tallyvis/config";
-import { getQuote } from "@/lib/quotes/store";
+import type { Business, Quote } from "@tallyvis/types";
+import { getPublicQuoteAction } from "@/lib/publicActions";
 import { getEstimateDisplay } from "@/lib/estimateDisplay";
 import { QUOTE_STATUS_LABELS } from "@/lib/quoteStatusCopy";
 import { EmptyState } from "@/components/dashboard/EmptyState";
@@ -23,23 +22,25 @@ const PROPERTY_TYPE_LABELS: Record<string, string> = {
  * visitor is actually this quote's customer. That's an acceptable
  * placeholder for a single-business prototype with no accounts yet, but
  * real access control (a signed link, or customer auth) belongs to a
- * later phase alongside real persistence — see
- * docs/decisions/0010-quote-creation-and-customer-view.md. Nothing here
- * lets a visitor change the quote; only the dashboard can do that.
+ * later phase — see docs/decisions/0010-quote-creation-and-customer-view.md
+ * and docs/decisions/0011-persistence-auth-and-multi-tenancy.md. Nothing
+ * here lets a visitor change the quote; only the dashboard can do that.
  */
 export default function CustomerQuotePage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0]! : params.id;
 
-  const [quote, setQuote] = useState<Quote | null | undefined>(undefined);
+  const [data, setData] = useState<{ quote: Quote; business: Business } | null | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
-    queueMicrotask(() => setQuote(getQuote(id) ?? null));
+    getPublicQuoteAction(id).then(setData);
   }, [id]);
 
-  if (quote === undefined) return null;
+  if (data === undefined) return null;
 
-  if (quote === null) {
+  if (data === null) {
     return (
       <EmptyState
         heading="We couldn't find this estimate."
@@ -48,6 +49,7 @@ export default function CustomerQuotePage() {
     );
   }
 
+  const { quote, business } = data;
   const display = getEstimateDisplay(quote.estimate);
   const selectedServices = [
     quote.servicePreferences.interiorCleaning && "Interior window cleaning",
@@ -59,7 +61,7 @@ export default function CustomerQuotePage() {
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
         <p className="text-xs font-semibold uppercase tracking-[0.15em] text-accent-strong">
-          {demoBusiness.name}
+          {business.name}
         </p>
         <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
           Estimate for {quote.customer.name || "you"}
@@ -107,8 +109,8 @@ export default function CustomerQuotePage() {
       ) : null}
 
       <p className="text-xs text-ink-faint">
-        This is a prototype quote view — {demoBusiness.name} is a demo business, not a real Tallyvis
-        customer, and no email or text message brought you here.
+        This is a prototype quote view — no email or text message brought you here, and there is no
+        sign-in required to view it (see the note above about why that&rsquo;s a known limitation).
       </p>
     </div>
   );
