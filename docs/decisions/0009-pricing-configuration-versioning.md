@@ -97,3 +97,12 @@ path.
   database-specific code from this — `calculateEstimate()` is as pure as
   `calculateWindowCleaningEstimate()` was, just with an extra validation step
   and a vertical dispatch in front of it.
+- (Phase 7) The dashboard's save flow now actually validates before
+  persisting, closing the gap this document originally called out as a
+  known limitation: `dashboard/pricing/page.tsx` runs `validatePricingRules`
+  live against the rate card being edited to disable "Save" and show every
+  problem at once, and `apps/app`'s `savePricingRules` runs the same
+  authoritative check again as a defensive backstop before pushing a new
+  version — so `calculateEstimate()`'s "should only happen if a
+  configuration was corrupted or constructed by hand outside the normal
+  save path" is now true in practice, not just in a comment.

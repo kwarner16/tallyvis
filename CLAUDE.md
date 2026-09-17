@@ -76,18 +76,24 @@ Tallyvis customer).
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 6 (Pricing engine / pricing configuration
-versioning) — complete.**
+reason. Current phase: **Phase 7 (Business pricing configuration + estimator
+integration) — complete.**
 
 1. Foundation
 2. Marketing website foundation
 3. Interactive "See What Tallyvis Sees" demo
 4. Customer estimator workflow — shipped `services/ai`'s mock analyzer here
-   (pulled forward from Phase 7, see `docs/decisions/0005-mock-analyzer-in-phase-4.md`)
-   and `apps/app`'s first real routes
+   (originally slotted for Phase 7, see
+   `docs/decisions/0005-mock-analyzer-in-phase-4.md`; Phase 7's slot was
+   reused below once the mock analyzer moved up)
 5. Business dashboard
-6. Pricing engine (full business-configurable rules)
-7. ~~AI abstraction / mock analyzer~~ — shipped in Phase 4 instead, see above
+6. Pricing engine (full business-configurable rules) — versioned
+   `PricingConfiguration`, `calculateEstimate()` as the canonical entry
+   point, `Quote.pricingConfigId`; see
+   `docs/decisions/0009-pricing-configuration-versioning.md`
+7. Business pricing configuration + estimator integration — the dashboard
+   pricing UI validates and versions a business's live configuration, and
+   the customer estimator prices every job against it
 8. Real AI / computer vision integration (replaces the Phase 4 mock)
 9. Human review / confidence system
 10. Database / data flywheel

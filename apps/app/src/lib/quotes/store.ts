@@ -10,7 +10,7 @@ import type {
   WindowCleaningPricingRules,
 } from "@tallyvis/types";
 import { canTransitionQuoteStatus } from "@tallyvis/types";
-import { calculateEstimate } from "@tallyvis/pricing";
+import { calculateEstimate, validatePricingRules } from "@tallyvis/pricing";
 import { demoBusiness, demoPricingConfiguration } from "@tallyvis/config";
 import { reconcilePricingInput } from "../pricingReconciliation";
 import { seedQuotes } from "./seedQuotes";
@@ -125,18 +125,31 @@ export function getPricingRules(): WindowCleaningPricingRules {
  * docs/decisions/0009-pricing-configuration-versioning.md. Quotes already
  * priced under an earlier version keep their `pricingConfigId`, so this
  * never retroactively changes a quote that already exists.
+ *
+ * Validates through the pricing package's authoritative
+ * `validatePricingRules` before persisting — the dashboard form should
+ * already prevent an invalid rate card from reaching this call (see
+ * `dashboard/pricing/page.tsx`), so a thrown error here should only happen
+ * if this is called with hand-constructed or corrupted data.
  */
-export function savePricingRules(rules: WindowCleaningPricingRules): void {
+export function savePricingRules(rules: WindowCleaningPricingRules): PricingConfiguration {
+  const validation = validatePricingRules(rules);
+  if (!validation.valid) {
+    throw new Error(`Cannot save invalid pricing rules: ${validation.errors.join(" ")}`);
+  }
+
   const data = loadData();
   const current = activePricingConfiguration(data);
-  data.pricingConfigurations.push({
+  const next: PricingConfiguration = {
     ...current,
     id: makeId("pricing-config"),
     version: current.version + 1,
     effectiveAt: nowIso(),
     rules,
-  });
+  };
+  data.pricingConfigurations.push(next);
   saveData(data);
+  return next;
 }
 
 // ----------------------------------------------------------------- quotes --

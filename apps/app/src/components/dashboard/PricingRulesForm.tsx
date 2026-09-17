@@ -18,9 +18,11 @@ export interface PricingRulesFormProps {
   onChange: (rules: WindowCleaningPricingRules) => void;
   onSave: () => void;
   dirty: boolean;
+  /** Validation errors from `@tallyvis/pricing`'s `validatePricingRules` — empty when the current rules are valid. */
+  errors: string[];
 }
 
-export function PricingRulesForm({ rules, onChange, onSave, dirty }: PricingRulesFormProps) {
+export function PricingRulesForm({ rules, onChange, onSave, dirty, errors }: PricingRulesFormProps) {
   function setPrice(key: keyof WindowCleaningPricingRules, value: number) {
     onChange({ ...rules, [key]: Math.max(0, value) });
   }
@@ -74,16 +76,29 @@ export function PricingRulesForm({ rules, onChange, onSave, dirty }: PricingRule
         </div>
       </div>
 
+      {errors.length > 0 ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p className="font-medium">Fix the following before saving:</p>
+          <ul className="mt-1.5 list-disc pl-4">
+            {errors.map((error) => (
+              <li key={error}>{error}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       <div className="flex items-center gap-3 border-t border-line pt-4">
         <button
           type="button"
           onClick={onSave}
-          disabled={!dirty}
+          disabled={!dirty || errors.length > 0}
           className={buttonVariants({ variant: "primary" })}
         >
           Save pricing rules
         </button>
-        {dirty ? <span className="text-xs text-ink-faint">Unsaved changes</span> : null}
+        {dirty && errors.length === 0 ? (
+          <span className="text-xs text-ink-faint">Unsaved changes</span>
+        ) : null}
       </div>
     </div>
   );

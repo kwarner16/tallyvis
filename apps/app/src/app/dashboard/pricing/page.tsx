@@ -2,14 +2,24 @@
 
 import { useEffect, useState } from "react";
 import type { PricingConfiguration, WindowCleaningPricingRules } from "@tallyvis/types";
+import { validatePricingRules } from "@tallyvis/pricing";
 import { getPricingConfiguration, savePricingRules } from "@/lib/quotes/store";
 import { PricingRulesForm } from "@/components/dashboard/PricingRulesForm";
 import { PricingPreviewTool } from "@/components/dashboard/PricingPreviewTool";
 
+function formatEffectiveDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export default function PricingPage() {
   const [configuration, setConfiguration] = useState<PricingConfiguration | null>(null);
   const [savedRules, setSavedRules] = useState<WindowCleaningPricingRules | null>(null);
-  const [justSaved, setJustSaved] = useState(false);
+  const [justSavedVersion, setJustSavedVersion] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -23,17 +33,26 @@ export default function PricingPage() {
 
   const rules = configuration.rules;
   const dirty = JSON.stringify(rules) !== JSON.stringify(savedRules);
+  const validation = validatePricingRules(rules);
 
   function setRules(nextRules: WindowCleaningPricingRules) {
     setConfiguration((current) => (current ? { ...current, rules: nextRules } : current));
+    setJustSavedVersion(null);
+    setSaveError(null);
   }
 
   function handleSave() {
-    savePricingRules(rules);
-    setSavedRules(rules);
-    setConfiguration(getPricingConfiguration());
-    setJustSaved(true);
-    setTimeout(() => setJustSaved(false), 2500);
+    if (!validation.valid) return;
+    try {
+      const saved = savePricingRules(rules);
+      setSavedRules(saved.rules);
+      setConfiguration(saved);
+      setJustSavedVersion(saved.version);
+      setSaveError(null);
+      setTimeout(() => setJustSavedVersion(null), 2500);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Could not save pricing rules.");
+    }
   }
 
   return (
@@ -54,14 +73,45 @@ export default function PricingPage() {
         on its own.
       </div>
 
-      {justSaved ? (
+      <div className="flex items-center justify-between rounded-2xl border border-line bg-paper px-5 py-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
+            Current configuration
+          </p>
+          <p className="mt-1 text-sm font-medium text-ink">
+            Version {configuration.version}
+            <span className="font-normal text-ink-faint">
+              {" "}
+              &middot; active since {formatEffectiveDate(configuration.effectiveAt)}
+            </span>
+          </p>
+        </div>
+        <span className="rounded-full bg-accent-soft px-3 py-1 text-xs font-medium text-accent-strong">
+          Active
+        </span>
+      </div>
+
+      {justSavedVersion !== null ? (
         <p className="rounded-lg border border-accent bg-accent-soft px-4 py-2.5 text-sm text-accent-strong">
-          Pricing rules saved. New estimates — including the customer estimator — will use these
-          values.
+          Saved as version {justSavedVersion}. New estimates — including the customer estimator —
+          use this configuration; quotes already created keep the pricing they were calculated
+          with.
         </p>
       ) : null}
 
-      <PricingRulesForm rules={rules} onChange={setRules} onSave={handleSave} dirty={dirty} />
+      {saveError ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+          {saveError}
+        </p>
+      ) : null}
+
+      <PricingRulesForm
+        rules={rules}
+        onChange={setRules}
+        onSave={handleSave}
+        dirty={dirty}
+        errors={validation.errors}
+      />
 
       <PricingPreviewTool configuration={configuration} />
     </div>
