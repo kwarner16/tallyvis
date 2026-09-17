@@ -115,6 +115,11 @@ export function getPricingConfiguration(): PricingConfiguration {
   return activePricingConfiguration(loadData());
 }
 
+/** Looks up a specific (possibly historical) pricing configuration version by id — e.g. to show a quote's "priced under version N" provenance. */
+export function getPricingConfigurationById(id: string): PricingConfiguration | undefined {
+  return loadData().pricingConfigurations.find((c) => c.id === id);
+}
+
 export function getPricingRules(): WindowCleaningPricingRules {
   return getPricingConfiguration().rules;
 }
@@ -249,6 +254,19 @@ export function recalculateQuoteEstimate(id: string): Quote {
   const configuration = activePricingConfiguration(data);
   repriceQuote(quote, configuration);
   quote.pricingConfigId = configuration.id;
+  quote.updatedAt = nowIso();
+
+  saveData(data);
+  return quote;
+}
+
+/** Updates a quote's customer contact details. Customer info doesn't feed pricing, so this never re-prices the quote. */
+export function updateQuoteCustomer(id: string, customer: Customer): Quote {
+  const data = loadData();
+  const quote = data.quotes.find((q) => q.id === id);
+  if (!quote) throw new Error(`Quote "${id}" not found.`);
+
+  quote.customer = customer;
   quote.updatedAt = nowIso();
 
   saveData(data);

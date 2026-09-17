@@ -3,21 +3,34 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import type { Quote, QuoteStatus, WindowCleaningCharacteristics } from "@tallyvis/types";
+import type {
+  Customer,
+  PricingConfiguration,
+  Quote,
+  QuoteStatus,
+  WindowCleaningCharacteristics,
+} from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
 import {
+  getPricingConfigurationById,
   getQuote,
   recalculateQuoteEstimate,
   updateQuoteAnalysis,
+  updateQuoteCustomer,
   updateQuoteStatus,
 } from "@/lib/quotes/store";
 import { getEstimateDisplay } from "@/lib/estimateDisplay";
 import { ConfidenceBadge } from "@/components/dashboard/ConfidenceBadge";
 import { QuoteStatusBadge } from "@/components/dashboard/QuoteStatusBadge";
 import { CharacteristicsEditor } from "@/components/dashboard/CharacteristicsEditor";
+import { CustomerEditor } from "@/components/dashboard/CustomerEditor";
 import { QuoteVisual } from "@/components/dashboard/QuoteVisual";
 import { QuoteActions } from "@/components/dashboard/QuoteActions";
 import { EmptyState } from "@/components/dashboard/EmptyState";
+
+function quoteNumber(id: string): string {
+  return id.split("-").pop()?.toUpperCase() ?? id;
+}
 
 const PROPERTY_TYPE_LABELS: Record<string, string> = {
   "single-family": "Single-family home",
@@ -31,12 +44,23 @@ export default function QuoteDetailPage() {
 
   const [quote, setQuote] = useState<Quote | null | undefined>(undefined);
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingCustomer, setIsEditingCustomer] = useState(false);
+  const [pricingConfiguration, setPricingConfiguration] = useState<PricingConfiguration | undefined>(
+    undefined,
+  );
   const [previousTotal, setPreviousTotal] = useState<number | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   useEffect(() => {
     queueMicrotask(() => setQuote(getQuote(id) ?? null));
   }, [id]);
+
+  useEffect(() => {
+    if (!quote) return;
+    queueMicrotask(() =>
+      setPricingConfiguration(getPricingConfigurationById(quote.pricingConfigId)),
+    );
+  }, [quote]);
 
   function refresh() {
     setQuote(getQuote(id) ?? null);
@@ -48,6 +72,13 @@ export default function QuoteDetailPage() {
     updateQuoteAnalysis(quote.id, updated);
     setIsEditing(false);
     setActionMessage(null);
+    refresh();
+  }
+
+  function handleSaveCustomer(updated: Customer) {
+    if (!quote) return;
+    updateQuoteCustomer(quote.id, updated);
+    setIsEditingCustomer(false);
     refresh();
   }
 
@@ -93,10 +124,23 @@ export default function QuoteDetailPage() {
           &larr; All quotes
         </Link>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
-            {quote.customer.name || "Unnamed customer"}
-          </h1>
-          <QuoteStatusBadge status={quote.status} />
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+              {quote.customer.name || "Unnamed customer"}
+            </h1>
+            <p className="text-xs text-ink-faint">Quote #{quoteNumber(quote.id)}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Link
+              href={`/quote/${quote.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm font-medium text-accent-strong hover:text-accent"
+            >
+              View as customer &#8599;
+            </Link>
+            <QuoteStatusBadge status={quote.status} />
+          </div>
         </div>
       </div>
 
@@ -108,9 +152,18 @@ export default function QuoteDetailPage() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="rounded-2xl border border-line bg-paper p-5">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-            Customer
-          </p>
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Customer</p>
+            {!isEditingCustomer ? (
+              <button
+                type="button"
+                onClick={() => setIsEditingCustomer(true)}
+                className="text-xs font-medium text-accent-strong hover:text-accent"
+              >
+                Edit
+              </button>
+            ) : null}
+          </div>
           <p className="text-sm font-medium text-ink">{quote.customer.name || "—"}</p>
           <p className="text-sm text-ink-soft">{quote.customer.email || "No email on file"}</p>
           {quote.customer.phone ? (
@@ -140,6 +193,14 @@ export default function QuoteDetailPage() {
           </p>
         </div>
       </div>
+
+      {isEditingCustomer ? (
+        <CustomerEditor
+          initial={quote.customer}
+          onCancel={() => setIsEditingCustomer(false)}
+          onSave={handleSaveCustomer}
+        />
+      ) : null}
 
       <div className="flex flex-col gap-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Photos</p>
@@ -241,6 +302,11 @@ export default function QuoteDetailPage() {
                 </li>
               ))}
             </ul>
+            <p className="mt-4 border-t border-line pt-3 text-xs text-ink-faint">
+              {pricingConfiguration
+                ? `Priced under pricing configuration version ${pricingConfiguration.version}.`
+                : "The pricing configuration used for this quote is no longer available."}
+            </p>
           </div>
 
           <div className="rounded-2xl border border-line bg-paper p-5">

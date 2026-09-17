@@ -76,16 +76,16 @@ Tallyvis customer).
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 7 (Business pricing configuration + estimator
-integration) — complete.**
+reason. Current phase: **Phase 8 (Quote creation & customer workflow) —
+complete.**
 
 1. Foundation
 2. Marketing website foundation
 3. Interactive "See What Tallyvis Sees" demo
 4. Customer estimator workflow — shipped `services/ai`'s mock analyzer here
    (originally slotted for Phase 7, see
-   `docs/decisions/0005-mock-analyzer-in-phase-4.md`; Phase 7's slot was
-   reused below once the mock analyzer moved up)
+   `docs/decisions/0005-mock-analyzer-in-phase-4.md`; that slot was reused
+   once the mock analyzer moved up)
 5. Business dashboard
 6. Pricing engine (full business-configurable rules) — versioned
    `PricingConfiguration`, `calculateEstimate()` as the canonical entry
@@ -94,11 +94,16 @@ integration) — complete.**
 7. Business pricing configuration + estimator integration — the dashboard
    pricing UI validates and versions a business's live configuration, and
    the customer estimator prices every job against it
-8. Real AI / computer vision integration (replaces the Phase 4 mock)
-9. Human review / confidence system
-10. Database / data flywheel
-11. Payments / auth / billing
-12. Integrations and additional verticals
+8. Quote creation & customer workflow — a business-initiated "New quote"
+   flow in the dashboard (reusing `createQuote()` unchanged), quote
+   editing, pricing-configuration provenance on each quote, and a
+   read-only customer-facing quote view at `/quote/[id]`; see
+   `docs/decisions/0010-quote-creation-and-customer-view.md`
+9. Real AI / computer vision integration (replaces the Phase 4 mock)
+10. Human review / confidence system
+11. Database / data flywheel
+12. Payments / auth / billing
+13. Integrations and additional verticals
 
 ## Product ownership
 

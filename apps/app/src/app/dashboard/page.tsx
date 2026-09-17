@@ -38,11 +38,16 @@ export default function DashboardHomePage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
-          Good morning.
-        </h1>
-        <p className="text-ink-soft">Here&rsquo;s what&rsquo;s happening with your quotes.</p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+            Good morning.
+          </h1>
+          <p className="text-ink-soft">Here&rsquo;s what&rsquo;s happening with your quotes.</p>
+        </div>
+        <Link href="/dashboard/quotes/new" className={buttonVariants({ variant: "primary" })}>
+          New quote
+        </Link>
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">

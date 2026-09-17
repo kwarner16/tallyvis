@@ -144,6 +144,71 @@ describe("savePricingRules (versioning)", () => {
   });
 });
 
+describe("getPricingConfigurationById", () => {
+  it("looks up the exact version a quote was priced under, even after newer versions exist", () => {
+    const quote = store.createQuote(sampleQuoteInput);
+    const original = store.getPricingConfiguration();
+
+    store.savePricingRules({ ...original.rules, basePrice: original.rules.basePrice + 10 });
+
+    const found = store.getPricingConfigurationById(quote.pricingConfigId);
+    expect(found).toEqual(original);
+  });
+
+  it("returns undefined for an unknown id", () => {
+    expect(store.getPricingConfigurationById("not-a-real-id")).toBeUndefined();
+  });
+});
+
+describe("updateQuoteCustomer", () => {
+  it("updates the customer without touching the estimate or pricingConfigId", () => {
+    const quote = store.createQuote(sampleQuoteInput);
+
+    const updated = store.updateQuoteCustomer(quote.id, {
+      name: "Jordan R.",
+      email: "jordan.rivera@example.com",
+      phone: "(555) 000-1111",
+    });
+
+    expect(updated.customer).toEqual({
+      name: "Jordan R.",
+      email: "jordan.rivera@example.com",
+      phone: "(555) 000-1111",
+    });
+    expect(updated.estimate).toEqual(quote.estimate);
+    expect(updated.pricingConfigId).toBe(quote.pricingConfigId);
+  });
+
+  it("throws for a quote that doesn't exist", () => {
+    expect(() =>
+      store.updateQuoteCustomer("not-a-real-quote", { name: "X", email: "x@example.com" }),
+    ).toThrow(/not found/);
+  });
+});
+
+describe("updateQuoteStatus", () => {
+  it("allows a transition the status graph permits", () => {
+    const quote = store.createQuote(sampleQuoteInput);
+    const updated = store.updateQuoteStatus(quote.id, "approved");
+    expect(updated.status).toBe("approved");
+  });
+
+  it("rejects a transition the status graph doesn't permit", () => {
+    const quote = store.createQuote(sampleQuoteInput);
+    store.updateQuoteStatus(quote.id, "approved");
+    store.updateQuoteStatus(quote.id, "sent");
+    store.updateQuoteStatus(quote.id, "accepted");
+
+    expect(() => store.updateQuoteStatus(quote.id, "declined")).toThrow(
+      /Cannot move a quote from "accepted" to "declined"/,
+    );
+  });
+
+  it("throws for a quote that doesn't exist", () => {
+    expect(() => store.updateQuoteStatus("not-a-real-quote", "approved")).toThrow(/not found/);
+  });
+});
+
 describe("updateQuoteAnalysis vs recalculateQuoteEstimate", () => {
   it("updateQuoteAnalysis re-prices against the quote's originally pinned configuration, not today's", () => {
     const quote = store.createQuote(sampleQuoteInput);
@@ -176,5 +241,12 @@ describe("updateQuoteAnalysis vs recalculateQuoteEstimate", () => {
     expect(recalculated.pricingConfigId).toBe(active.id);
     expect(recalculated.pricingConfigId).not.toBe(originalConfigId);
     expect(recalculated.estimate.total).toBe(roundMoney(originalTotal + 40 * multiplier));
+  });
+
+  it("both throw for a quote that doesn't exist", () => {
+    expect(() =>
+      store.updateQuoteAnalysis("not-a-real-quote", sampleQuoteInput.analysis.characteristics),
+    ).toThrow(/not found/);
+    expect(() => store.recalculateQuoteEstimate("not-a-real-quote")).toThrow(/not found/);
   });
 });

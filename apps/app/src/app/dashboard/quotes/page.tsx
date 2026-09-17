@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type { Quote, QuoteStatus } from "@tallyvis/types";
-import { cn } from "@tallyvis/ui";
+import { buttonVariants, cn } from "@tallyvis/ui";
 import { listQuotes } from "@/lib/quotes/store";
 import { QUOTE_FILTERS } from "@/lib/quoteStatusCopy";
 import { QuoteList } from "@/components/dashboard/QuoteList";
@@ -34,9 +35,14 @@ export default function QuotesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Quotes</h1>
-        <p className="text-ink-soft">Every estimate Tallyvis has generated for your business.</p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Quotes</h1>
+          <p className="text-ink-soft">Every estimate Tallyvis has generated for your business.</p>
+        </div>
+        <Link href="/dashboard/quotes/new" className={buttonVariants({ variant: "primary" })}>
+          New quote
+        </Link>
       </div>
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -73,8 +79,15 @@ export default function QuotesPage() {
           heading={quotes.length === 0 ? "No quotes yet." : "No quotes match this filter."}
           description={
             quotes.length === 0
-              ? "Quotes submitted through the estimator will show up here."
+              ? "Quotes submitted through the customer estimator will show up here — or create one yourself."
               : "Try a different status filter or search term."
+          }
+          action={
+            quotes.length === 0 ? (
+              <Link href="/dashboard/quotes/new" className={buttonVariants({ variant: "primary" })}>
+                New quote
+              </Link>
+            ) : undefined
           }
         />
       )}
