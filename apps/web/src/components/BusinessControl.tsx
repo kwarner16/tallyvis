@@ -1,13 +1,14 @@
 import { Container, SectionHeading } from "@tallyvis/ui";
+import { windowCleaningDefaultPricingRules as rules } from "@tallyvis/config";
 import { Reveal } from "./Reveal";
 
 const PRICING_ROWS = [
-  { label: "Base price", value: "$125" },
-  { label: "Per window", value: "$8" },
-  { label: "Second story", value: "+$35" },
-  { label: "Screens", value: "$3 each" },
-  { label: "Track cleaning", value: "$4 each" },
-  { label: "Minimum job", value: "$175" },
+  { label: "Base price", value: `$${rules.basePrice}` },
+  { label: "Per window", value: `$${rules.pricePerWindow}` },
+  { label: "Second story", value: `+$${rules.secondStorySurcharge}` },
+  { label: "Screens", value: `$${rules.screenCleaningPrice} each` },
+  { label: "Track cleaning", value: `$${rules.trackCleaningPrice} each` },
+  { label: "Minimum job", value: `$${rules.minimumJobPrice}` },
 ];
 
 export function BusinessControl() {

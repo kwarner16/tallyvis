@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Container, buttonVariants } from "@tallyvis/ui";
-import { PropertyScanVisual } from "./PropertyScanVisual";
+import { HeroPreview } from "./HeroPreview";
 
 export function Hero() {
   return (
@@ -27,7 +27,7 @@ export function Hero() {
           </div>
         </div>
 
-        <PropertyScanVisual variant="compact" />
+        <HeroPreview />
       </Container>
     </section>
   );

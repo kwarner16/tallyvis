@@ -10,14 +10,14 @@ import type { WindowCleaningPricingRules } from "@tallyvis/types";
  */
 export const windowCleaningDefaultPricingRules: WindowCleaningPricingRules = {
   vertical: "window-cleaning",
-  basePrice: 50,
+  basePrice: 125,
   pricePerWindow: 8,
   pricePerPane: 0,
-  secondStorySurcharge: 40,
+  secondStorySurcharge: 35,
   screenCleaningPrice: 3,
-  trackCleaningPrice: 2,
+  trackCleaningPrice: 4,
   hardWaterTreatmentPrice: 60,
-  minimumJobPrice: 150,
+  minimumJobPrice: 175,
   travelFee: 25,
   difficultyMultipliers: {
     easy: 1,
