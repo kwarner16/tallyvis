@@ -14,6 +14,7 @@ import type { PropertyAnalysisResult } from "@tallyvis/types";
 import { windowCleaningEstimatorConfig } from "./industry-config";
 import {
   EMPTY_CUSTOMER_INPUT,
+  type ContactDetails,
   type CustomerInput,
   type PropertyDetails,
   type ServicePreferences,
@@ -24,12 +25,12 @@ const STORAGE_KEY = "tallyvis-estimator-draft-v1";
 const MAX_PHOTO_SIZE_BYTES = 10 * 1024 * 1024;
 
 /**
- * Only property/service answers persist across a reload — uploaded photos
- * are real browser File objects (via blob: URLs) that cannot survive one,
- * so we intentionally don't try. Restoring a "photo" that just shows a
+ * Only property/service/contact answers persist across a reload — uploaded
+ * photos are real browser File objects (via blob: URLs) that cannot survive
+ * one, so we intentionally don't try. Restoring a "photo" that just shows a
  * broken image would be worse than asking the customer to re-add them.
  */
-type PersistedInput = Pick<CustomerInput, "property" | "services" | "notes">;
+type PersistedInput = Pick<CustomerInput, "property" | "services" | "notes" | "contact">;
 
 export interface PhotoRejection {
   name: string;
@@ -40,13 +41,17 @@ interface EstimatorContextValue {
   input: CustomerInput;
   analysis: PropertyAnalysisResult | null;
   analysisError: string | null;
+  /** Set once this session's result has been saved as a Quote, to guard against creating duplicates if the result page re-renders. */
+  quoteId: string | null;
   updateProperty: (patch: Partial<PropertyDetails>) => void;
   updateServices: (patch: Partial<ServicePreferences>) => void;
+  updateContact: (patch: Partial<ContactDetails>) => void;
   setNotes: (notes: string) => void;
   addPhotos: (files: File[]) => PhotoRejection[];
   removePhoto: (id: string) => void;
   setAnalysis: (result: PropertyAnalysisResult | null) => void;
   setAnalysisError: (message: string | null) => void;
+  setQuoteId: (id: string) => void;
   reset: () => void;
 }
 
@@ -56,6 +61,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
   const [input, setInput] = useState<CustomerInput>(EMPTY_CUSTOMER_INPUT);
   const [analysis, setAnalysis] = useState<PropertyAnalysisResult | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [quoteId, setQuoteId] = useState<string | null>(null);
   const hydrated = useRef(false);
 
   useEffect(() => {
@@ -80,13 +86,14 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       property: input.property,
       services: input.services,
       notes: input.notes,
+      contact: input.contact,
     };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersist));
     } catch {
       // Storage unavailable (private browsing, quota) — not fatal, just skip.
     }
-  }, [input.property, input.services, input.notes]);
+  }, [input.property, input.services, input.notes, input.contact]);
 
   const updateProperty = useCallback((patch: Partial<PropertyDetails>) => {
     setInput((prev) => ({ ...prev, property: { ...prev.property, ...patch } }));
@@ -94,6 +101,10 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
 
   const updateServices = useCallback((patch: Partial<ServicePreferences>) => {
     setInput((prev) => ({ ...prev, services: { ...prev.services, ...patch } }));
+  }, []);
+
+  const updateContact = useCallback((patch: Partial<ContactDetails>) => {
+    setInput((prev) => ({ ...prev, contact: { ...prev.contact, ...patch } }));
   }, []);
 
   const setNotes = useCallback((notes: string) => {
@@ -150,6 +161,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
     });
     setAnalysis(null);
     setAnalysisError(null);
+    setQuoteId(null);
     try {
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -162,21 +174,26 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       input,
       analysis,
       analysisError,
+      quoteId,
       updateProperty,
       updateServices,
+      updateContact,
       setNotes,
       addPhotos,
       removePhoto,
       setAnalysis,
       setAnalysisError,
+      setQuoteId,
       reset,
     }),
     [
       input,
       analysis,
       analysisError,
+      quoteId,
       updateProperty,
       updateServices,
+      updateContact,
       setNotes,
       addPhotos,
       removePhoto,

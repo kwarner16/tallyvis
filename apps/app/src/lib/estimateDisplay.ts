@@ -6,10 +6,9 @@ export type EstimateDisplay =
 /**
  * How much a displayed estimate widens around the real computed total,
  * purely as a function of confidence. Not fake uncertainty — it reflects
- * the same confidence level shown elsewhere in the product (see the "See
- * what Tallyvis sees" confidence messaging). packages/pricing's output
- * itself stays exact; this is presentation only. See
- * docs/decisions/0006-estimator-data-pipeline.md.
+ * the same confidence level shown elsewhere in the product. packages/pricing's
+ * output itself stays exact; this is presentation only, shared by the
+ * estimator and the dashboard. See docs/decisions/0006-estimator-data-pipeline.md.
  */
 const BAND_BY_CONFIDENCE: Record<ConfidenceLevel, number> = {
   high: 0,

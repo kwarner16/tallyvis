@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Container, SectionHeading, buttonVariants } from "@tallyvis/ui";
-import { PropertyPhoto } from "./PropertyPhoto";
+import { Container, PropertyPhoto, SectionHeading, buttonVariants } from "@tallyvis/ui";
 import { Reveal } from "./Reveal";
 import { AnalysisStatus } from "./analysis-demo/AnalysisStatus";
 import { JobCharacteristicsPanel } from "./analysis-demo/JobCharacteristicsPanel";

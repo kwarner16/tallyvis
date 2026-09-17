@@ -1,6 +1,6 @@
 import type { ConfidenceLevel, WindowCleaningCharacteristics } from "@tallyvis/types";
-import { HIGHLIGHT_WINDOW, LOWER_WINDOWS } from "../houseGeometry";
-import type { AnalysisStep, WindowDetection } from "./types";
+import { HIGHLIGHT_WINDOW, LOWER_WINDOWS, type WindowDetection } from "@tallyvis/ui";
+import type { AnalysisStep } from "./types";
 
 /**
  * ============================== DEMO DATA ==============================
@@ -34,16 +34,14 @@ export const DEMO_WINDOW_DETECTIONS: WindowDetection[] = [
     type: "window",
     id: "window-upper-03",
     boundingBox: HIGHLIGHT_WINDOW,
-    level: 2,
-    windowType: "double-hung",
+    label: "Double-hung",
     confidence: 0.96,
   },
   {
     type: "window",
     id: "window-lower-01",
     boundingBox: LOWER_WINDOWS[0]!,
-    level: 1,
-    windowType: "double-hung",
+    label: "Double-hung",
     confidence: 0.93,
   },
 ];

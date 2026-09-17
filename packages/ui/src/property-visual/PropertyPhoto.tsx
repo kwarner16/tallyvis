@@ -41,8 +41,9 @@ export interface PropertyPhotoProps {
 /**
  * Original stylized SVG property illustration standing in for real
  * architectural photography (no licensed photo assets available — see
- * docs/decisions). Shared by the Hero preview and the interactive "See what
- * Tallyvis sees" demo so both use identical geometry and material treatment.
+ * docs/decisions). Shared by the marketing site (hero, interactive demo) and
+ * the business dashboard's illustrative quote visualization so all three use
+ * identical geometry and material treatment.
  */
 export function PropertyPhoto({
   className,

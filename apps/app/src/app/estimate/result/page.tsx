@@ -1,21 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { buttonVariants } from "@tallyvis/ui";
 import { calculateWindowCleaningEstimate } from "@tallyvis/pricing";
 import { demoBusiness } from "@tallyvis/config";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
-import { buildPricingInput } from "@/lib/estimator/buildPricingInput";
-import { getEstimateDisplay } from "@/lib/estimator/estimateDisplay";
+import { reconcilePricingInput } from "@/lib/pricingReconciliation";
+import { getEstimateDisplay } from "@/lib/estimateDisplay";
+import { createQuote, getPricingRules } from "@/lib/quotes/store";
 import { CONTACT_URL } from "@/lib/urls";
 
 export default function ResultStepPage() {
-  const { analysis, input, reset } = useEstimator();
+  const { analysis, input, quoteId, setQuoteId, reset } = useEstimator();
   const router = useRouter();
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [requested, setRequested] = useState(false);
+  const hasCreatedQuote = useRef(false);
 
   useEffect(() => {
     if (!analysis) {
@@ -25,13 +27,39 @@ export default function ResultStepPage() {
 
   const estimate = useMemo(() => {
     if (!analysis) return null;
-    const pricingInput = buildPricingInput(input, analysis);
+    const pricingInput = reconcilePricingInput(input.services, analysis.characteristics);
     return calculateWindowCleaningEstimate(
       pricingInput,
-      demoBusiness.pricingRules,
+      getPricingRules(),
       analysis.metadata.confidence,
     );
-  }, [analysis, input]);
+  }, [analysis, input.services]);
+
+  // Every completed analysis becomes a quote the business can see, whether
+  // or not the customer goes on to click "Request this service" — see
+  // docs/decisions/0008-quote-domain-model.md.
+  useEffect(() => {
+    if (!analysis || quoteId || hasCreatedQuote.current) return;
+    hasCreatedQuote.current = true;
+    const quote = createQuote({
+      customer: {
+        name: input.contact.name,
+        email: input.contact.email,
+        phone: input.contact.phone || undefined,
+      },
+      property: {
+        propertyType: input.property.propertyType!,
+        stories: input.property.stories!,
+        address: input.property.address || undefined,
+      },
+      servicePreferences: input.services,
+      notes: input.notes,
+      photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
+      analysis,
+    });
+    setQuoteId(quote.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysis]);
 
   if (!analysis || !estimate) return null;
 

@@ -1,8 +1,7 @@
 /**
- * Shared coordinate space for the property illustration, used by both the
- * static Hero preview and the interactive "See What Tallyvis Sees" demo so
- * every annotation (boxes, measurements, labels) lines up identically
- * wherever the illustration appears.
+ * Shared coordinate space for the property illustration. Used wherever the
+ * illustration appears (marketing site hero/demo, business dashboard quote
+ * visualization) so annotations line up identically regardless of caller.
  */
 export const VIEW_WIDTH = 640;
 export const VIEW_HEIGHT = 440;
@@ -36,5 +35,8 @@ export const LOWER_WINDOWS: BoundingBox[] = [
   { x: 398, y: 318, width: 88, height: 66 },
 ];
 
-/** The window used for the single "highlighted detection" example in both the Hero preview and the demo's first detection. */
+/** All drawn window slots, in a stable order — useful for callers that need to assign N detections to N drawn windows. */
+export const ALL_WINDOW_SLOTS: BoundingBox[] = [...UPPER_WINDOWS, ...LOWER_WINDOWS];
+
+/** The window used for the single "highlighted detection" example in the Hero preview. */
 export const HIGHLIGHT_WINDOW = UPPER_WINDOWS[2]!;

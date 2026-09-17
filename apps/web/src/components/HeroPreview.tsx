@@ -1,5 +1,4 @@
-import { PropertyPhoto } from "./PropertyPhoto";
-import { HIGHLIGHT_WINDOW, VIEW_HEIGHT, VIEW_WIDTH } from "./houseGeometry";
+import { HIGHLIGHT_WINDOW, PropertyPhoto, VIEW_HEIGHT, VIEW_WIDTH } from "@tallyvis/ui";
 
 const OUTSET = 6;
 const box = {

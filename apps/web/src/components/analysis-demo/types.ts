@@ -1,5 +1,3 @@
-import type { BoundingBox } from "../houseGeometry";
-
 /**
  * "needs-more-info" is reserved for the low-confidence path described in
  * docs/product (request additional photos rather than guess) — this demo's
@@ -8,15 +6,6 @@ import type { BoundingBox } from "../houseGeometry";
  */
 export type AnalysisStage =
   "idle" | "analyzing" | "analyzed" | "estimate-ready" | "needs-more-info";
-
-export interface WindowDetection {
-  type: "window";
-  id: string;
-  boundingBox: BoundingBox;
-  level: 1 | 2;
-  windowType: "double-hung";
-  confidence: number;
-}
 
 export type CharacteristicKey =
   "windows" | "stories" | "screens" | "windowType" | "access" | "labor";

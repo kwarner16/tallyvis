@@ -1,5 +1,4 @@
-import { STORY_LINE_Y, VIEW_HEIGHT, VIEW_WIDTH, WALL } from "../houseGeometry";
-import { DEMO_WINDOW_DETECTIONS } from "./data";
+import { STORY_LINE_Y, VIEW_HEIGHT, VIEW_WIDTH, WALL } from "./houseGeometry";
 import type { WindowDetection } from "./types";
 
 function pct(value: number, axis: "x" | "y") {
@@ -47,23 +46,29 @@ function DetectionBox({ detection }: { detection: WindowDetection }) {
 }
 
 export interface AnalysisOverlayProps {
+  detections: WindowDetection[];
   revealedDetectionIds: Set<string>;
   revealStoryMarker: boolean;
-  /** Whether the scan-line sweep should render (only true while the sequence is actively running). */
-  running: boolean;
+  storyLabel?: string;
+  /** Whether the scan-line sweep should render (only true while a sequence is actively running). */
+  running?: boolean;
 }
 
 /**
- * The computer-vision annotation layer drawn over the "Tallyvis Analysis"
- * side of the comparison. Purely presentational — driven entirely by the
- * reveal state the orchestrator computes from ANALYSIS_STEPS.
+ * The computer-vision annotation layer drawn over a PropertyPhoto. Purely
+ * presentational — takes the full detection set and which of them are
+ * currently "revealed," so a caller can drive either a scripted reveal
+ * sequence (the marketing demo) or a static, fully-revealed view (the
+ * dashboard's quote visualization) with the same component.
  */
 export function AnalysisOverlay({
+  detections,
   revealedDetectionIds,
   revealStoryMarker,
-  running,
+  storyLabel = "Level 02",
+  running = false,
 }: AnalysisOverlayProps) {
-  const visibleDetections = DEMO_WINDOW_DETECTIONS.filter((d) => revealedDetectionIds.has(d.id));
+  const visibleDetections = detections.filter((d) => revealedDetectionIds.has(d.id));
 
   return (
     <div className="pointer-events-none absolute inset-0 h-full w-full">
@@ -114,7 +119,7 @@ export function AnalysisOverlay({
             animation: "fade-in 0.35s ease-out",
           }}
         >
-          Level 02
+          {storyLabel}
         </span>
       ) : null}
 
@@ -131,7 +136,7 @@ export function AnalysisOverlay({
               animation: "fade-in 0.35s ease-out",
             }}
           >
-            Double-hung &middot; {Math.round(d.confidence * 100)}%
+            {d.label} &middot; {Math.round(d.confidence * 100)}%
           </span>
         );
       })}

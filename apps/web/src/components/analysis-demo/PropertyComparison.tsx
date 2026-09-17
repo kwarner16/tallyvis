@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { PropertyPhoto } from "../PropertyPhoto";
-import { AnalysisOverlay } from "./AnalysisOverlay";
+import { AnalysisOverlay, PropertyPhoto } from "@tallyvis/ui";
+import { DEMO_WINDOW_DETECTIONS } from "./data";
 
 export interface PropertyComparisonProps {
   revealedDetectionIds: Set<string>;
@@ -85,6 +85,7 @@ export function PropertyComparison({
           title="Property photo with Tallyvis analysis overlay"
         />
         <AnalysisOverlay
+          detections={DEMO_WINDOW_DETECTIONS}
           revealedDetectionIds={revealedDetectionIds}
           revealStoryMarker={revealStoryMarker}
           running={running}

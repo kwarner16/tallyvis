@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { buttonVariants } from "@tallyvis/ui";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
-import { isPropertyComplete } from "@/lib/estimator/types";
+import { isContactComplete, isPropertyComplete } from "@/lib/estimator/types";
 
 const PROPERTY_TYPE_LABELS: Record<string, string> = {
   "single-family": "Single-family home",
@@ -39,7 +39,7 @@ function SummaryRow({
 }
 
 export default function ReviewStepPage() {
-  const { input } = useEstimator();
+  const { input, updateContact } = useEstimator();
   const router = useRouter();
 
   useEffect(() => {
@@ -53,6 +53,8 @@ export default function ReviewStepPage() {
     input.services.screens && "Screen cleaning",
     input.services.tracks && "Track cleaning",
   ].filter(Boolean) as string[];
+
+  const canAnalyze = isContactComplete(input.contact);
 
   return (
     <div className="flex flex-col gap-8">
@@ -103,12 +105,75 @@ export default function ReviewStepPage() {
         ) : null}
       </div>
 
-      <Link
-        href="/estimate/analyzing"
-        className={buttonVariants({ variant: "primary", className: "self-start" })}
-      >
-        Analyze my property
-      </Link>
+      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-paper p-6">
+        <div>
+          <p className="text-sm font-medium text-ink">Where should we send this?</p>
+          <p className="text-xs text-ink-faint">
+            So the business can follow up with your estimate.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-2">
+            <label htmlFor="contact-name" className="text-sm font-medium text-ink">
+              Name
+            </label>
+            <input
+              id="contact-name"
+              type="text"
+              value={input.contact.name}
+              onChange={(e) => updateContact({ name: e.target.value })}
+              placeholder="Jane Smith"
+              className="rounded-lg border border-line bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="contact-email" className="text-sm font-medium text-ink">
+              Email
+            </label>
+            <input
+              id="contact-email"
+              type="email"
+              value={input.contact.email}
+              onChange={(e) => updateContact({ email: e.target.value })}
+              placeholder="jane@example.com"
+              className="rounded-lg border border-line bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+            />
+          </div>
+          <div className="flex flex-col gap-2 sm:col-span-2">
+            <label htmlFor="contact-phone" className="text-sm font-medium text-ink">
+              Phone <span className="font-normal text-ink-faint">(optional)</span>
+            </label>
+            <input
+              id="contact-phone"
+              type="tel"
+              value={input.contact.phone}
+              onChange={(e) => updateContact({ phone: e.target.value })}
+              placeholder="(555) 010-0110"
+              className="rounded-lg border border-line bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong sm:max-w-xs"
+            />
+          </div>
+        </div>
+      </div>
+
+      {canAnalyze ? (
+        <Link
+          href="/estimate/analyzing"
+          className={buttonVariants({ variant: "primary", className: "self-start" })}
+        >
+          Analyze my property
+        </Link>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            disabled
+            className={buttonVariants({ variant: "primary", className: "self-start" })}
+          >
+            Analyze my property
+          </button>
+          <p className="text-xs text-ink-faint">Add your name and a valid email to continue.</p>
+        </div>
+      )}
     </div>
   );
 }
