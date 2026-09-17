@@ -10,16 +10,17 @@ later if and when that's actually needed.
 ```
 tallyvis/
   apps/
-    web/            Marketing website (Next.js)
-    app/             Customer/business application (not yet scaffolded — Phase 4+)
+    web/            Marketing website (Next.js, :3000)
+    app/             Customer estimator app (Next.js, :3001) — live since Phase 4
   packages/
     types/           Shared TypeScript types — the contract between AI and pricing
     pricing/         Pure pricing calculation logic (no AI, no UI, no DB)
-    config/          Vertical configuration (window cleaning today, more later)
-    ui/              Shared React components used by both apps
+    config/          Vertical configuration (window cleaning today, more later) + demo business
+    ui/              Shared React components + theme.css, used by both apps
   services/
-    ai/              AI provider abstraction (analyzeProperty) — interface only in Phase 1
-    api/             Backend API (not yet scaffolded — Phase 4+)
+    ai/              AI provider abstraction (analyzeProperty) — mock implementation since Phase 4
+    api/             Backend API (not yet scaffolded — apps/app calls services/ai
+                     and packages/pricing directly from the browser for now)
   docs/              Product, architecture, decisions, research
   public/            Static marketing assets (images, video, misc)
   scripts/           Repo-level automation (empty in Phase 1)
@@ -59,18 +60,20 @@ type AnalyzeProperty = (
 ) => Promise<PropertyAnalysisResult>;
 ```
 
-Defined in `services/ai/src/index.ts`. In Phase 1 this throws — there is no
-implementation yet. Phase 7 adds a mock implementation (deterministic,
-labeled as a mock); Phase 8 replaces it with a real computer-vision-backed
-implementation. Because everything downstream depends only on this
-signature and on `PropertyAnalysisResult` (defined in `packages/types`),
-that swap should not require changes to the pricing engine or the UI.
+Defined in `services/ai/src/index.ts`. Phase 1 shipped just the interface
+(it threw); Phase 4 added a real, deterministic, clearly-labeled mock
+implementation, pulled forward from its original Phase 7 slot because the
+customer estimator needed something real to call — see
+`docs/decisions/0005-mock-analyzer-in-phase-4.md`. A future phase replaces
+the mock with a real computer-vision-backed implementation. Because
+everything downstream depends only on this signature and on
+`PropertyAnalysisResult` (defined in `packages/types`), that swap should not
+require changes to the pricing engine or the UI.
 
 ## What's deliberately deferred
 
 - **Database**: no engine chosen yet. Leading candidate is Postgres with a
-  TypeScript ORM (Drizzle or Prisma), decided when `services/api` is built
-  in Phase 4+.
+  TypeScript ORM (Drizzle or Prisma), decided when `services/api` is built.
 - **Auth/billing**: deferred to Phase 11.
 - **CI/CD**: deferred until there's a second contributor or a deploy target;
   noted so it isn't mistaken for an oversight.

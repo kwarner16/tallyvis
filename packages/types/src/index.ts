@@ -31,6 +31,8 @@ export interface WindowCleaningCharacteristics {
   condition: ConditionLevel;
   hardWaterStaining: boolean;
   estimatedLaborHours: number;
+  /** Whether interior (inside-the-home) window cleaning is part of this job. */
+  interiorCleaning: boolean;
 }
 
 /** Union of all vertical-specific job characteristics. Extend as new verticals are added. */
@@ -55,6 +57,14 @@ export interface PropertyImage {
 export interface PropertyMetadata {
   address?: string;
   vertical: JobCharacteristics["vertical"];
+  /**
+   * Customer-declared hints (e.g. self-reported story count) that an
+   * analyzer MAY use as a heuristic input. A real computer-vision
+   * implementation should verify these independently from photos rather
+   * than trust them outright — they exist here for analyzers (like a mock)
+   * that have no other way to estimate them.
+   */
+  customerDeclaredStories?: number;
 }
 
 export interface WindowCleaningPricingRules {
@@ -66,6 +76,7 @@ export interface WindowCleaningPricingRules {
   screenCleaningPrice: number;
   trackCleaningPrice: number;
   hardWaterTreatmentPrice: number;
+  interiorCleaningPrice: number;
   minimumJobPrice: number;
   travelFee: number;
   difficultyMultipliers: Record<AccessibilityLevel, number>;

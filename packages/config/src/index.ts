@@ -17,6 +17,7 @@ export const windowCleaningDefaultPricingRules: WindowCleaningPricingRules = {
   screenCleaningPrice: 3,
   trackCleaningPrice: 4,
   hardWaterTreatmentPrice: 60,
+  interiorCleaningPrice: 45,
   minimumJobPrice: 175,
   travelFee: 25,
   difficultyMultipliers: {
@@ -24,6 +25,25 @@ export const windowCleaningDefaultPricingRules: WindowCleaningPricingRules = {
     moderate: 1.15,
     difficult: 1.35,
   },
+};
+
+export interface DemoBusiness {
+  id: string;
+  name: string;
+  vertical: "window-cleaning";
+  pricingRules: WindowCleaningPricingRules;
+}
+
+/**
+ * There is no real business-account system yet (that's Phase 5+/11). The
+ * customer estimator (apps/app) needs *some* business to quote against, so
+ * this is a clearly-labeled demo business — not a real Tallyvis customer.
+ */
+export const demoBusiness: DemoBusiness = {
+  id: "demo-window-cleaning-co",
+  name: "Demo Window Cleaning Co.",
+  vertical: "window-cleaning",
+  pricingRules: windowCleaningDefaultPricingRules,
 };
 
 export interface VerticalConfig {

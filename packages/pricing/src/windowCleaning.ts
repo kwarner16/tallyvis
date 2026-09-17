@@ -72,6 +72,13 @@ export function calculateWindowCleaningEstimate(
     });
   }
 
+  if (characteristics.interiorCleaning && rules.interiorCleaningPrice > 0) {
+    lineItems.push({
+      label: "Interior cleaning",
+      amount: rules.interiorCleaningPrice,
+    });
+  }
+
   const laborSubtotal = round2(lineItems.reduce((sum, item) => sum + item.amount, 0));
 
   const multiplier = rules.difficultyMultipliers[characteristics.accessibility] ?? 1;

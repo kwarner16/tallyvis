@@ -11,6 +11,7 @@ const baseRules: WindowCleaningPricingRules = {
   screenCleaningPrice: 3,
   trackCleaningPrice: 2,
   hardWaterTreatmentPrice: 60,
+  interiorCleaningPrice: 45,
   minimumJobPrice: 150,
   travelFee: 25,
   difficultyMultipliers: { easy: 1, moderate: 1.15, difficult: 1.35 },
@@ -28,6 +29,7 @@ const baseCharacteristics: WindowCleaningCharacteristics = {
   condition: "good",
   hardWaterStaining: false,
   estimatedLaborHours: 2,
+  interiorCleaning: false,
 };
 
 describe("calculateWindowCleaningEstimate", () => {
@@ -80,5 +82,19 @@ describe("calculateWindowCleaningEstimate", () => {
     expect(estimate.lineItems.some((item) => item.label.startsWith("Screen cleaning"))).toBe(true);
     expect(estimate.lineItems.some((item) => item.label.startsWith("Track cleaning"))).toBe(true);
     expect(estimate.lineItems.some((item) => item.label === "Hard-water treatment")).toBe(true);
+  });
+
+  it("adds interior cleaning as its own line item only when requested", () => {
+    const withInterior = calculateWindowCleaningEstimate(
+      { ...baseCharacteristics, interiorCleaning: true },
+      baseRules,
+    );
+    const withoutInterior = calculateWindowCleaningEstimate(baseCharacteristics, baseRules);
+
+    expect(withInterior.lineItems.some((item) => item.label === "Interior cleaning")).toBe(true);
+    expect(withoutInterior.lineItems.some((item) => item.label === "Interior cleaning")).toBe(
+      false,
+    );
+    expect(withInterior.total).toBe(withoutInterior.total + baseRules.interiorCleaningPrice);
   });
 });

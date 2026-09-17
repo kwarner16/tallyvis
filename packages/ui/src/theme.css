@@ -1,0 +1,113 @@
+/*
+ * Tallyvis shared design tokens and keyframes.
+ *
+ * Imported by every app's own globals.css via `@import "@tallyvis/ui/theme.css";`
+ * (after `@import "tailwindcss";`). Keep this file app-agnostic — anything
+ * specific to one app's own patterns (e.g. apps/web's scroll-reveal classes)
+ * belongs in that app's own globals.css instead.
+ */
+:root {
+  --color-ink: #1b1815;
+  --color-ink-soft: #5b564f;
+  --color-ink-faint: #8a8377;
+
+  --color-paper: #faf7f1;
+  --color-paper-alt: #f1eae0;
+  --color-line: #e6dfd2;
+
+  --color-charcoal-950: #14110e;
+  --color-charcoal-900: #201b16;
+  --color-charcoal-800: #2b241d;
+  --color-charcoal-line: #3a332a;
+
+  --color-accent: #e35c0f;
+  --color-accent-strong: #b8480a;
+  --color-accent-strong-hover: #8f3907;
+  --color-accent-soft: #fbeadb;
+}
+
+@theme inline {
+  --color-ink: var(--color-ink);
+  --color-ink-soft: var(--color-ink-soft);
+  --color-ink-faint: var(--color-ink-faint);
+
+  --color-paper: var(--color-paper);
+  --color-paper-alt: var(--color-paper-alt);
+  --color-line: var(--color-line);
+
+  --color-charcoal-950: var(--color-charcoal-950);
+  --color-charcoal-900: var(--color-charcoal-900);
+  --color-charcoal-800: var(--color-charcoal-800);
+  --color-charcoal-line: var(--color-charcoal-line);
+
+  --color-accent: var(--color-accent);
+  --color-accent-strong: var(--color-accent-strong);
+  --color-accent-strong-hover: var(--color-accent-strong-hover);
+  --color-accent-soft: var(--color-accent-soft);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes scan {
+  0%,
+  100% {
+    transform: translateY(0%);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(100%);
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+}
+
+@keyframes scan-once {
+  0% {
+    transform: translateY(0%);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(100%);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buttonVariants } from "@tallyvis/ui";
+import { ESTIMATOR_URL } from "@/lib/urls";
 
 const NAV_LINKS = [
   { label: "Product", href: "/#see-what-tallyvis-sees" },
@@ -49,9 +50,9 @@ export function Nav() {
         </nav>
 
         <div className="hidden md:block">
-          <Link href="/estimator" className={buttonVariants({ variant: "primary" })}>
+          <a href={ESTIMATOR_URL} className={buttonVariants({ variant: "primary" })}>
             Try the Estimator
-          </Link>
+          </a>
         </div>
 
         <button
@@ -93,13 +94,13 @@ export function Nav() {
               </Link>
             ))}
           </nav>
-          <Link
-            href="/estimator"
+          <a
+            href={ESTIMATOR_URL}
             onClick={() => setOpen(false)}
             className={buttonVariants({ variant: "primary", className: "mt-4 w-full" })}
           >
             Try the Estimator
-          </Link>
+          </a>
         </div>
       ) : null}
     </header>

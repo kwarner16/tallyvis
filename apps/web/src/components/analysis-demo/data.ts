@@ -24,6 +24,7 @@ export const DEMO_CHARACTERISTICS: WindowCleaningCharacteristics = {
   condition: "fair",
   hardWaterStaining: false,
   estimatedLaborHours: 2.4,
+  interiorCleaning: false,
 };
 
 export const DEMO_CONFIDENCE: ConfidenceLevel = "medium";

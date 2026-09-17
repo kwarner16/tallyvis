@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@import "@tallyvis/ui/theme.css";
+
+/* Include packages/ui source in Tailwind's class scanner (Tailwind v4 skips
+   node_modules by default; our internal packages are symlinked there). */
+@source "../../../../packages/ui/src";

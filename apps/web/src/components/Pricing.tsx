@@ -86,7 +86,7 @@ export function Pricing() {
                 ))}
               </ul>
               <Link
-                href={tier.name === "Enterprise" ? "/contact" : "/estimator"}
+                href="/contact"
                 className={buttonVariants({
                   variant: tier.featured ? "primary" : "outline",
                   className: "w-full",

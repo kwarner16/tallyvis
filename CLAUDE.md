@@ -23,13 +23,16 @@ provider, and never have `services/ai` compute a dollar amount.
 
 ```
 apps/web       Marketing website (Next.js) — live in Phase 1
-apps/app       Customer/business app (Next.js) — stub only until Phase 4
+apps/app       Customer/business app (Next.js) — customer estimator live in Phase 4
 packages/types Shared types — the AI/pricing contract. Depends on nothing.
 packages/pricing  Pure pricing logic. Depends only on packages/types.
-packages/config   Vertical config (default rules, vertical registry).
-packages/ui    Shared React components. Depends only on React.
-services/ai    AI provider abstraction (analyzeProperty). Interface-only until Phase 7.
-services/api   Backend API. Not scaffolded until Phase 4.
+packages/config   Vertical config (default rules, vertical registry, demo business).
+packages/ui    Shared React components + theme.css. Depends only on React.
+services/ai    AI provider abstraction (analyzeProperty). Mock implementation
+               since Phase 4; real computer-vision backing is a future phase.
+services/api   Backend API. Still not scaffolded — apps/app talks to
+               services/ai and packages/pricing directly from the browser
+               for now (see docs/decisions/0005).
 docs/          Product, architecture, decisions (ADRs), research
 ```
 
@@ -52,8 +55,10 @@ docs/          Product, architecture, decisions (ADRs), research
 Anything that is a mock, placeholder, or not-yet-implemented must say so
 explicitly — in code comments, in README stubs, and in conversation with the
 user. Do not present a stub or mock as production-ready. Current examples:
-`services/ai/src/index.ts` (throws — not implemented until Phase 7),
-`apps/app` and `services/api` (README stubs only).
+`services/ai/src/index.ts` (a deterministic heuristic mock, clearly labeled
+as such — not real computer vision), `services/api` (README stub only),
+`packages/config`'s `demoBusiness` (a placeholder business, not a real
+Tallyvis customer).
 
 ## Development workflow
 
@@ -71,16 +76,18 @@ user. Do not present a stub or mock as production-ready. Current examples:
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 1 (Foundation) — complete.**
+reason. Current phase: **Phase 4 (Customer estimator workflow) — complete.**
 
-1. Foundation (this phase)
+1. Foundation
 2. Marketing website foundation
 3. Interactive "See What Tallyvis Sees" demo
-4. Customer estimator workflow
+4. Customer estimator workflow — shipped `services/ai`'s mock analyzer here
+   (pulled forward from Phase 7, see `docs/decisions/0005-mock-analyzer-in-phase-4.md`)
+   and `apps/app`'s first real routes
 5. Business dashboard
 6. Pricing engine (full business-configurable rules)
-7. AI abstraction / mock analyzer
-8. Real AI / computer vision integration
+7. ~~AI abstraction / mock analyzer~~ — shipped in Phase 4 instead, see above
+8. Real AI / computer vision integration (replaces the Phase 4 mock)
 9. Human review / confidence system
 10. Database / data flywheel
 11. Payments / auth / billing

@@ -13,10 +13,11 @@ See `docs/product/overview.md` for the full product spec and
 
 ## Status
 
-**Phase 1 (Foundation) complete.** This repository currently contains the
-monorepo scaffolding, shared types, a working pricing engine for the
-window-cleaning vertical, and a minimal marketing site shell — no real AI,
-no database, no auth yet. See `CLAUDE.md` for the full phase roadmap.
+**Phase 4 (Customer estimator workflow) complete.** The marketing site
+(`apps/web`) and a real customer-facing estimator (`apps/app`) both run;
+the estimator's "AI" is a clearly-labeled deterministic mock (see
+`services/ai`) and there is no database, auth, or real business-account
+system yet. See `CLAUDE.md` for the full phase roadmap.
 
 ## Getting started
 
@@ -25,7 +26,7 @@ This is a pnpm + Turborepo monorepo. You need Node.js 20+.
 ```bash
 corepack enable        # one-time, provisions the correct pnpm version
 pnpm install
-pnpm dev                # runs apps/web in dev mode
+pnpm dev                # runs apps/web (:3000) and apps/app (:3001)
 ```
 
 Other useful commands:
@@ -40,14 +41,15 @@ pnpm typecheck   # typecheck all packages
 ## Repository structure
 
 ```
-apps/web        Marketing website (Next.js)
-apps/app        Customer/business app (stub — Phase 4+)
+apps/web        Marketing website (Next.js, :3000)
+apps/app        Customer estimator app (Next.js, :3001) — /estimate/*
 packages/types  Shared TypeScript types (the AI ↔ pricing contract)
 packages/pricing  Pure pricing calculation logic, fully unit-tested
-packages/config   Service-vertical configuration
-packages/ui     Shared React components
-services/ai     AI provider abstraction (interface only — Phase 7+)
-services/api    Backend API (stub — Phase 4+)
+packages/config   Service-vertical configuration, demo business
+packages/ui     Shared React components + theme.css
+services/ai     AI provider abstraction — mock implementation since Phase 4
+services/api    Backend API (still a stub — the estimator talks to
+                services/ai and packages/pricing directly for now)
 docs/           Product spec, architecture, decision records, research
 ```
 

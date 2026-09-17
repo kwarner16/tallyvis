@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Container, buttonVariants } from "@tallyvis/ui";
 import { Reveal } from "./Reveal";
+import { ESTIMATOR_URL } from "@/lib/urls";
 
 export function FinalCta() {
   return (
@@ -12,9 +13,9 @@ export function FinalCta() {
           </h2>
           <p className="text-lg text-paper/70">Turn photos into estimates before the site visit.</p>
           <div className="flex flex-col gap-3 sm:flex-row">
-            <Link href="/estimator" className={buttonVariants({ variant: "primary" })}>
+            <a href={ESTIMATOR_URL} className={buttonVariants({ variant: "primary" })}>
               Try the Estimator
-            </Link>
+            </a>
             <Link href="/contact" className={buttonVariants({ variant: "outline-dark" })}>
               Talk to us
             </Link>
