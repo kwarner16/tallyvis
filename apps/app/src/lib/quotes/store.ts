@@ -1,5 +1,6 @@
 import type {
   Customer,
+  PricingConfiguration,
   Property,
   PropertyAnalysisResult,
   Quote,
@@ -9,8 +10,8 @@ import type {
   WindowCleaningPricingRules,
 } from "@tallyvis/types";
 import { canTransitionQuoteStatus } from "@tallyvis/types";
-import { calculateWindowCleaningEstimate } from "@tallyvis/pricing";
-import { demoBusiness } from "@tallyvis/config";
+import { calculateEstimate } from "@tallyvis/pricing";
+import { demoBusiness, demoPricingConfiguration } from "@tallyvis/config";
 import { reconcilePricingInput } from "../pricingReconciliation";
 import { seedQuotes } from "./seedQuotes";
 
@@ -33,14 +34,20 @@ export interface BusinessSettings {
 }
 
 interface DashboardData {
-  pricingRules: WindowCleaningPricingRules;
+  /**
+   * Every pricing configuration version this business has ever saved,
+   * oldest first — see docs/decisions/0009-pricing-configuration-versioning.md.
+   * The last entry is the active one; earlier entries are kept so quotes
+   * pinned to an older `pricingConfigId` can still be looked up.
+   */
+  pricingConfigurations: PricingConfiguration[];
   quotes: Quote[];
   settings: BusinessSettings;
 }
 
 function defaultData(): DashboardData {
   return {
-    pricingRules: demoBusiness.pricingRules,
+    pricingConfigurations: [demoPricingConfiguration],
     quotes: seedQuotes(),
     settings: {
       name: demoBusiness.name,
@@ -59,7 +66,12 @@ function loadData(): DashboardData {
     if (!raw) return defaultData();
     const parsed = JSON.parse(raw) as DashboardData;
     // Defensive against a stale shape from an earlier version of this store.
-    if (!parsed.pricingRules || !Array.isArray(parsed.quotes) || !parsed.settings) {
+    if (
+      !Array.isArray(parsed.pricingConfigurations) ||
+      parsed.pricingConfigurations.length === 0 ||
+      !Array.isArray(parsed.quotes) ||
+      !parsed.settings
+    ) {
       return defaultData();
     }
     return parsed;
@@ -87,13 +99,43 @@ function makeId(prefix: string): string {
 
 // ---------------------------------------------------------------- pricing --
 
-export function getPricingRules(): WindowCleaningPricingRules {
-  return loadData().pricingRules;
+/** The active pricing configuration — the highest version this business has saved. */
+function activePricingConfiguration(data: DashboardData): PricingConfiguration {
+  return data.pricingConfigurations[data.pricingConfigurations.length - 1]!;
 }
 
+function findPricingConfiguration(data: DashboardData, id: string): PricingConfiguration {
+  const configuration = data.pricingConfigurations.find((c) => c.id === id);
+  if (!configuration) throw new Error(`Pricing configuration "${id}" not found.`);
+  return configuration;
+}
+
+/** The business's current pricing configuration — what new quotes are priced and pinned against. */
+export function getPricingConfiguration(): PricingConfiguration {
+  return activePricingConfiguration(loadData());
+}
+
+export function getPricingRules(): WindowCleaningPricingRules {
+  return getPricingConfiguration().rules;
+}
+
+/**
+ * Saves an edited rate card as a new pricing configuration version rather
+ * than mutating the current one in place — see
+ * docs/decisions/0009-pricing-configuration-versioning.md. Quotes already
+ * priced under an earlier version keep their `pricingConfigId`, so this
+ * never retroactively changes a quote that already exists.
+ */
 export function savePricingRules(rules: WindowCleaningPricingRules): void {
   const data = loadData();
-  data.pricingRules = rules;
+  const current = activePricingConfiguration(data);
+  data.pricingConfigurations.push({
+    ...current,
+    id: makeId("pricing-config"),
+    version: current.version + 1,
+    effectiveAt: nowIso(),
+    rules,
+  });
   saveData(data);
 }
 
@@ -116,16 +158,22 @@ export interface CreateQuoteInput {
   analysis: PropertyAnalysisResult;
 }
 
-/** Creates a quote and prices it through the real pricing engine using the business's current rules. */
+function repriceQuote(quote: Quote, configuration: PricingConfiguration): void {
+  const pricingInput = reconcilePricingInput(quote.servicePreferences, quote.analysis.characteristics);
+  quote.estimate = calculateEstimate(pricingInput, configuration, quote.analysis.metadata.confidence);
+}
+
+/** Creates a quote and prices it through the real pricing engine using the business's current pricing configuration, pinning that version onto the quote. */
 export function createQuote(input: CreateQuoteInput): Quote {
   const data = loadData();
+  const configuration = activePricingConfiguration(data);
   const pricingInput = reconcilePricingInput(
     input.servicePreferences,
     input.analysis.characteristics,
   );
-  const estimate = calculateWindowCleaningEstimate(
+  const estimate = calculateEstimate(
     pricingInput,
-    data.pricingRules,
+    configuration,
     input.analysis.metadata.confidence,
   );
   const timestamp = nowIso();
@@ -140,6 +188,7 @@ export function createQuote(input: CreateQuoteInput): Quote {
     photos: input.photos,
     analysis: input.analysis,
     estimate,
+    pricingConfigId: configuration.id,
     status: "new",
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -150,7 +199,13 @@ export function createQuote(input: CreateQuoteInput): Quote {
   return quote;
 }
 
-/** Overwrites the quote's structured characteristics and recalculates its estimate through the real pricing engine. */
+/**
+ * Overwrites the quote's structured characteristics and re-prices it against
+ * the SAME pricing configuration it was originally created under (looked up
+ * by its pinned `pricingConfigId`) — correcting what a job involves must not
+ * silently pull in whatever prices are active today. Use
+ * `recalculateQuoteEstimate` to explicitly opt a quote into current pricing.
+ */
 export function updateQuoteAnalysis(
   id: string,
   characteristics: WindowCleaningCharacteristics,
@@ -160,23 +215,31 @@ export function updateQuoteAnalysis(
   if (!quote) throw new Error(`Quote "${id}" not found.`);
 
   quote.analysis = { ...quote.analysis, characteristics };
-  const pricingInput = reconcilePricingInput(quote.servicePreferences, characteristics);
-  quote.estimate = calculateWindowCleaningEstimate(
-    pricingInput,
-    data.pricingRules,
-    quote.analysis.metadata.confidence,
-  );
+  repriceQuote(quote, findPricingConfiguration(data, quote.pricingConfigId));
   quote.updatedAt = nowIso();
 
   saveData(data);
   return quote;
 }
 
-/** Re-runs pricing with the quote's current characteristics against the business's current rules — used when rules changed since the quote was created. */
+/**
+ * Re-prices the quote's existing characteristics against the business's
+ * CURRENT pricing configuration and re-pins `pricingConfigId` to it — an
+ * explicit opt-in to today's rules, used when rules changed since the quote
+ * was created.
+ */
 export function recalculateQuoteEstimate(id: string): Quote {
-  const quote = getQuote(id);
+  const data = loadData();
+  const quote = data.quotes.find((q) => q.id === id);
   if (!quote) throw new Error(`Quote "${id}" not found.`);
-  return updateQuoteAnalysis(id, quote.analysis.characteristics);
+
+  const configuration = activePricingConfiguration(data);
+  repriceQuote(quote, configuration);
+  quote.pricingConfigId = configuration.id;
+  quote.updatedAt = nowIso();
+
+  saveData(data);
+  return quote;
 }
 
 export function updateQuoteStatus(id: string, status: QuoteStatus): Quote {

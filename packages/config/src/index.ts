@@ -1,4 +1,4 @@
-import type { WindowCleaningPricingRules } from "@tallyvis/types";
+import type { PricingConfiguration, WindowCleaningPricingRules } from "@tallyvis/types";
 
 /**
  * Default pricing rules for the window-cleaning vertical.
@@ -31,7 +31,6 @@ export interface DemoBusiness {
   id: string;
   name: string;
   vertical: "window-cleaning";
-  pricingRules: WindowCleaningPricingRules;
 }
 
 /**
@@ -43,7 +42,22 @@ export const demoBusiness: DemoBusiness = {
   id: "demo-window-cleaning-co",
   name: "Demo Window Cleaning Co.",
   vertical: "window-cleaning",
-  pricingRules: windowCleaningDefaultPricingRules,
+};
+
+/**
+ * The demo business's starting pricing configuration — version 1, effective
+ * from a fixed point in the past so the seeded demo data reads naturally.
+ * `apps/app`'s mock store (see docs/decisions/0009) treats this as the seed
+ * of a version history it owns; nothing here mutates it in place.
+ */
+export const demoPricingConfiguration: PricingConfiguration = {
+  id: "demo-window-cleaning-co-pricing-v1",
+  businessId: demoBusiness.id,
+  industry: "window-cleaning",
+  currency: "USD",
+  version: 1,
+  effectiveAt: "2025-01-01T00:00:00.000Z",
+  rules: windowCleaningDefaultPricingRules,
 };
 
 export interface VerticalConfig {

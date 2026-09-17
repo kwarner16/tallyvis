@@ -1,32 +1,37 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { WindowCleaningPricingRules } from "@tallyvis/types";
-import { getPricingRules, savePricingRules } from "@/lib/quotes/store";
+import type { PricingConfiguration, WindowCleaningPricingRules } from "@tallyvis/types";
+import { getPricingConfiguration, savePricingRules } from "@/lib/quotes/store";
 import { PricingRulesForm } from "@/components/dashboard/PricingRulesForm";
 import { PricingPreviewTool } from "@/components/dashboard/PricingPreviewTool";
 
 export default function PricingPage() {
-  const [rules, setRules] = useState<WindowCleaningPricingRules | null>(null);
+  const [configuration, setConfiguration] = useState<PricingConfiguration | null>(null);
   const [savedRules, setSavedRules] = useState<WindowCleaningPricingRules | null>(null);
   const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
     queueMicrotask(() => {
-      const current = getPricingRules();
-      setRules(current);
-      setSavedRules(current);
+      const current = getPricingConfiguration();
+      setConfiguration(current);
+      setSavedRules(current.rules);
     });
   }, []);
 
-  if (!rules || !savedRules) return null;
+  if (!configuration || !savedRules) return null;
 
+  const rules = configuration.rules;
   const dirty = JSON.stringify(rules) !== JSON.stringify(savedRules);
 
+  function setRules(nextRules: WindowCleaningPricingRules) {
+    setConfiguration((current) => (current ? { ...current, rules: nextRules } : current));
+  }
+
   function handleSave() {
-    if (!rules) return;
     savePricingRules(rules);
     setSavedRules(rules);
+    setConfiguration(getPricingConfiguration());
     setJustSaved(true);
     setTimeout(() => setJustSaved(false), 2500);
   }
@@ -58,7 +63,7 @@ export default function PricingPage() {
 
       <PricingRulesForm rules={rules} onChange={setRules} onSave={handleSave} dirty={dirty} />
 
-      <PricingPreviewTool rules={rules} />
+      <PricingPreviewTool configuration={configuration} />
     </div>
   );
 }

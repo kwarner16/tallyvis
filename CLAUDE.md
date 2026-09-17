@@ -76,7 +76,8 @@ Tallyvis customer).
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 4 (Customer estimator workflow) — complete.**
+reason. Current phase: **Phase 6 (Pricing engine / pricing configuration
+versioning) — complete.**
 
 1. Foundation
 2. Marketing website foundation

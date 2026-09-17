@@ -85,6 +85,35 @@ export interface WindowCleaningPricingRules {
 /** Union of all vertical-specific pricing rule sets. Extend as new verticals are added. */
 export type PricingRules = WindowCleaningPricingRules;
 
+/**
+ * A single, versioned, business-owned pricing configuration. This is the
+ * envelope around `PricingRules` that makes pricing business-specific and
+ * versioned rather than a single global rate card — see
+ * docs/decisions/0009-pricing-configuration-versioning.md.
+ *
+ * `calculateEstimate()` in packages/pricing is the only function that should
+ * ever consume one of these; nothing else should read `.rules` directly and
+ * re-derive a price.
+ */
+export interface PricingConfiguration {
+  id: string;
+  businessId: string;
+  industry: PricingRules["vertical"];
+  currency: string;
+  /** Monotonically increasing per business, starting at 1. Never mutated in place. */
+  version: number;
+  /** ISO timestamp this version became the active configuration. */
+  effectiveAt: string;
+  rules: PricingRules;
+}
+
+/** The result of validating a `PricingRules` or `PricingConfiguration` before it can be saved or used. */
+export interface PricingValidationResult {
+  valid: boolean;
+  /** Human-readable, field-specific problems. Empty when `valid` is true. */
+  errors: string[];
+}
+
 export interface EstimateLineItem {
   label: string;
   amount: number;
@@ -184,6 +213,15 @@ export interface Quote {
   photos: QuotePhoto[];
   analysis: PropertyAnalysisResult;
   estimate: Estimate;
+  /**
+   * The exact pricing configuration version used to price this quote,
+   * pinned at creation time. Re-pricing an existing quote (e.g. after
+   * editing its analyzed characteristics) must look up this specific
+   * version rather than whatever configuration is currently active, so a
+   * business changing its prices does not retroactively change quotes that
+   * already exist.
+   */
+  pricingConfigId: string;
   status: QuoteStatus;
   createdAt: string;
   updatedAt: string;

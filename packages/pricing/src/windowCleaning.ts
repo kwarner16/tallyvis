@@ -5,11 +5,70 @@ import type {
   WindowCleaningCharacteristics,
   WindowCleaningPricingRules,
 } from "@tallyvis/types";
+import { roundMoney as round2 } from "./money";
 
 const CURRENCY = "USD";
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
+const NON_NEGATIVE_RULE_FIELDS = [
+  "basePrice",
+  "pricePerWindow",
+  "pricePerPane",
+  "secondStorySurcharge",
+  "screenCleaningPrice",
+  "trackCleaningPrice",
+  "hardWaterTreatmentPrice",
+  "interiorCleaningPrice",
+  "minimumJobPrice",
+  "travelFee",
+] as const satisfies readonly (keyof WindowCleaningPricingRules)[];
+
+const NON_NEGATIVE_CHARACTERISTIC_FIELDS = [
+  "windowCount",
+  "paneCount",
+  "stories",
+  "screens",
+  "tracks",
+  "estimatedLaborHours",
+] as const satisfies readonly (keyof WindowCleaningCharacteristics)[];
+
+/**
+ * Defensive, low-level sanity checks — distinct from the user-facing
+ * `validatePricingRules`/`validatePricingConfiguration` in this package.
+ * Those exist to give a business owner a helpful error message before
+ * saving a configuration; this exists so that if a malformed value ever
+ * reaches the actual math (a bad default, a bug upstream, a future AI
+ * output that wasn't sanity-checked), the engine fails loudly instead of
+ * silently producing NaN/Infinity/negative prices. Every caller of
+ * `calculateWindowCleaningEstimate` — including apps/web's direct calls —
+ * is protected uniformly by this, without needing to remember to validate
+ * first.
+ */
+function assertSanePricingInputs(
+  characteristics: WindowCleaningCharacteristics,
+  rules: WindowCleaningPricingRules,
+): void {
+  for (const field of NON_NEGATIVE_RULE_FIELDS) {
+    const value = rules[field];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new Error(`Invalid pricing rule "${field}": expected a non-negative number, got ${value}`);
+    }
+  }
+
+  for (const level of Object.keys(rules.difficultyMultipliers) as (keyof typeof rules.difficultyMultipliers)[]) {
+    const value = rules.difficultyMultipliers[level];
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      throw new Error(
+        `Invalid difficulty multiplier for "${level}": expected a positive number, got ${value}`,
+      );
+    }
+  }
+
+  for (const field of NON_NEGATIVE_CHARACTERISTIC_FIELDS) {
+    const value = characteristics[field];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new Error(`Invalid characteristic "${field}": expected a non-negative number, got ${value}`);
+    }
+  }
 }
 
 /**
@@ -26,6 +85,8 @@ export function calculateWindowCleaningEstimate(
   rules: WindowCleaningPricingRules,
   confidence: ConfidenceLevel = "high",
 ): Estimate {
+  assertSanePricingInputs(characteristics, rules);
+
   const lineItems: EstimateLineItem[] = [];
 
   lineItems.push({ label: "Base price", amount: rules.basePrice });

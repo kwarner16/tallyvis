@@ -4,12 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { buttonVariants } from "@tallyvis/ui";
-import { calculateWindowCleaningEstimate } from "@tallyvis/pricing";
+import { calculateEstimate } from "@tallyvis/pricing";
 import { demoBusiness } from "@tallyvis/config";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { reconcilePricingInput } from "@/lib/pricingReconciliation";
 import { getEstimateDisplay } from "@/lib/estimateDisplay";
-import { createQuote, getPricingRules } from "@/lib/quotes/store";
+import { createQuote, getPricingConfiguration } from "@/lib/quotes/store";
 import { CONTACT_URL } from "@/lib/urls";
 
 export default function ResultStepPage() {
@@ -28,11 +28,7 @@ export default function ResultStepPage() {
   const estimate = useMemo(() => {
     if (!analysis) return null;
     const pricingInput = reconcilePricingInput(input.services, analysis.characteristics);
-    return calculateWindowCleaningEstimate(
-      pricingInput,
-      getPricingRules(),
-      analysis.metadata.confidence,
-    );
+    return calculateEstimate(pricingInput, getPricingConfiguration(), analysis.metadata.confidence);
   }, [analysis, input.services]);
 
   // Every completed analysis becomes a quote the business can see, whether

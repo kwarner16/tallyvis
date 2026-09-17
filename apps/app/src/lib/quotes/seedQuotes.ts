@@ -1,6 +1,6 @@
 import type { PropertyAnalysisResult, Quote, WindowCleaningCharacteristics } from "@tallyvis/types";
-import { calculateWindowCleaningEstimate } from "@tallyvis/pricing";
-import { demoBusiness } from "@tallyvis/config";
+import { calculateEstimate } from "@tallyvis/pricing";
+import { demoBusiness, demoPricingConfiguration } from "@tallyvis/config";
 import { reconcilePricingInput } from "../pricingReconciliation";
 
 /**
@@ -71,11 +71,7 @@ function buildSeedQuote(input: SeedInput): Quote {
   };
   const result = analysis(input.characteristics, input.confidence, input.notes);
   const pricingInput = reconcilePricingInput(servicePreferences, result.characteristics);
-  const estimate = calculateWindowCleaningEstimate(
-    pricingInput,
-    demoBusiness.pricingRules,
-    input.confidence,
-  );
+  const estimate = calculateEstimate(pricingInput, demoPricingConfiguration, input.confidence);
   const createdAt = hoursAgo(input.createdHoursAgo);
 
   return {
@@ -92,6 +88,7 @@ function buildSeedQuote(input: SeedInput): Quote {
     photos: [],
     analysis: result,
     estimate,
+    pricingConfigId: demoPricingConfiguration.id,
     status: input.status,
     createdAt,
     updatedAt: createdAt,

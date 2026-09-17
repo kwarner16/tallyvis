@@ -1,16 +1,19 @@
 import { useState } from "react";
-import type { AccessibilityLevel, WindowCleaningPricingRules } from "@tallyvis/types";
-import { calculateWindowCleaningEstimate } from "@tallyvis/pricing";
+import type { AccessibilityLevel, PricingConfiguration } from "@tallyvis/types";
+import { calculateEstimate } from "@tallyvis/pricing";
 import { buttonVariants } from "@tallyvis/ui";
 
 const ACCESSIBILITY_OPTIONS: AccessibilityLevel[] = ["easy", "moderate", "difficult"];
 
 /**
- * Calls the exact same pricing engine the customer estimator and quote
- * detail page use — there is one pricing implementation in this product,
- * this is just a convenient way to exercise it against hypothetical inputs.
+ * Calls the exact same canonical pricing entry point the customer estimator
+ * and quote detail page use — there is one pricing implementation in this
+ * product, this is just a convenient way to exercise it against hypothetical
+ * inputs. `configuration` carries the rate card currently being edited on
+ * this page (possibly unsaved), so the preview always reflects the draft on
+ * screen, not just the last-saved version.
  */
-export function PricingPreviewTool({ rules }: { rules: WindowCleaningPricingRules }) {
+export function PricingPreviewTool({ configuration }: { configuration: PricingConfiguration }) {
   const [windowCount, setWindowCount] = useState(27);
   const [stories, setStories] = useState(2);
   const [screens, setScreens] = useState(12);
@@ -18,7 +21,7 @@ export function PricingPreviewTool({ rules }: { rules: WindowCleaningPricingRule
   const [result, setResult] = useState<number | null>(null);
 
   function runPreview() {
-    const estimate = calculateWindowCleaningEstimate(
+    const estimate = calculateEstimate(
       {
         vertical: "window-cleaning",
         windowCount,
@@ -33,7 +36,7 @@ export function PricingPreviewTool({ rules }: { rules: WindowCleaningPricingRule
         interiorCleaning: false,
         estimatedLaborHours: 0,
       },
-      rules,
+      configuration,
       "high",
     );
     setResult(estimate.total);
