@@ -43,3 +43,8 @@ export function getUserById(db: DatabaseSync, id: string): AuthUser | undefined 
   const row = db.prepare(`SELECT * FROM users WHERE id = ?`).get(id) as UserRow | undefined;
   return row ? toAuthUser(row) : undefined;
 }
+
+/** Password reset's one write — never called with a plaintext password, only an already-hashed one (see `auth/password.ts`'s `hashPassword`). */
+export function updatePasswordHash(db: DatabaseSync, userId: string, passwordHash: string): void {
+  db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(passwordHash, userId);
+}

@@ -20,6 +20,8 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
         email: business.email,
         phone: business.phone,
         serviceArea: business.serviceArea,
+        logoUrl: business.logoUrl?.trim() || undefined,
+        brandColor: business.brandColor?.trim() || undefined,
       });
       setBusiness(saved);
       setJustSaved(true);
@@ -87,6 +89,41 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
             onChange={(e) => setBusiness({ ...business, serviceArea: e.target.value })}
             className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
           />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-ink">
+            Logo URL <span className="font-normal text-ink-faint">(optional)</span>
+          </span>
+          <input
+            type="url"
+            value={business.logoUrl ?? ""}
+            onChange={(e) => setBusiness({ ...business, logoUrl: e.target.value })}
+            placeholder="https://yourwebsite.com/logo.png"
+            className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+          />
+          <span className="text-xs text-ink-faint">
+            A hosted image URL — shown on your public estimator and quote pages.
+          </span>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-ink">
+            Brand color <span className="font-normal text-ink-faint">(optional)</span>
+          </span>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={/^#[0-9a-fA-F]{6}$/.test(business.brandColor ?? "") ? business.brandColor! : "#2563eb"}
+              onChange={(e) => setBusiness({ ...business, brandColor: e.target.value })}
+              className="h-9 w-12 rounded border border-line bg-paper"
+            />
+            <input
+              type="text"
+              value={business.brandColor ?? ""}
+              onChange={(e) => setBusiness({ ...business, brandColor: e.target.value })}
+              placeholder="#2563eb"
+              className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+            />
+          </div>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-sm font-medium text-ink">Default industry</span>

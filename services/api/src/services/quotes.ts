@@ -15,6 +15,7 @@ import type { AuthSession } from "../auth/session";
 import * as quotesRepo from "../repositories/quotes";
 import * as customersService from "./customers";
 import * as pricingService from "./pricing";
+import { getSubscription, hasProductAccess } from "./subscriptions";
 
 export interface CreateQuoteInput {
   customer: CustomerInput;
@@ -74,8 +75,28 @@ export function getQuoteAiObservation(
  * because the caller is the business that owns the record.
  */
 export function createQuote(db: DatabaseSync, session: AuthSession, input: CreateQuoteInput): Quote {
+  requireProductAccess(db, session);
   const customer = customersService.findOrCreateCustomer(db, session, input.customer);
   return persistPricedQuote(db, session.businessId, customer.id, input);
+}
+
+/**
+ * Server-authoritative subscription gate (Phase 14 — see
+ * docs/decisions/0016-onboarding-billing-embed.md): `hasProductAccess`
+ * treats a business with no subscription row at all as legacy/pre-billing
+ * access, so this is a no-op for every business that predates Phase 14 or
+ * hasn't gone through onboarding yet — it only blocks a business whose own
+ * trial/subscription has actually expired or been canceled. Deliberately
+ * applied only here, on the authenticated dashboard's own quote creation,
+ * not on the public estimator's `createQuotePublic` — narrowing where
+ * enforcement lands keeps this phase's foundation low-risk; extending it
+ * to the public flow is a natural next step, not done here.
+ */
+function requireProductAccess(db: DatabaseSync, session: AuthSession): void {
+  const subscription = getSubscription(db, session);
+  if (!hasProductAccess(subscription)) {
+    throw new Error("Your Tallyvis trial or subscription has ended. Reactivate your plan to create new quotes.");
+  }
 }
 
 /**

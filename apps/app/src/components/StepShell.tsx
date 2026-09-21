@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { cn } from "@tallyvis/ui";
+import { useEstimator } from "@/lib/estimator/EstimatorContext";
 
 const STEPS = [
   { key: "property", label: "Property", href: "/estimate/property" },
@@ -17,13 +19,52 @@ export interface StepShellProps {
   children: ReactNode;
 }
 
+/**
+ * Reports this page's content height to a parent window via postMessage
+ * whenever it changes — harmless no-op at the top level (no listener
+ * cares), and the exact signal `public/embed.js`'s iframe listens for to
+ * auto-size itself (Phase 14 — see
+ * docs/decisions/0016-onboarding-billing-embed.md). Scoped to a
+ * `tallyvis-embed` source tag so it can never be mistaken for an
+ * arbitrary/unrelated postMessage.
+ */
+function useReportHeightToParent(): React.RefObject<HTMLDivElement | null> {
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+
+    const post = () => {
+      window.parent.postMessage({ source: "tallyvis-embed", type: "resize", height: node.scrollHeight }, "*");
+    };
+
+    const observer = new ResizeObserver(post);
+    observer.observe(node);
+    post();
+    return () => observer.disconnect();
+  }, []);
+
+  return rootRef;
+}
+
 /** Shared chrome for every /estimate/* step: wordmark + progress indicator. */
 export function StepShell({ children }: StepShellProps) {
   const pathname = usePathname();
+  const { embedId } = useEstimator();
   const currentIndex = STEPS.findIndex((step) => pathname?.startsWith(step.href));
+  const rootRef = useReportHeightToParent();
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col px-5 py-8 sm:px-6 sm:py-14">
+    <div
+      ref={rootRef}
+      className={cn(
+        "mx-auto flex w-full max-w-2xl flex-col px-5 py-8 sm:px-6 sm:py-14",
+        // Full-viewport height standalone; natural content height inside an
+        // embed iframe, so `embed.js`'s auto-resize actually shrinks to fit.
+        embedId ? "min-h-0" : "min-h-screen",
+      )}
+    >
       <header className="mb-8 flex flex-col gap-6 sm:mb-10">
         <Link href="/estimate" className="flex items-center gap-2 text-base font-semibold text-ink">
           <span aria-hidden="true" className="h-2 w-2 rounded-full bg-accent" />

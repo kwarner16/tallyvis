@@ -15,9 +15,11 @@ import {
   generateShareLink,
   getConfigurationById,
   getShareLinkStatus,
+  NotificationError,
   recalculateQuoteEstimate as apiRecalculateQuoteEstimate,
   recordJobOutcome as apiRecordJobOutcome,
   revokeShareLink,
+  sendQuoteEmail,
   updateQuoteAnalysis as apiUpdateQuoteAnalysis,
   updateQuoteCustomer as apiUpdateQuoteCustomer,
   updateQuoteStatus as apiUpdateQuoteStatus,
@@ -25,11 +27,13 @@ import {
   type AnalyzePropertyResult,
   type CreateQuoteInput,
   type JobOutcome,
+  type QuoteEmailResult,
   type SaveJobOutcomeInput,
   type ShareLinkStatus,
 } from "@tallyvis/api";
 import { requireContext } from "./session";
 import { buildQuoteShareUrl } from "./urls";
+import { describeNotificationErrorCategory } from "./notificationErrorMessages";
 import { describeAiErrorCategory } from "./aiErrorMessages";
 
 /**
@@ -162,4 +166,23 @@ export async function recordJobOutcomeAction(quoteId: string, input: SaveJobOutc
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   revalidatePath("/dashboard/job-outcomes");
   return outcome;
+}
+
+/**
+ * Emails the quote to the customer's address on file, using the same
+ * secure quote-share token mechanism the "Customer link" panel already
+ * uses (Phase 14 — see docs/decisions/0016-onboarding-billing-embed.md).
+ * Regenerates the share link as part of sending — any previously copied
+ * link becomes invalid, the same behavior "Regenerate" already has.
+ */
+export async function sendQuoteEmailAction(quoteId: string): Promise<QuoteEmailResult> {
+  const { db, session } = await requireContext();
+  try {
+    const result = await sendQuoteEmail(db, session, quoteId, buildQuoteShareUrl);
+    revalidatePath(`/dashboard/quotes/${quoteId}`);
+    return result;
+  } catch (err) {
+    if (err instanceof NotificationError) throw new Error(describeNotificationErrorCategory(err.category));
+    throw err;
+  }
 }

@@ -1,11 +1,22 @@
 "use client";
 
-import { useActionState } from "react";
+import { Suspense, useActionState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { buttonVariants } from "@tallyvis/ui";
 import { logInAction, type AuthActionState } from "@/lib/authActions";
 
 const initialState: AuthActionState = {};
+
+function ResetSuccessBanner() {
+  const justReset = useSearchParams().get("reset") === "success";
+  if (!justReset) return null;
+  return (
+    <p className="rounded-lg border border-accent bg-accent-soft px-3 py-2 text-sm text-accent-strong">
+      Your password has been reset. Log in with your new password.
+    </p>
+  );
+}
 
 const INPUT_CLASS =
   "rounded-lg border border-line bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong";
@@ -20,6 +31,10 @@ export default function LoginPage() {
         <p className="text-sm text-ink-soft">Access your Tallyvis dashboard.</p>
       </div>
 
+      <Suspense fallback={null}>
+        <ResetSuccessBanner />
+      </Suspense>
+
       <form action={formAction} className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <label htmlFor="email" className="text-sm font-medium text-ink">
@@ -28,9 +43,14 @@ export default function LoginPage() {
           <input id="email" name="email" type="email" required autoComplete="email" className={INPUT_CLASS} />
         </div>
         <div className="flex flex-col gap-2">
-          <label htmlFor="password" className="text-sm font-medium text-ink">
-            Password
-          </label>
+          <div className="flex items-center justify-between">
+            <label htmlFor="password" className="text-sm font-medium text-ink">
+              Password
+            </label>
+            <Link href="/forgot-password" className="text-xs font-medium text-accent-strong hover:text-accent">
+              Forgot password?
+            </Link>
+          </div>
           <input
             id="password"
             name="password"

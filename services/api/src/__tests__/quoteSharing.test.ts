@@ -175,12 +175,15 @@ describe("getQuoteByShareToken — public resolution", () => {
     expect(result?.expiresAt).toBeTruthy();
   });
 
-  it("returns only the business fields the public page actually needs — never the owner's login email or other internal fields", async () => {
+  it("returns only the business fields the public page actually needs — never the owner's login email, internal id, or other internal fields", async () => {
     const { db, session, quote } = await setUpBusinessWithQuote();
     const { token } = generateShareLink(db, session, quote.id);
 
     const result = getQuoteByShareToken(db, token)!;
-    expect(Object.keys(result.business).sort()).toEqual(["name", "phone"]);
+    // name/phone (Phase 10) plus logoUrl/brandColor (Phase 14 branding —
+    // see docs/decisions/0016-onboarding-billing-embed.md) are the entire
+    // allowed shape; email, id, and createdAt must never appear.
+    expect(Object.keys(result.business).sort()).toEqual(["brandColor", "logoUrl", "name", "phone"]);
     expect(JSON.stringify(result.business)).not.toContain("owner@sparkle.example");
     expect(JSON.stringify(result.business)).not.toContain(session.businessId);
   });

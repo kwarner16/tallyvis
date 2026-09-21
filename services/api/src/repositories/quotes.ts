@@ -49,6 +49,10 @@ interface QuoteRow {
   customer_request_note: string | null;
   /** Phase 13 — see 0003_job_outcomes.sql. Nullable: only set when AI analysis actually produced the observation this quote was saved with. */
   ai_observation_json: string | null;
+  /** Phase 14 — see 0004_accounts_billing_embed.sql. The most recent "send quote by email" attempt only, not a history. */
+  email_sent_at: string | null;
+  email_delivery_status: string | null;
+  email_provider_message_id: string | null;
 }
 
 const SELECT_QUOTE_WITH_CUSTOMER = `
@@ -99,6 +103,9 @@ function toQuote(row: QuoteRow): Quote {
     declinedAt: row.declined_at ?? undefined,
     changesRequestedAt: row.changes_requested_at ?? undefined,
     customerRequestNote: row.customer_request_note ?? undefined,
+    emailSentAt: row.email_sent_at ?? undefined,
+    emailDeliveryStatus: (row.email_delivery_status as Quote["emailDeliveryStatus"]) ?? undefined,
+    emailProviderMessageId: row.email_provider_message_id ?? undefined,
   };
 }
 
@@ -306,4 +313,18 @@ export function recordQuoteChangeRequest(
     .run(now, note, now, id, businessId);
   if (result.changes === 0) return undefined;
   return getQuoteById(db, businessId, id);
+}
+
+/** Records the most recent "send quote by email" attempt — a single slot, not a history, the same pattern as `recordQuoteChangeRequest`; see 0004_accounts_billing_embed.sql. Doesn't bump `updated_at` — sending an email isn't a change to the quote's own content, the same reasoning `recordQuoteViewed` already applies to view tracking. */
+export function recordQuoteEmailAttempt(
+  db: DatabaseSync,
+  businessId: string,
+  id: string,
+  status: "sent" | "failed",
+  providerMessageId: string | undefined,
+): void {
+  db.prepare(
+    `UPDATE quotes SET email_sent_at = ?, email_delivery_status = ?, email_provider_message_id = ?
+     WHERE id = ? AND business_id = ?`,
+  ).run(new Date().toISOString(), status, providerMessageId ?? null, id, businessId);
 }

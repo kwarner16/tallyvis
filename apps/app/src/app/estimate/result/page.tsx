@@ -16,7 +16,7 @@ import {
 import { CONTACT_URL } from "@/lib/urls";
 
 export default function ResultStepPage() {
-  const { analysis, aiObservation, input, quoteId, setQuoteId, reset } = useEstimator();
+  const { analysis, aiObservation, input, quoteId, embedId, setQuoteId, reset } = useEstimator();
   const router = useRouter();
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [requested, setRequested] = useState(false);
@@ -33,7 +33,10 @@ export default function ResultStepPage() {
   useEffect(() => {
     if (!analysis) return;
     let cancelled = false;
-    Promise.all([getPublicBusinessAction(), getPublicActiveConfigurationAction()]).then(
+    Promise.all([
+      getPublicBusinessAction(embedId ?? undefined),
+      getPublicActiveConfigurationAction(embedId ?? undefined),
+    ]).then(
       ([loadedBusiness, configuration]) => {
         if (cancelled) return;
         setBusiness(loadedBusiness);
@@ -53,23 +56,26 @@ export default function ResultStepPage() {
   useEffect(() => {
     if (!analysis || quoteId || hasCreatedQuote.current) return;
     hasCreatedQuote.current = true;
-    createPublicQuoteAction({
-      customer: {
-        name: input.contact.name,
-        email: input.contact.email,
-        phone: input.contact.phone || undefined,
+    createPublicQuoteAction(
+      {
+        customer: {
+          name: input.contact.name,
+          email: input.contact.email,
+          phone: input.contact.phone || undefined,
+        },
+        property: {
+          propertyType: input.property.propertyType!,
+          stories: input.property.stories!,
+          address: input.property.address || undefined,
+        },
+        servicePreferences: input.services,
+        notes: input.notes,
+        photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
+        analysis,
+        aiObservation: aiObservation ?? undefined,
       },
-      property: {
-        propertyType: input.property.propertyType!,
-        stories: input.property.stories!,
-        address: input.property.address || undefined,
-      },
-      servicePreferences: input.services,
-      notes: input.notes,
-      photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
-      analysis,
-      aiObservation: aiObservation ?? undefined,
-    }).then(({ id }) => setQuoteId(id));
+      embedId ?? undefined,
+    ).then(({ id }) => setQuoteId(id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis]);
 
@@ -112,9 +118,20 @@ export default function ResultStepPage() {
     );
   }
 
+  // Phase 14 branding (see docs/decisions/0016-onboarding-billing-embed.md)
+  // — a single CSS custom-property override, not a theme system.
+  const brandStyle =
+    business.brandColor && /^#[0-9a-fA-F]{6}$/.test(business.brandColor)
+      ? ({ "--color-accent-strong": business.brandColor } as React.CSSProperties)
+      : undefined;
+
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-8" style={brandStyle}>
       <div className="flex flex-col gap-2">
+        {business.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- an arbitrary business-hosted URL, not an optimizable local/remote asset Next.js knows about
+          <img src={business.logoUrl} alt={business.name} className="h-8 w-auto object-contain" />
+        ) : null}
         <p className="text-xs font-semibold uppercase tracking-[0.15em] text-accent-strong">
           {business.name}
         </p>

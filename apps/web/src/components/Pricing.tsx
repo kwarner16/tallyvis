@@ -1,41 +1,27 @@
 import Link from "next/link";
+import { PLANS } from "@tallyvis/config";
 import { Container, SectionHeading, buttonVariants } from "@tallyvis/ui";
 import { Reveal } from "./Reveal";
+import { SIGNUP_URL } from "@/lib/urls";
 
-const TIERS = [
-  {
-    name: "Starter",
-    price: "$79",
-    period: "/month",
-    description: "For a single crew getting started with window-cleaning estimating.",
-    features: ["Window cleaning estimating", "Core business dashboard", "Email support"],
-    featured: false,
-  },
-  {
-    name: "Growth",
-    price: "$149",
-    period: "/month",
-    description: "For businesses ready to put quoting on their own website.",
-    features: ["Everything in Starter", "Website embed widget", "Priority support"],
-    featured: true,
-  },
-  {
-    name: "Pro",
-    price: "$299",
-    period: "/month",
-    description: "For multi-crew operations that need more visibility.",
-    features: ["Everything in Growth", "Multiple locations", "Advanced reporting"],
-    featured: false,
-  },
-  {
-    name: "Enterprise",
-    price: "Custom",
-    period: "",
-    description: "For larger operations with custom needs.",
-    features: ["Custom integrations", "Dedicated support", "Custom SLAs"],
-    featured: false,
-  },
-];
+/**
+ * Phase 14 (see docs/decisions/0016-onboarding-billing-embed.md) — the
+ * three real self-serve tiers come from `@tallyvis/config`'s `PLANS`, the
+ * single authoritative plan definition apps/app's onboarding/billing also
+ * reads, so a price or feature list can never drift between the two.
+ * "Enterprise" isn't a self-serve plan (it isn't in `PLANS`), so it stays
+ * a plain contact-sales card pointing at /contact, exactly as before.
+ * Every "Get started" link now goes to signup with the chosen plan
+ * preserved (`?plan=...`) — `apps/app`'s signup page carries it through to
+ * the dashboard's onboarding prompt, which preselects it.
+ */
+
+const ENTERPRISE_TIER = {
+  name: "Enterprise",
+  price: "Custom",
+  description: "For larger operations with custom needs.",
+  features: ["Custom integrations", "Dedicated support", "Custom SLAs"],
+};
 
 export function Pricing() {
   return (
@@ -45,37 +31,35 @@ export function Pricing() {
           <SectionHeading
             eyebrow="Early pricing"
             heading="Starting plans."
-            description="Pricing reflects where the product is today and will evolve as Tallyvis grows. An onboarding fee may apply."
+            description="Every plan includes a 7-day free trial. Pricing reflects where the product is today and will evolve as Tallyvis grows. A one-time website installation fee may apply."
           />
         </Reveal>
 
         <Reveal delayMs={100} className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {TIERS.map((tier) => (
+          {PLANS.map((plan) => (
             <div
-              key={tier.name}
+              key={plan.id}
               className={`flex flex-col gap-6 rounded-2xl border p-6 ${
-                tier.featured ? "border-accent bg-paper shadow-sm" : "border-line bg-paper"
+                plan.featured ? "border-accent bg-paper shadow-sm" : "border-line bg-paper"
               }`}
             >
-              {tier.featured ? (
+              {plan.featured ? (
                 <span className="w-fit rounded-full bg-accent-strong px-3 py-1 text-xs font-semibold text-paper">
                   Most popular
                 </span>
               ) : null}
               <div>
-                <p className="text-lg font-semibold text-ink">{tier.name}</p>
+                <p className="text-lg font-semibold text-ink">{plan.name}</p>
                 <p className="mt-2 flex items-baseline gap-1">
                   <span className="text-3xl font-semibold tracking-tight text-ink">
-                    {tier.price}
+                    ${(plan.monthlyPriceCents / 100).toFixed(0)}
                   </span>
-                  {tier.period ? (
-                    <span className="text-sm text-ink-faint">{tier.period}</span>
-                  ) : null}
+                  <span className="text-sm text-ink-faint">/month</span>
                 </p>
-                <p className="mt-2 text-sm text-ink-soft">{tier.description}</p>
+                <p className="mt-2 text-sm text-ink-soft">{plan.description}</p>
               </div>
               <ul className="flex flex-1 flex-col gap-2 text-sm text-ink-soft">
-                {tier.features.map((feature) => (
+                {plan.features.map((feature) => (
                   <li key={feature} className="flex items-start gap-2">
                     <span
                       aria-hidden="true"
@@ -86,16 +70,39 @@ export function Pricing() {
                 ))}
               </ul>
               <Link
-                href="/contact"
+                href={`${SIGNUP_URL}?plan=${plan.id}`}
                 className={buttonVariants({
-                  variant: tier.featured ? "primary" : "outline",
+                  variant: plan.featured ? "primary" : "outline",
                   className: "w-full",
                 })}
               >
-                {tier.name === "Enterprise" ? "Talk to us" : "Get started"}
+                Get started
               </Link>
             </div>
           ))}
+
+          <div className="flex flex-col gap-6 rounded-2xl border border-line bg-paper p-6">
+            <div>
+              <p className="text-lg font-semibold text-ink">{ENTERPRISE_TIER.name}</p>
+              <p className="mt-2 flex items-baseline gap-1">
+                <span className="text-3xl font-semibold tracking-tight text-ink">
+                  {ENTERPRISE_TIER.price}
+                </span>
+              </p>
+              <p className="mt-2 text-sm text-ink-soft">{ENTERPRISE_TIER.description}</p>
+            </div>
+            <ul className="flex flex-1 flex-col gap-2 text-sm text-ink-soft">
+              {ENTERPRISE_TIER.features.map((feature) => (
+                <li key={feature} className="flex items-start gap-2">
+                  <span aria-hidden="true" className="mt-1 h-1.5 w-1.5 shrink-0 rounded-sm bg-accent" />
+                  {feature}
+                </li>
+              ))}
+            </ul>
+            <Link href="/contact" className={buttonVariants({ variant: "outline", className: "w-full" })}>
+              Talk to us
+            </Link>
+          </div>
         </Reveal>
       </Container>
     </section>

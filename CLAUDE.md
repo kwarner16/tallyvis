@@ -99,8 +99,8 @@ simplification pending real multi-business public routing — see
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 13 (Real-world job outcome & data
-collection foundation) — complete.**
+reason. Current phase: **Phase 14 (Customer onboarding, billing,
+notifications & website embedding) — complete.**
 
 1. Foundation
 2. Marketing website foundation
@@ -188,7 +188,38 @@ collection foundation) — complete.**
     untouched. See `docs/decisions/0015-job-outcome-tracking.md`. Using
     this collected data to actually improve AI/pricing defaults remains
     future work — this phase only builds the capability to collect it.
-14. Billing (Phase 9 already shipped real authentication)
+14. Customer onboarding, billing, notifications & website embedding — the
+    foundation for a business to discover Tallyvis, sign up, choose a
+    plan, start a 7-day no-card trial, configure, install the estimator
+    on its own website, and have a customer email it back. Password
+    recovery (`password_reset_tokens`, the same hashed-single-use-token
+    pattern sessions/share-links already use); a small `EmailProvider`
+    notification abstraction (dev-console provider + a real Resend
+    integration, unverified live — no credentials in this environment)
+    powering both password-reset emails and a new "email this quote to
+    the customer" action that reuses the existing secure quote-share
+    token mechanism unchanged; a `subscriptions` table (one row per
+    business, reconcilable against Stripe) with a server-authoritative
+    `hasProductAccess` gate — a business with no subscription row keeps
+    legacy access, never retroactively locked out; a separate
+    `billing_charges` table for the one-time website-installation fee,
+    deliberately not folded into the recurring plan; a Stripe billing
+    provider (real REST calls, also unverified live) plus a signature
+    verified webhook endpoint; `@tallyvis/config`'s `PLANS` as the single
+    plan definition apps/web's pricing section and apps/app's
+    onboarding/billing both read, closing the "Get started" buttons that
+    previously all dead-ended at `/contact`; and a universal
+    `public_embed_id`-based website embed (`public/embed.js` + `/embed/
+    [embedId]`) that resolves a business publicly without ever trusting
+    or exposing its internal `businessId`, finally giving the public
+    estimator the real multi-business routing ADR 0011 flagged as a
+    stated Phase 9 simplification (still the fallback when no embed id is
+    given). `packages/pricing` is untouched. See
+    `docs/decisions/0016-onboarding-billing-embed.md` for exactly what
+    was verified against real services (password reset, quote email via
+    the dev provider, trial/access-gate logic, embed resolution, webhook
+    signature/event handling against hand-built payloads) vs. what
+    remains architecture-only pending real Resend/Stripe credentials.
 15. Integrations and additional verticals
 
 ## Product ownership

@@ -22,7 +22,7 @@ const STAGE_INTERVAL_MS = 450;
 const MIN_DISPLAY_MS = STAGE_INTERVAL_MS * (STAGES.length - 1) + 300;
 
 export default function AnalyzingStepPage() {
-  const { input, setAnalysis, setAnalysisError, analysisError } = useEstimator();
+  const { input, embedId, setAnalysis, setAnalysisError, analysisError } = useEstimator();
   const router = useRouter();
   const [stageIndex, setStageIndex] = useState(0);
   const [retryToken, setRetryToken] = useState(0);
@@ -62,13 +62,16 @@ export default function AnalyzingStepPage() {
     // docs/decisions/0013-ai-analysis-foundation.md.
     const analyze = Promise.all(input.photos.map((photo) => blobUrlToDataUrl(photo.previewUrl))).then(
       (dataUrls) =>
-        analyzePublicPropertyAction({
-          images: dataUrls.map((url) => ({ url })),
-          property: {
-            address: input.property.address || undefined,
-            stories: input.property.stories ?? undefined,
+        analyzePublicPropertyAction(
+          {
+            images: dataUrls.map((url) => ({ url })),
+            property: {
+              address: input.property.address || undefined,
+              stories: input.property.stories ?? undefined,
+            },
           },
-        }),
+          embedId ?? undefined,
+        ),
     );
 
     Promise.all([analyze, minDisplay])

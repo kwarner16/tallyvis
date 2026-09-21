@@ -1,7 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Business } from "@tallyvis/types";
 import type { AuthSession } from "../auth/session";
-import { getBusinessById, updateBusiness, type UpdateBusinessInput } from "../repositories/businesses";
+import {
+  getBusinessById,
+  getBusinessByPublicEmbedId,
+  touchEmbedLastSeen,
+  updateBusiness,
+  type UpdateBusinessInput,
+} from "../repositories/businesses";
 
 export type { UpdateBusinessInput };
 
@@ -48,4 +54,18 @@ export function updateCurrentBusiness(
 ): Business {
   validateUpdateBusinessInput(input);
   return updateBusiness(db, session.businessId, input);
+}
+
+/**
+ * Resolves a business for the public estimator embed (Phase 14 — see
+ * docs/decisions/0016-onboarding-billing-embed.md). `embedId` is the one
+ * piece of business identity a browser is trusted to assert directly — it
+ * is the PUBLIC identifier, distinct from `id`, designed for exactly this.
+ * Also records that the embed was actually loaded, for the dashboard's
+ * install-status indicator.
+ */
+export function resolveEmbedBusiness(db: DatabaseSync, embedId: string): Business | undefined {
+  const business = getBusinessByPublicEmbedId(db, embedId);
+  if (business) touchEmbedLastSeen(db, business.id);
+  return business;
 }

@@ -12,6 +12,7 @@ import {
   getDefaultPublicBusiness,
   getQuoteByShareToken,
   requestQuoteChangesByToken,
+  resolveEmbedBusiness,
   type AnalyzePropertyInput,
   type AnalyzePropertyResult,
   type CreateQuoteInput,
@@ -20,31 +21,44 @@ import {
 import { describeAiErrorCategory } from "./aiErrorMessages";
 
 /**
- * Unauthenticated actions for the public `/estimate/*` customer wizard —
- * see `getDefaultPublicBusiness`'s own comment and
- * docs/decisions/0011-persistence-auth-and-multi-tenancy.md for why "which
- * business" is resolved this way rather than from a session, and why
- * that's a stated Phase 9 simplification rather than real multi-business
- * public routing.
+ * Unauthenticated actions for the public `/estimate/*` customer wizard.
+ *
+ * "Which business" is resolved one of two ways: an `embedId` (Phase 14 —
+ * see docs/decisions/0016-onboarding-billing-embed.md), the PUBLIC,
+ * opaque identifier a website embed asserts, resolved server-side via
+ * `resolveEmbedBusiness` — never trusted as an internal businessId, never
+ * used for anything beyond this public lookup; or, when no `embedId` is
+ * given (the marketing site's own bare `/estimate/*` wizard, unchanged
+ * since Phase 9), `getDefaultPublicBusiness` — see that function's own
+ * comment and docs/decisions/0011-persistence-auth-and-multi-tenancy.md
+ * for why that particular case remains a stated simplification rather
+ * than real multi-business routing.
  */
 
-async function requirePublicBusiness(): Promise<Business> {
-  const business = getDefaultPublicBusiness(getDb());
-  if (!business) throw new Error("No business is configured yet.");
+async function requirePublicBusiness(embedId?: string): Promise<Business> {
+  const business = embedId ? resolveEmbedBusiness(getDb(), embedId) : getDefaultPublicBusiness(getDb());
+  if (!business) {
+    throw new Error(embedId ? "This estimator isn't set up correctly. Contact the business directly." : "No business is configured yet.");
+  }
   return business;
 }
 
-async function requirePublicBusinessId(): Promise<string> {
-  return (await requirePublicBusiness()).id;
+async function requirePublicBusinessId(embedId?: string): Promise<string> {
+  return (await requirePublicBusiness(embedId)).id;
 }
 
-export async function getPublicBusinessAction(): Promise<Business> {
-  return requirePublicBusiness();
+export async function getPublicBusinessAction(embedId?: string): Promise<Business> {
+  return requirePublicBusiness(embedId);
 }
 
-export async function getPublicActiveConfigurationAction(): Promise<PricingConfiguration> {
-  const businessId = await requirePublicBusinessId();
+export async function getPublicActiveConfigurationAction(embedId?: string): Promise<PricingConfiguration> {
+  const businessId = await requirePublicBusinessId(embedId);
   return getActiveConfigurationForBusiness(getDb(), businessId);
+}
+
+/** Used by `/embed/[embedId]`'s landing page to verify the id is real BEFORE redirecting into the wizard, so an invalid/typo'd embed snippet fails fast with a clear message instead of silently breaking several steps later. */
+export async function verifyEmbedIdAction(embedId: string): Promise<boolean> {
+  return Boolean(resolveEmbedBusiness(getDb(), embedId));
 }
 
 /**
@@ -64,8 +78,11 @@ export async function getPublicActiveConfigurationAction(): Promise<PricingConfi
  * request, so it can later be compared against whatever ends up confirmed.
  * See docs/decisions/0015-job-outcome-tracking.md.
  */
-export async function analyzePublicPropertyAction(input: AnalyzePropertyInput): Promise<AnalyzePropertyResult> {
-  const businessId = await requirePublicBusinessId();
+export async function analyzePublicPropertyAction(
+  input: AnalyzePropertyInput,
+  embedId?: string,
+): Promise<AnalyzePropertyResult> {
+  const businessId = await requirePublicBusinessId(embedId);
   try {
     return await analyzePropertyPublic(getDb(), businessId, input);
   } catch (err) {
@@ -98,8 +115,8 @@ export async function isUsingMockAiProviderAction(): Promise<boolean> {
  * server-side estimate) would be more than the browser needs and more than
  * an anonymous caller should see.
  */
-export async function createPublicQuoteAction(input: CreateQuoteInput): Promise<{ id: string }> {
-  const businessId = await requirePublicBusinessId();
+export async function createPublicQuoteAction(input: CreateQuoteInput, embedId?: string): Promise<{ id: string }> {
+  const businessId = await requirePublicBusinessId(embedId);
   const quote = createQuotePublic(getDb(), businessId, input);
   return { id: quote.id };
 }

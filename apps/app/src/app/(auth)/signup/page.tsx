@@ -1,7 +1,9 @@
 "use client";
 
-import { useActionState } from "react";
+import { Suspense, useActionState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { isPlanId } from "@tallyvis/config";
 import { buttonVariants } from "@tallyvis/ui";
 import { signUpAction, type AuthActionState } from "@/lib/authActions";
 
@@ -10,7 +12,17 @@ const initialState: AuthActionState = {};
 const INPUT_CLASS =
   "rounded-lg border border-line bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong";
 
-export default function SignUpPage() {
+/**
+ * Preserves a plan chosen on the marketing site's pricing section
+ * (`?plan=growth`) through signup — carried as a hidden field so
+ * `signUpAction` can remember it for the dashboard's onboarding prompt
+ * (Phase 14 — see docs/decisions/0016-onboarding-billing-embed.md). An
+ * unrecognized/missing value is simply omitted, never trusted beyond "a
+ * plan to preselect," and account creation itself never depends on it.
+ */
+function SignUpForm() {
+  const rawPlan = useSearchParams().get("plan");
+  const intendedPlan = rawPlan && isPlanId(rawPlan) ? rawPlan : "";
   const [state, formAction, pending] = useActionState(signUpAction, initialState);
 
   return (
@@ -24,6 +36,7 @@ export default function SignUpPage() {
       </div>
 
       <form action={formAction} className="flex flex-col gap-4">
+        <input type="hidden" name="plan" value={intendedPlan} />
         <div className="flex flex-col gap-2">
           <label htmlFor="businessName" className="text-sm font-medium text-ink">
             Business name
@@ -88,5 +101,13 @@ export default function SignUpPage() {
         </Link>
       </p>
     </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignUpForm />
+    </Suspense>
   );
 }

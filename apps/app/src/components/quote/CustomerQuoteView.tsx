@@ -9,7 +9,7 @@ import { PROPERTY_TYPE_LABELS } from "@/lib/propertyTypeLabels";
 import { QuoteStatusBadge } from "@/components/dashboard/QuoteStatusBadge";
 
 /** Only the fields this component actually renders — the public page's source (`PublicBusinessSummary` in `@tallyvis/api`) is intentionally narrower than the full `Business` record; the authenticated preview page happens to pass a full `Business`, which satisfies this structurally without needing its extra fields. */
-type BusinessSummary = Pick<Business, "name" | "phone">;
+type BusinessSummary = Pick<Business, "name" | "phone" | "logoUrl" | "brandColor">;
 
 export interface CustomerQuoteActions {
   onAccept: () => void;
@@ -72,9 +72,22 @@ export function CustomerQuoteView({ quote, business, expiresAt, actions }: Custo
     setRequestingChanges(false);
   }
 
+  // Phase 14 branding (see docs/decisions/0016-onboarding-billing-embed.md)
+  // — one CSS custom-property override, not a theme system: every
+  // `accent-strong`-based color (buttons, this heading) picks it up
+  // automatically via packages/ui's existing token, nothing else changes.
+  const brandStyle =
+    business.brandColor && /^#[0-9a-fA-F]{6}$/.test(business.brandColor)
+      ? ({ "--color-accent-strong": business.brandColor } as React.CSSProperties)
+      : undefined;
+
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-8" style={brandStyle}>
       <div className="flex flex-col gap-2">
+        {business.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- an arbitrary business-hosted URL, not an optimizable local/remote asset Next.js knows about
+          <img src={business.logoUrl} alt={business.name} className="h-8 w-auto object-contain" />
+        ) : null}
         <p className="text-xs font-semibold uppercase tracking-[0.15em] text-accent-strong">
           {business.name}
         </p>

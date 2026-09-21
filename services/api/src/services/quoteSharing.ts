@@ -116,6 +116,9 @@ export function revokeShareLink(db: DatabaseSync, session: AuthSession, quoteId:
 export interface PublicBusinessSummary {
   name: string;
   phone: string;
+  /** Phase 14 branding (see docs/decisions/0016-onboarding-billing-embed.md) — optional, presentation only, never a substitute for the excluded fields (email, id, createdAt) this summary deliberately still leaves out. */
+  logoUrl?: string;
+  brandColor?: string;
 }
 
 export interface PublicQuoteView {
@@ -146,7 +149,7 @@ export function getQuoteByShareToken(db: DatabaseSync, rawToken: string): Public
   const active = shareTokensRepo.getActiveShareToken(db, resolved.businessId, resolved.quoteId);
   return {
     quote,
-    business: { name: business.name, phone: business.phone },
+    business: { name: business.name, phone: business.phone, logoUrl: business.logoUrl, brandColor: business.brandColor },
     expiresAt: active?.expiresAt ?? "",
   };
 }

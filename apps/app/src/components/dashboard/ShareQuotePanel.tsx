@@ -8,6 +8,7 @@ import {
   generateQuoteShareLinkAction,
   getQuoteShareLinkStatusAction,
   revokeQuoteShareLinkAction,
+  sendQuoteEmailAction,
   type ShareLinkView,
 } from "@/lib/quoteActions";
 
@@ -42,8 +43,9 @@ export function ShareQuotePanel({ quote }: { quote: Quote }) {
   const [status, setStatus] = useState<ShareLinkView | null>(null);
   const [freshUrl, setFreshUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [busy, setBusy] = useState<"generate" | "revoke" | null>(null);
+  const [busy, setBusy] = useState<"generate" | "revoke" | "email" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [emailResult, setEmailResult] = useState<{ sentAt: string } | null>(null);
 
   useEffect(() => {
     getQuoteShareLinkStatusAction(quoteId)
@@ -78,6 +80,23 @@ export function ShareQuotePanel({ quote }: { quote: Quote }) {
       setFreshUrl(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not revoke this link.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleSendEmail() {
+    setBusy("email");
+    setError(null);
+    setEmailResult(null);
+    try {
+      const result = await sendQuoteEmailAction(quoteId);
+      setEmailResult({ sentAt: result.sentAt });
+      const refreshed = await getQuoteShareLinkStatusAction(quoteId);
+      setStatus(refreshed);
+      setFreshUrl(null); // the token went directly into the email — never shown here for a business-triggered send
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not email this quote.");
     } finally {
       setBusy(null);
     }
@@ -181,6 +200,17 @@ export function ShareQuotePanel({ quote }: { quote: Quote }) {
         </div>
       ) : null}
 
+      {emailResult ? (
+        <p className="rounded-lg border border-accent bg-accent-soft px-3 py-2 text-sm text-accent-strong">
+          Emailed to {quote.customer.email} at {formatDateTime(emailResult.sentAt)}.
+        </p>
+      ) : quote.emailSentAt ? (
+        <p className="text-xs text-ink-faint">
+          Last emailed {formatDateTime(quote.emailSentAt)}
+          {quote.emailDeliveryStatus === "failed" ? " — delivery failed" : ""}.
+        </p>
+      ) : null}
+
       {error ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       ) : null}
@@ -188,9 +218,17 @@ export function ShareQuotePanel({ quote }: { quote: Quote }) {
       <div className="flex flex-wrap gap-3">
         <button
           type="button"
+          onClick={handleSendEmail}
+          disabled={busy !== null || !quote.customer.email}
+          className={buttonVariants({ variant: "primary" })}
+        >
+          {busy === "email" ? "Sending…" : "Email quote to customer"}
+        </button>
+        <button
+          type="button"
           onClick={handleGenerate}
           disabled={busy !== null}
-          className={buttonVariants({ variant: status.active ? "outline" : "primary" })}
+          className={buttonVariants({ variant: "outline" })}
         >
           {busy === "generate" ? "Generating…" : status.active ? "Regenerate link" : "Generate customer link"}
         </button>

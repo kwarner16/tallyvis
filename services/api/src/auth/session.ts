@@ -64,3 +64,14 @@ export function revokeSession(db: DatabaseSync, token: string | undefined): void
   if (!token) return;
   db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(hashToken(token));
 }
+
+/**
+ * Revokes every session belonging to a user — used after a successful
+ * password reset (Phase 14 — see
+ * docs/decisions/0016-onboarding-billing-embed.md): if the account was
+ * compromised, whoever reset the password is the only party who should
+ * stay signed in anywhere, on any device.
+ */
+export function revokeAllSessionsForUser(db: DatabaseSync, userId: string): void {
+  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(userId);
+}

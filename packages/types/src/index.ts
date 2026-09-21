@@ -157,6 +157,21 @@ export interface Business {
   serviceArea: string;
   defaultIndustry: "window-cleaning";
   createdAt: string;
+  /**
+   * Phase 14 (see docs/decisions/0016-onboarding-billing-embed.md) — the
+   * opaque, public identifier a website embed resolves this business by.
+   * Deliberately never `id` itself: `id` is an internal handle that
+   * appears in authenticated URLs and database foreign keys, while this
+   * is the one identifier meant to sit in a public `<script>` tag on a
+   * customer's own website. Always present for any business row created
+   * since Phase 14; earlier rows were backfilled by the same migration.
+   */
+  publicEmbedId: string;
+  /** Optional branding — used by the public estimator/quote pages where straightforward. Neither implies a full theme editor. */
+  logoUrl?: string;
+  brandColor?: string;
+  /** Set whenever the embed route actually loads for this business — the dashboard's best-effort "is this installed" signal, never a guarantee. */
+  embedLastSeenAt?: string;
 }
 
 export type PropertyType = "single-family" | "townhouse" | "other";
@@ -290,4 +305,15 @@ export interface Quote {
   /** The most recent "request changes" submission's timestamp and note — a single slot, not a history. See the ADR for why one note fits this phase. */
   changesRequestedAt?: string;
   customerRequestNote?: string;
+  /**
+   * The most recent "send quote by email" attempt (Phase 14 — see
+   * docs/decisions/0016-onboarding-billing-embed.md) — a single slot, the
+   * same "most recent, not a history" shape `changesRequestedAt` already
+   * uses. `emailSentAt` is when the attempt was made, not a guarantee of
+   * inbox delivery; `emailDeliveryStatus` reflects only what the
+   * configured provider reported at send time.
+   */
+  emailSentAt?: string;
+  emailDeliveryStatus?: "sent" | "failed";
+  emailProviderMessageId?: string;
 }

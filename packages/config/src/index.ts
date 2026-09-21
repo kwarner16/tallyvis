@@ -1,5 +1,15 @@
 import type { PricingConfiguration, WindowCleaningPricingRules } from "@tallyvis/types";
 
+export {
+  PLANS,
+  TRIAL_DAYS,
+  WEBSITE_INSTALLATION_FEE,
+  getPlan,
+  isPlanId,
+  type Plan,
+  type PlanId,
+} from "./plans";
+
 /**
  * Default pricing rules for the window-cleaning vertical.
  *

@@ -23,6 +23,19 @@ import {
 } from "./types";
 
 const STORAGE_KEY = "tallyvis-estimator-draft-v1";
+/**
+ * Phase 14 (see docs/decisions/0016-onboarding-billing-embed.md) — kept in
+ * a SEPARATE localStorage key from `STORAGE_KEY`, deliberately not cleared
+ * by `reset()`: a customer completing one estimate and starting another
+ * inside the same embedded iframe session is still on the same business's
+ * widget, so the embed identity should survive "start a new estimate."
+ * Written by `/embed/[embedId]`'s landing page before it redirects into
+ * `/estimate/property` — since that redirect fully remounts the
+ * `/estimate/*` route tree (a different layout subtree, so a fresh
+ * `EstimatorProvider`), React context state alone would not survive the
+ * transition; localStorage does.
+ */
+const EMBED_ID_STORAGE_KEY = "tallyvis-estimator-embed-id";
 const MAX_PHOTO_SIZE_BYTES = 10 * 1024 * 1024;
 
 /**
@@ -36,6 +49,22 @@ type PersistedInput = Pick<CustomerInput, "property" | "services" | "notes" | "c
 export interface PhotoRejection {
   name: string;
   reason: string;
+}
+
+/**
+ * Writes the embed id directly to localStorage without needing an
+ * `EstimatorProvider` mounted — used by `/embed/[embedId]`'s landing page,
+ * which sits outside `/estimate/*`'s layout tree and redirects into it
+ * right after. See `EMBED_ID_STORAGE_KEY`'s own comment for why
+ * localStorage (not React context) is what actually carries this across
+ * that redirect.
+ */
+export function persistEmbedId(id: string): void {
+  try {
+    window.localStorage.setItem(EMBED_ID_STORAGE_KEY, id);
+  } catch {
+    // Storage unavailable — the embed simply won't survive a mid-flow refresh; not fatal to this page load.
+  }
 }
 
 interface EstimatorContextValue {
@@ -53,6 +82,8 @@ interface EstimatorContextValue {
   analysisError: string | null;
   /** Set once this session's result has been saved as a Quote, to guard against creating duplicates if the result page re-renders. */
   quoteId: string | null;
+  /** Which business's embed this session belongs to, if any — `null` for the marketing site's own bare `/estimate/*` wizard. See `EMBED_ID_STORAGE_KEY`'s comment. */
+  embedId: string | null;
   updateProperty: (patch: Partial<PropertyDetails>) => void;
   updateServices: (patch: Partial<ServicePreferences>) => void;
   updateContact: (patch: Partial<ContactDetails>) => void;
@@ -62,6 +93,7 @@ interface EstimatorContextValue {
   setAnalysis: (result: PropertyAnalysisResult | null, observation?: RawPropertyObservation | null) => void;
   setAnalysisError: (message: string | null) => void;
   setQuoteId: (id: string) => void;
+  setEmbedId: (id: string) => void;
   reset: () => void;
 }
 
@@ -73,12 +105,18 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
   const [aiObservation, setAiObservation] = useState<RawPropertyObservation | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [quoteId, setQuoteId] = useState<string | null>(null);
+  const [embedId, setEmbedIdState] = useState<string | null>(null);
   const hydrated = useRef(false);
 
   /** `observation` defaults to `null` (not "leave whatever was there") — every caller sets both explicitly, so a stale AI observation can never survive a manual re-entry or a fresh analysis. */
   const setAnalysis = useCallback((result: PropertyAnalysisResult | null, observation: RawPropertyObservation | null = null) => {
     setAnalysisState(result);
     setAiObservation(observation);
+  }, []);
+
+  const setEmbedId = useCallback((id: string) => {
+    setEmbedIdState(id);
+    persistEmbedId(id);
   }, []);
 
   useEffect(() => {
@@ -89,6 +127,8 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           const persisted = JSON.parse(raw) as PersistedInput;
           setInput((prev) => ({ ...prev, ...persisted }));
         }
+        const storedEmbedId = window.localStorage.getItem(EMBED_ID_STORAGE_KEY);
+        if (storedEmbedId) setEmbedIdState(storedEmbedId);
       } catch {
         // Corrupt or unavailable storage — start fresh rather than block the flow.
       } finally {
@@ -194,6 +234,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       aiObservation,
       analysisError,
       quoteId,
+      embedId,
       updateProperty,
       updateServices,
       updateContact,
@@ -203,6 +244,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       setAnalysis,
       setAnalysisError,
       setQuoteId,
+      setEmbedId,
       reset,
     }),
     [
@@ -211,6 +253,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       aiObservation,
       analysisError,
       quoteId,
+      embedId,
       updateProperty,
       updateServices,
       updateContact,
@@ -218,6 +261,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       addPhotos,
       removePhoto,
       setAnalysis,
+      setEmbedId,
       reset,
     ],
   );

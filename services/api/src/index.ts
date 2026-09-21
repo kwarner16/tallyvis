@@ -22,6 +22,7 @@ export {
   getCurrentBusiness,
   updateCurrentBusiness,
   getDefaultPublicBusiness,
+  resolveEmbedBusiness,
   type UpdateBusinessInput,
 } from "./services/business";
 
@@ -91,3 +92,31 @@ export {
   type AnalyzePropertyResult,
   type AiErrorCategory,
 } from "./services/aiAnalysis";
+
+// Phase 14 — account recovery, notifications, billing/subscriptions, and
+// website-embed foundation. See
+// docs/decisions/0016-onboarding-billing-embed.md.
+
+export { requestPasswordReset, resetPassword } from "./services/passwordReset";
+
+export { NotificationError, isUsingDevEmailProvider, type NotificationErrorCategory } from "./notifications";
+
+export { sendQuoteEmail, type QuoteEmailResult } from "./services/quoteEmail";
+
+export {
+  getSubscription,
+  resolveEffectiveStatus,
+  hasProductAccess,
+  startTrial,
+  listBillingCharges,
+  billingConfigured,
+  createCheckoutSessionForPlan,
+  type Subscription,
+  type SubscriptionStatus,
+  type BillingCharge,
+} from "./services/subscriptions";
+
+export { BillingProviderError, type BillingErrorCategory } from "./billing";
+
+export { handleStripeWebhook, WebhookVerificationError } from "./services/billingWebhooks";
+export { isWebhookConfigured } from "./billing";
