@@ -40,19 +40,6 @@ export function getQuote(db: DatabaseSync, session: AuthSession, id: string): Qu
   return quotesRepo.getQuoteById(db, session.businessId, id);
 }
 
-/**
- * The other deliberate exception to session-scoped access (see
- * `getDefaultPublicBusiness`): the read-only, unauthenticated
- * `/quote/[id]` customer view. `quote.id` is an unguessable-but-not-secret
- * token — this is intentionally not a real access-control mechanism, only
- * a reasonable placeholder until real customer-facing auth/link delivery
- * exists. Read-only: nothing public can reach the mutation functions
- * above, which all require a session.
- */
-export function getQuotePublic(db: DatabaseSync, id: string): Quote | undefined {
-  return quotesRepo.getQuoteByIdAnyBusiness(db, id);
-}
-
 function getQuoteOrThrow(db: DatabaseSync, session: AuthSession, id: string): Quote {
   const quote = getQuote(db, session, id);
   if (!quote) throw new Error(`Quote "${id}" not found.`);

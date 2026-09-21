@@ -34,16 +34,6 @@ export function getDefaultPublicBusiness(db: DatabaseSync): Business | undefined
   return row ? getBusinessById(db, row.id) : undefined;
 }
 
-/**
- * For the public, read-only `/quote/[id]` view to show which business the
- * quote it already legitimately has belongs to — not a general "look up
- * any business" escape hatch. See `services/quotes.ts`'s `getQuotePublic`,
- * which has the same access-control caveat.
- */
-export function getBusinessForPublicQuote(db: DatabaseSync, businessId: string): Business | undefined {
-  return getBusinessById(db, businessId);
-}
-
 /** There is no "get any business by id" in the public surface — a session can only ever resolve to its own business. */
 export function getCurrentBusiness(db: DatabaseSync, session: AuthSession): Business {
   const business = getBusinessById(db, session.businessId);

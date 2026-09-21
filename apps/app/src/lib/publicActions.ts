@@ -2,13 +2,16 @@
 
 import type { Business, PricingConfiguration, Quote } from "@tallyvis/types";
 import {
+  acceptQuoteByToken,
   createQuotePublic,
+  declineQuoteByToken,
   getActiveConfigurationForBusiness,
-  getBusinessForPublicQuote,
   getDb,
   getDefaultPublicBusiness,
-  getQuotePublic,
+  getQuoteByShareToken,
+  requestQuoteChangesByToken,
   type CreateQuoteInput,
+  type PublicQuoteView,
 } from "@tallyvis/api";
 
 /**
@@ -53,14 +56,29 @@ export async function createPublicQuoteAction(input: CreateQuoteInput): Promise<
   return { id: quote.id };
 }
 
-/** For the read-only `/quote/[id]` customer view — see `getQuotePublic`'s own comment for the access-control caveat this carries. */
-export async function getPublicQuoteAction(
-  id: string,
-): Promise<{ quote: Quote; business: Business } | null> {
-  const db = getDb();
-  const quote = getQuotePublic(db, id);
-  if (!quote) return null;
-  const business = getBusinessForPublicQuote(db, quote.businessId);
-  if (!business) return null;
-  return { quote, business };
+/**
+ * For the customer-facing `/quote/[token]` view (Phase 10 — see
+ * docs/decisions/0012-secure-quote-sharing.md). The raw share token IS the
+ * authorization: `getQuoteByShareToken` resolves it server-side to exactly
+ * one quote and its owning business, or nothing at all. There is no id
+ * parameter here for a caller to substitute — only the token.
+ */
+export async function getPublicQuoteByTokenAction(token: string): Promise<PublicQuoteView | null> {
+  const result = getQuoteByShareToken(getDb(), token);
+  return result ?? null;
+}
+
+/** Customer action: accept. Operates only on whatever quote `token` resolves to — see `getQuoteByShareToken`'s comment. */
+export async function acceptPublicQuoteAction(token: string): Promise<Quote> {
+  return acceptQuoteByToken(getDb(), token);
+}
+
+/** Customer action: decline. Same token-only authorization as accept. */
+export async function declinePublicQuoteAction(token: string): Promise<Quote> {
+  return declineQuoteByToken(getDb(), token);
+}
+
+/** Customer action: request changes / contact the business — persisted as a note, not a status change. */
+export async function requestPublicQuoteChangesAction(token: string, note: string): Promise<Quote> {
+  return requestQuoteChangesByToken(getDb(), token, note);
 }

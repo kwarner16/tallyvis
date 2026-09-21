@@ -274,4 +274,20 @@ export interface Quote {
   status: QuoteStatus;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Customer interaction/response tracking (added in Phase 10 alongside
+   * secure quote sharing — see
+   * docs/decisions/0012-secure-quote-sharing.md). All optional and set only
+   * as the corresponding event actually happens: `undefined` means it
+   * hasn't happened yet, not that it's unknown. `acceptedAt`/`declinedAt`
+   * are set once, the first time `status` becomes that value, and never
+   * change again — both are terminal in `QUOTE_STATUS_TRANSITIONS`.
+   */
+  firstViewedAt?: string;
+  lastViewedAt?: string;
+  acceptedAt?: string;
+  declinedAt?: string;
+  /** The most recent "request changes" submission's timestamp and note — a single slot, not a history. See the ADR for why one note fits this phase. */
+  changesRequestedAt?: string;
+  customerRequestNote?: string;
 }

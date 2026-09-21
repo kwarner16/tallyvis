@@ -94,3 +94,10 @@ limitation is stated in the route's own file comment, not hidden.
   email/SMS delivery, no customer authentication, no way for a customer to
   respond (accept/decline) from that view yet. Those are explicitly future
   work, not silently missing.
+
+> **Superseded (Phase 10):** the `quote.id`-as-access-token model above and
+> the "no way to respond" gap are both addressed by
+> `docs/decisions/0012-secure-quote-sharing.md` — a dedicated share-token
+> mechanism at `/quote/[token]`, and accept/decline/request-changes actions
+> on that page. Email/SMS delivery and customer authentication remain
+> future work.

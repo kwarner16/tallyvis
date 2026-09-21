@@ -146,20 +146,22 @@ all, so they can't go through `requireContext()`:
    (`createCustomerForBusiness`), where the signed-in dashboard's
    `createQuote` reuses a matching one (`findOrCreateCustomer`). Matching on
    an unverified email here would make the endpoint an oracle: submit a
-   guessed address, and the created quote — and the `/quote/[id]` page it
+   guessed address, and the created quote — and the customer-facing page it
    yields — would hand back that customer's real name, phone, and address.
    The cost is a duplicate customer row when a genuine returning customer
    re-submits; that is a tidiness problem the business can reconcile, and a
    far better trade than a lookup service for its customer list. For the
    same reason `createPublicQuoteAction` returns only the new quote's id
    rather than the whole persisted `Quote`.
-2. **The customer-facing quote view (`/quote/[id]`)**, unchanged from its
-   Phase 8 design (`docs/decisions/0010-quote-creation-and-customer-view.md`):
-   `quote.id` is an unguessable-but-unauthenticated token. `getQuotePublic`
-   is read-only — nothing reachable from that route can mutate a quote —
-   and the limitation (no real link delivery, no verification the viewer
-   is that quote's customer) is documented in the route's own file comment
-   as future work, not silently missing.
+2. **The customer-facing quote view**, at Phase 8's design
+   (`docs/decisions/0010-quote-creation-and-customer-view.md`) reachable at
+   `/quote/[id]` — `quote.id` doubling as an unguessable-but-unauthenticated
+   access token was a stated limitation of that phase, not a hidden one, and
+   Phase 10 replaces it with a real mechanism: a dedicated, revocable share
+   token at `/quote/[token]`. See
+   `docs/decisions/0012-secure-quote-sharing.md`, which supersedes this
+   exception's access-control model (the "no email/SMS delivery yet" and
+   "no customer authentication" limitations remain, and are restated there).
 
 Neither of these weakens the dashboard's isolation: every dashboard
 Server Action still requires a real, validated session, and both public

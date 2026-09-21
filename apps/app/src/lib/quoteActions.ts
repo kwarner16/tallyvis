@@ -10,14 +10,19 @@ import type {
 } from "@tallyvis/types";
 import {
   createQuote as apiCreateQuote,
+  generateShareLink,
   getConfigurationById,
+  getShareLinkStatus,
   recalculateQuoteEstimate as apiRecalculateQuoteEstimate,
+  revokeShareLink,
   updateQuoteAnalysis as apiUpdateQuoteAnalysis,
   updateQuoteCustomer as apiUpdateQuoteCustomer,
   updateQuoteStatus as apiUpdateQuoteStatus,
   type CreateQuoteInput,
+  type ShareLinkStatus,
 } from "@tallyvis/api";
 import { requireContext } from "./session";
+import { buildQuoteShareUrl } from "./urls";
 
 /**
  * Thin server-side wrappers: every one of these re-derives the business
@@ -77,4 +82,37 @@ export async function updateQuoteStatusAction(quoteId: string, status: QuoteStat
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard");
   return quote;
+}
+
+/**
+ * Business-side quote sharing (Phase 10 — see
+ * docs/decisions/0012-secure-quote-sharing.md). `requireContext()` resolves
+ * `session.businessId` from the cookie exactly like every other action in
+ * this file; `@tallyvis/api`'s share-link functions re-check that the quote
+ * actually belongs to that business before touching anything, so a forged
+ * quoteId can't reach another business's link.
+ */
+
+export interface ShareLinkView extends ShareLinkStatus {
+  /** Only ever present immediately after `generateQuoteShareLinkAction` — the raw token is never stored, so it can't be re-derived later. Copy it now. */
+  url?: string;
+}
+
+export async function getQuoteShareLinkStatusAction(quoteId: string): Promise<ShareLinkView> {
+  const { db, session } = await requireContext();
+  return getShareLinkStatus(db, session, quoteId);
+}
+
+/** Generates (or regenerates, revoking any existing link first) a share link and returns the full customer-facing URL — the one and only time the raw token is available to show/copy. */
+export async function generateQuoteShareLinkAction(quoteId: string): Promise<ShareLinkView> {
+  const { db, session } = await requireContext();
+  const result = generateShareLink(db, session, quoteId);
+  revalidatePath(`/dashboard/quotes/${quoteId}`);
+  return { active: true, createdAt: result.createdAt, expiresAt: result.expiresAt, url: buildQuoteShareUrl(result.token) };
+}
+
+export async function revokeQuoteShareLinkAction(quoteId: string): Promise<void> {
+  const { db, session } = await requireContext();
+  revokeShareLink(db, session, quoteId);
+  revalidatePath(`/dashboard/quotes/${quoteId}`);
 }

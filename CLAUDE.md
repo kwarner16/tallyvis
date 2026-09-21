@@ -99,8 +99,8 @@ simplification pending real multi-business public routing — see
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 9 (Real persistence, authentication &
-multi-tenant SaaS foundation) — complete.**
+reason. Current phase: **Phase 10 (Customer-facing quote experience &
+secure quote sharing) — complete.**
 
 1. Foundation
 2. Marketing website foundation
@@ -120,7 +120,8 @@ multi-tenant SaaS foundation) — complete.**
 8. Quote creation & customer workflow — a business-initiated "New quote"
    flow in the dashboard (reusing `createQuote()` unchanged), quote
    editing, pricing-configuration provenance on each quote, and a
-   read-only customer-facing quote view at `/quote/[id]`; see
+   read-only customer-facing quote view (originally at `/quote/[id]`,
+   superseded by Phase 10 below); see
    `docs/decisions/0010-quote-creation-and-customer-view.md`
 9. Real persistence, authentication & multi-tenant SaaS foundation —
    `services/api` becomes a real SQLite-backed service with real
@@ -128,12 +129,21 @@ multi-tenant SaaS foundation) — complete.**
    (`Business`/`Customer`/`PricingConfiguration`/`Quote`) is tenant-isolated
    and server-authorized; the `localStorage` mock store is retired. See
    `docs/decisions/0011-persistence-auth-and-multi-tenancy.md`
-10. Real AI / computer vision integration (replaces the Phase 4 mock)
-11. Human review / confidence system
-12. Data flywheel — using the real usage data Phase 9's persistence now
+10. Customer-facing quote experience & secure quote sharing — a dedicated,
+    revocable share-token mechanism at `/quote/[token]` replaces the
+    quote-id-as-authorization placeholder ADR 0010/0011 each flagged as a
+    stated limitation; a polished read-only customer quote page gains real
+    accept/decline/request-changes actions; the dashboard gets a
+    generate/regenerate/revoke/preview share-link panel and customer
+    view/response activity tracking. Reordered ahead of the AI/CV work
+    below at the founder's direction — see
+    `docs/decisions/0012-secure-quote-sharing.md`
+11. Real AI / computer vision integration (replaces the Phase 4 mock)
+12. Human review / confidence system
+13. Data flywheel — using the real usage data Phase 9's persistence now
     captures to improve AI/pricing defaults over time
-13. Billing (Phase 9 already shipped real authentication)
-14. Integrations and additional verticals
+14. Billing (Phase 9 already shipped real authentication)
+15. Integrations and additional verticals
 
 ## Product ownership
 

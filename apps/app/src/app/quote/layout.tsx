@@ -2,14 +2,15 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 /**
- * Shared chrome for the customer-facing /quote/[id] view — just the
+ * Shared chrome for the customer-facing /quote/[token] view — just the
  * wordmark, no dashboard nav or estimator step progress. Kept separate from
  * `DashboardShell` on purpose: nothing rendered under this layout should
- * ever require a business to be signed in. Phase 9 added real accounts, but
- * this route is deliberately outside them — the quote id is still an
- * unguessable-but-unauthenticated token, a limitation recorded in
- * docs/decisions/0010-quote-creation-and-customer-view.md and
- * docs/decisions/0011-persistence-auth-and-multi-tenancy.md.
+ * ever require a business to be signed in — a customer never has an
+ * account here. Since Phase 10, the dynamic segment is a share token, not
+ * the quote's own database id: possession of it is the actual access
+ * credential, not an incidental byproduct of an unguessable id. See
+ * docs/decisions/0012-secure-quote-sharing.md, which supersedes the
+ * access-control limitation ADR 0010 originally recorded here.
  */
 export default function QuoteViewLayout({ children }: { children: ReactNode }) {
   return (

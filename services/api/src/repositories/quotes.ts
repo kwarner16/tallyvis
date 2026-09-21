@@ -39,6 +39,13 @@ interface QuoteRow {
   customer_address: string | null;
   customer_created_at: string;
   customer_updated_at: string;
+  /** Customer interaction/response tracking — see 0002_quote_sharing.sql. Nullable: set only as the corresponding event actually happens. */
+  first_viewed_at: string | null;
+  last_viewed_at: string | null;
+  accepted_at: string | null;
+  declined_at: string | null;
+  changes_requested_at: string | null;
+  customer_request_note: string | null;
 }
 
 const SELECT_QUOTE_WITH_CUSTOMER = `
@@ -83,6 +90,12 @@ function toQuote(row: QuoteRow): Quote {
     status: row.status as QuoteStatus,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    firstViewedAt: row.first_viewed_at ?? undefined,
+    lastViewedAt: row.last_viewed_at ?? undefined,
+    acceptedAt: row.accepted_at ?? undefined,
+    declinedAt: row.declined_at ?? undefined,
+    changesRequestedAt: row.changes_requested_at ?? undefined,
+    customerRequestNote: row.customer_request_note ?? undefined,
   };
 }
 
@@ -142,14 +155,6 @@ export function getQuoteById(db: DatabaseSync, businessId: string, id: string): 
   return row ? toQuote(row) : undefined;
 }
 
-/** No business_id filter — only for the public, read-only `/quote/[id]` view. See `services/quotes.ts`'s `getQuotePublic`. */
-export function getQuoteByIdAnyBusiness(db: DatabaseSync, id: string): Quote | undefined {
-  const row = db.prepare(`${SELECT_QUOTE_WITH_CUSTOMER} WHERE q.id = ?`).get(id) as
-    | QuoteRow
-    | undefined;
-  return row ? toQuote(row) : undefined;
-}
-
 export function listQuotes(db: DatabaseSync, businessId: string): Quote[] {
   const rows = db
     .prepare(`${SELECT_QUOTE_WITH_CUSTOMER} WHERE q.business_id = ? ORDER BY q.created_at DESC`)
@@ -191,6 +196,13 @@ export function updateQuoteCustomerId(
   return getQuoteById(db, businessId, id);
 }
 
+/**
+ * Also stamps `accepted_at`/`declined_at` the first (and, since both are
+ * terminal in `QUOTE_STATUS_TRANSITIONS`, only) time the status actually
+ * becomes that value — the `COALESCE` means an already-set timestamp is
+ * never overwritten, so it stays the moment of the real event even if this
+ * function is ever called again for an unrelated status change.
+ */
 export function updateQuoteStatus(
   db: DatabaseSync,
   businessId: string,
@@ -199,8 +211,49 @@ export function updateQuoteStatus(
 ): Quote | undefined {
   const now = new Date().toISOString();
   const result = db
-    .prepare(`UPDATE quotes SET status = ?, updated_at = ? WHERE id = ? AND business_id = ?`)
-    .run(status, now, id, businessId);
+    .prepare(
+      `UPDATE quotes SET
+         status = ?,
+         updated_at = ?,
+         accepted_at = COALESCE(?, accepted_at),
+         declined_at = COALESCE(?, declined_at)
+       WHERE id = ? AND business_id = ?`,
+    )
+    .run(
+      status,
+      now,
+      status === "accepted" ? now : null,
+      status === "declined" ? now : null,
+      id,
+      businessId,
+    );
+  if (result.changes === 0) return undefined;
+  return getQuoteById(db, businessId, id);
+}
+
+/** Records that the quote was viewed — `first_viewed_at` is set only once (via `COALESCE`), `last_viewed_at` every time. Called on every successful share-token resolution, so a business can tell whether its customer has looked at the quote at all. */
+export function recordQuoteViewed(db: DatabaseSync, businessId: string, id: string): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE quotes SET first_viewed_at = COALESCE(first_viewed_at, ?), last_viewed_at = ?
+     WHERE id = ? AND business_id = ?`,
+  ).run(now, now, id, businessId);
+}
+
+/** The customer's free-text "request changes" note — this always reflects the most recent request, not a history of every one; see docs/decisions/0012-secure-quote-sharing.md for why a single note fits this phase rather than a separate messages table. */
+export function recordQuoteChangeRequest(
+  db: DatabaseSync,
+  businessId: string,
+  id: string,
+  note: string,
+): Quote | undefined {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `UPDATE quotes SET changes_requested_at = ?, customer_request_note = ?, updated_at = ?
+       WHERE id = ? AND business_id = ?`,
+    )
+    .run(now, note, now, id, businessId);
   if (result.changes === 0) return undefined;
   return getQuoteById(db, businessId, id);
 }

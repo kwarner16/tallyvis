@@ -10,22 +10,15 @@ import {
   updateQuoteStatusAction,
 } from "@/lib/quoteActions";
 import { getEstimateDisplay } from "@/lib/estimateDisplay";
+import { formatQuoteNumber } from "@/lib/quoteNumber";
+import { PROPERTY_TYPE_LABELS } from "@/lib/propertyTypeLabels";
 import { ConfidenceBadge } from "@/components/dashboard/ConfidenceBadge";
 import { QuoteStatusBadge } from "@/components/dashboard/QuoteStatusBadge";
 import { CharacteristicsEditor } from "@/components/dashboard/CharacteristicsEditor";
 import { CustomerEditor } from "@/components/dashboard/CustomerEditor";
 import { QuoteVisual } from "@/components/dashboard/QuoteVisual";
 import { QuoteActions } from "@/components/dashboard/QuoteActions";
-
-function quoteNumber(id: string): string {
-  return id.split("_").pop()?.slice(0, 8).toUpperCase() ?? id;
-}
-
-const PROPERTY_TYPE_LABELS: Record<string, string> = {
-  "single-family": "Single-family home",
-  townhouse: "Townhouse",
-  other: "Other property",
-};
+import { ShareQuotePanel } from "@/components/dashboard/ShareQuotePanel";
 
 export interface QuoteDetailClientProps {
   initialQuote: Quote;
@@ -106,17 +99,9 @@ export function QuoteDetailClient({ initialQuote, initialPricingConfiguration }:
             <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
               {quote.customer.name || "Unnamed customer"}
             </h1>
-            <p className="text-xs text-ink-faint">Quote #{quoteNumber(quote.id)}</p>
+            <p className="text-xs text-ink-faint">Quote #{formatQuoteNumber(quote.id)}</p>
           </div>
           <div className="flex items-center gap-3">
-            <Link
-              href={`/quote/${quote.id}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-sm font-medium text-accent-strong hover:text-accent"
-            >
-              View as customer &#8599;
-            </Link>
             <QuoteStatusBadge status={quote.status} />
           </div>
         </div>
@@ -291,6 +276,8 @@ export function QuoteDetailClient({ initialQuote, initialPricingConfiguration }:
                 : "The pricing configuration used for this quote is no longer available."}
             </p>
           </div>
+
+          <ShareQuotePanel quote={quote} />
 
           <div className="rounded-2xl border border-line bg-paper p-5">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">

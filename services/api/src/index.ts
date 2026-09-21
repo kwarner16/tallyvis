@@ -22,7 +22,6 @@ export {
   getCurrentBusiness,
   updateCurrentBusiness,
   getDefaultPublicBusiness,
-  getBusinessForPublicQuote,
   type UpdateBusinessInput,
 } from "./services/business";
 
@@ -43,7 +42,6 @@ export {
 export {
   listQuotes,
   getQuote,
-  getQuotePublic,
   createQuote,
   createQuotePublic,
   updateQuoteAnalysis,
@@ -52,3 +50,16 @@ export {
   updateQuoteStatus,
   type CreateQuoteInput,
 } from "./services/quotes";
+
+export {
+  getShareLinkStatus,
+  generateShareLink,
+  revokeShareLink,
+  getQuoteByShareToken,
+  acceptQuoteByToken,
+  declineQuoteByToken,
+  requestQuoteChangesByToken,
+  type ShareLinkStatus,
+  type ShareLinkResult,
+  type PublicQuoteView,
+} from "./services/quoteSharing";
