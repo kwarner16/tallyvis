@@ -11,7 +11,7 @@
  */
 import type { PropertyAnalysisResult, WindowCleaningCharacteristics } from "@tallyvis/types";
 import { calculateEstimate, reconcilePricingInput } from "@tallyvis/pricing";
-import { windowCleaningDefaultPricingRules } from "@tallyvis/config";
+import { demoBusiness, windowCleaningDefaultPricingRules } from "@tallyvis/config";
 import { getDb } from "./client";
 import { hashPassword } from "../auth/password";
 import { createBusiness } from "../repositories/businesses";
@@ -180,7 +180,7 @@ async function main() {
   }
 
   const business = createBusiness(db, {
-    name: "Demo Window Cleaning Co.",
+    name: demoBusiness.name,
     email: DEV_OWNER_EMAIL,
     phone: "(555) 010-0110",
     serviceArea: "Greater Springfield area",

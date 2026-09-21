@@ -138,6 +138,21 @@ all, so they can't go through `requireContext()`:
    and the ADR say so — and it only affects which business the public
    wizard quotes against, never which business a signed-in dashboard user
    can see.
+
+   Because this path takes input from someone who has proved nothing about
+   who they are, it carries one invariant that must not be relaxed later:
+   **an anonymous submission never resolves onto a `Customer` record that
+   already exists.** `createQuotePublic` always creates a fresh customer row
+   (`createCustomerForBusiness`), where the signed-in dashboard's
+   `createQuote` reuses a matching one (`findOrCreateCustomer`). Matching on
+   an unverified email here would make the endpoint an oracle: submit a
+   guessed address, and the created quote — and the `/quote/[id]` page it
+   yields — would hand back that customer's real name, phone, and address.
+   The cost is a duplicate customer row when a genuine returning customer
+   re-submits; that is a tidiness problem the business can reconcile, and a
+   far better trade than a lookup service for its customer list. For the
+   same reason `createPublicQuoteAction` returns only the new quote's id
+   rather than the whole persisted `Quote`.
 2. **The customer-facing quote view (`/quote/[id]`)**, unchanged from its
    Phase 8 design (`docs/decisions/0010-quote-creation-and-customer-view.md`):
    `quote.id` is an unguessable-but-unauthenticated token. `getQuotePublic`

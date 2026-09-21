@@ -5,9 +5,11 @@ import type { ReactNode } from "react";
  * Shared chrome for the customer-facing /quote/[id] view — just the
  * wordmark, no dashboard nav or estimator step progress. Kept separate from
  * `DashboardShell` on purpose: nothing rendered under this layout should
- * ever require a business to be signed in (there's no auth system yet
- * either way — see docs/decisions/0010-quote-creation-and-customer-view.md
- * for the access-control limitation this implies).
+ * ever require a business to be signed in. Phase 9 added real accounts, but
+ * this route is deliberately outside them — the quote id is still an
+ * unguessable-but-unauthenticated token, a limitation recorded in
+ * docs/decisions/0010-quote-creation-and-customer-view.md and
+ * docs/decisions/0011-persistence-auth-and-multi-tenancy.md.
  */
 export default function QuoteViewLayout({ children }: { children: ReactNode }) {
   return (

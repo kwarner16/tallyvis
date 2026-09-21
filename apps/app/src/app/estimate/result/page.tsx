@@ -68,7 +68,7 @@ export default function ResultStepPage() {
       notes: input.notes,
       photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
       analysis,
-    }).then((quote) => setQuoteId(quote.id));
+    }).then(({ id }) => setQuoteId(id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis]);
 

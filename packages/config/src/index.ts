@@ -34,9 +34,13 @@ export interface DemoBusiness {
 }
 
 /**
- * There is no real business-account system yet (that's Phase 5+/11). The
- * customer estimator (apps/app) needs *some* business to quote against, so
- * this is a clearly-labeled demo business — not a real Tallyvis customer.
+ * A clearly-labeled demo business — never a real Tallyvis customer and
+ * never a production data source. Since Phase 9 gave `services/api` real
+ * businesses backed by SQLite, this exists for exactly one purpose: naming
+ * the demo tenant that `services/api`'s dev seed script creates
+ * (`pnpm --filter @tallyvis/api seed`). Anything a running app reads comes
+ * from the database, not from here. See
+ * docs/decisions/0011-persistence-auth-and-multi-tenancy.md.
  */
 export const demoBusiness: DemoBusiness = {
   id: "demo-window-cleaning-co",
@@ -46,9 +50,13 @@ export const demoBusiness: DemoBusiness = {
 
 /**
  * The demo business's starting pricing configuration — version 1, effective
- * from a fixed point in the past so the seeded demo data reads naturally.
- * `apps/app`'s mock store (see docs/decisions/0009) treats this as the seed
- * of a version history it owns; nothing here mutates it in place.
+ * from a fixed point in the past. Illustrative only: since Phase 9, a real
+ * business's version-1 configuration is a database row created at signup
+ * from `windowCleaningDefaultPricingRules` (see `services/api`'s `signUp`),
+ * and the `localStorage` mock store this used to seed no longer exists. Kept
+ * as a ready-made `PricingConfiguration` literal for docs and examples that
+ * need one without a database. See
+ * docs/decisions/0009-pricing-configuration-versioning.md.
  */
 export const demoPricingConfiguration: PricingConfiguration = {
   id: "demo-window-cleaning-co-pricing-v1",

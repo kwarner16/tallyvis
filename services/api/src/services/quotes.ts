@@ -59,9 +59,16 @@ function getQuoteOrThrow(db: DatabaseSync, session: AuthSession, id: string): Qu
   return quote;
 }
 
-/** Prices through `calculateEstimate()` against the business's active configuration and pins that version onto the new quote. */
+/**
+ * Prices through `calculateEstimate()` against the business's active
+ * configuration and pins that version onto the new quote. A signed-in
+ * business quoting someone it already knows reuses that existing
+ * `Customer` record rather than forking a duplicate — safe here precisely
+ * because the caller is the business that owns the record.
+ */
 export function createQuote(db: DatabaseSync, session: AuthSession, input: CreateQuoteInput): Quote {
-  return createQuoteForBusiness(db, session.businessId, input);
+  const customer = customersService.findOrCreateCustomer(db, session, input.customer);
+  return persistPricedQuote(db, session.businessId, customer.id, input);
 }
 
 /**
@@ -71,20 +78,38 @@ export function createQuote(db: DatabaseSync, session: AuthSession, input: Creat
  * resolves `businessId` server-side via `getDefaultPublicBusiness` rather
  * than from a session or, critically, from anything the browser sent. See
  * docs/decisions/0011-persistence-auth-and-multi-tenancy.md.
+ *
+ * The one deliberate behavioural difference from `createQuote`: this always
+ * creates a fresh `Customer` row instead of matching the submitted email
+ * against existing ones. An anonymous visitor has proved nothing about who
+ * they are, so letting a typed email resolve to a record the business
+ * already holds would turn this endpoint into a lookup for that customer's
+ * real name, phone, and address — see `createCustomerForBusiness`.
  */
 export function createQuotePublic(db: DatabaseSync, businessId: string, input: CreateQuoteInput): Quote {
-  return createQuoteForBusiness(db, businessId, input);
+  const customer = customersService.createCustomerForBusiness(db, businessId, input.customer);
+  return persistPricedQuote(db, businessId, customer.id, input);
 }
 
-function createQuoteForBusiness(db: DatabaseSync, businessId: string, input: CreateQuoteInput): Quote {
-  const session: AuthSession = { userId: businessId, businessId };
-  const customer = customersService.findOrCreateCustomer(db, session, input.customer);
-  const configuration = pricingService.getActiveConfiguration(db, session);
+/**
+ * Shared tail of both creation paths. Takes a `businessId` the caller has
+ * already resolved server-side (from a session, or from
+ * `getDefaultPublicBusiness`) — never one the browser supplied. The
+ * estimate is always computed here from the configuration this business
+ * has active right now; no caller can hand in a pre-computed total.
+ */
+function persistPricedQuote(
+  db: DatabaseSync,
+  businessId: string,
+  customerId: string,
+  input: CreateQuoteInput,
+): Quote {
+  const configuration = pricingService.getActiveConfigurationForBusiness(db, businessId);
   const pricingInput = reconcilePricingInput(input.servicePreferences, input.analysis.characteristics);
   const estimate = calculateEstimate(pricingInput, configuration, input.analysis.metadata.confidence);
 
   return quotesRepo.createQuoteRecord(db, businessId, {
-    customerId: customer.id,
+    customerId,
     pricingConfigId: configuration.id,
     property: input.property,
     servicePreferences: input.servicePreferences,

@@ -40,16 +40,16 @@ function validateSignUpInput(input: SignUpInput): void {
  * itself is created scoped to that business's id — nothing here accepts a
  * businessId from the caller.
  *
- * The password is hashed *before* any row is written, so there's no `await`
- * between the uniqueness check above and the writes below for a second,
- * concurrent signup with the same email to race into — the three writes
- * that follow are fully synchronous (Node's single-threaded event loop
- * can't interleave another request's JS in between them) and wrapped in a
- * transaction, so a failure partway through (including the database's own
- * UNIQUE constraint, the last line of defense if the check above is ever
- * bypassed) can't leave an orphaned business or user. Any unexpected error
- * is logged server-side and translated to a generic message — never a raw
- * database error — before reaching the caller.
+ * The application-level uniqueness check below is a courtesy that produces
+ * a good error message, not the guarantee: hashing the password is an
+ * `await`, so two concurrent signups for the same email can both get past
+ * it. `users.email UNIQUE` is what actually holds, and the writes run
+ * inside a transaction, so the loser of that race hits the constraint and
+ * rolls back rather than leaving an orphaned business or pricing
+ * configuration behind. Both outcomes surface as the same
+ * "already exists" message. Any other unexpected error is logged
+ * server-side and translated to a generic message — never a raw database
+ * error — before reaching the caller.
  */
 export async function signUp(db: DatabaseSync, input: SignUpInput): Promise<AuthResult> {
   validateSignUpInput(input);

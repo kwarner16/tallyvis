@@ -39,6 +39,29 @@ export function findOrCreateCustomer(
   return existing ?? customersRepo.createCustomer(db, session.businessId, input);
 }
 
+/**
+ * Creates a customer for a business resolved server-side, WITHOUT matching
+ * against records that already exist. This is the unauthenticated
+ * `/estimate/*` wizard's path (see `createQuotePublic`): a visitor there has
+ * proved nothing about who they are, so an email they typed must never be
+ * allowed to resolve to a `Customer` the business already holds — doing so
+ * would hand an anonymous caller that customer's real name, phone, and
+ * address back, and let a guessed email attach a quote to a real person's
+ * record. Duplicate customer rows from a returning customer are the
+ * deliberate trade-off; they are a data-tidiness problem a business can
+ * reconcile, not a disclosure. Deliberately not re-exported from the
+ * package's `index.ts` — `findOrCreateCustomer` above stays the only
+ * customer-creating path a signed-in caller gets.
+ */
+export function createCustomerForBusiness(
+  db: DatabaseSync,
+  businessId: string,
+  input: CustomerInput,
+): Customer {
+  validateCustomerInput(input);
+  return customersRepo.createCustomer(db, businessId, input);
+}
+
 export function updateCustomer(
   db: DatabaseSync,
   session: AuthSession,

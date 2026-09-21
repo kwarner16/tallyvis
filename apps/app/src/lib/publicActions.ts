@@ -39,9 +39,18 @@ export async function getPublicActiveConfigurationAction(): Promise<PricingConfi
   return getActiveConfigurationForBusiness(getDb(), businessId);
 }
 
-export async function createPublicQuoteAction(input: CreateQuoteInput): Promise<Quote> {
+/**
+ * Returns only the new quote's id, not the whole `Quote`. The estimator's
+ * result page already has everything else it renders in memory, and this is
+ * an unauthenticated endpoint anyone can call with any payload — handing
+ * back the full persisted record (business id, the customer row, the
+ * server-side estimate) would be more than the browser needs and more than
+ * an anonymous caller should see.
+ */
+export async function createPublicQuoteAction(input: CreateQuoteInput): Promise<{ id: string }> {
   const businessId = await requirePublicBusinessId();
-  return createQuotePublic(getDb(), businessId, input);
+  const quote = createQuotePublic(getDb(), businessId, input);
+  return { id: quote.id };
 }
 
 /** For the read-only `/quote/[id]` customer view — see `getQuotePublic`'s own comment for the access-control caveat this carries. */
