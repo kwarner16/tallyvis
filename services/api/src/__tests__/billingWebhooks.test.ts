@@ -167,4 +167,105 @@ describe("handleStripeWebhook", () => {
     });
     expect(() => handleStripeWebhook(db, payload, signPayload(payload), SECRET)).not.toThrow();
   });
+
+  it("ignores an event type this app doesn't handle, without throwing (e.g. invoice.paid)", async () => {
+    const db = createTestDb();
+    const payload = JSON.stringify({ type: "invoice.paid", data: { object: { id: "in_123" } } });
+    expect(() => handleStripeWebhook(db, payload, signPayload(payload), SECRET)).not.toThrow();
+  });
+
+  it("rejects a malformed (non-JSON) payload with a clean error, never a crash — signature is checked first, so a validly-signed non-JSON body still fails safely", async () => {
+    const db = createTestDb();
+    const malformed = "{not valid json";
+    expect(() => handleStripeWebhook(db, malformed, signPayload(malformed), SECRET)).toThrow();
+  });
+
+  it("is idempotent against an exact replay of the same checkout.session.completed event (Stripe's documented at-least-once delivery)", async () => {
+    const db = createTestDb();
+    const { session } = await signUp(db, {
+      businessName: "Sparkle Windows",
+      ownerEmail: "owner@sparkle.example",
+      password: "correct-horse-battery",
+    });
+    startTrial(db, session, "growth");
+
+    const payload = JSON.stringify({
+      id: "evt_replay_test_1",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          customer: "cus_replay",
+          subscription: "sub_replay",
+          metadata: { businessId: session.businessId, planId: "growth" },
+        },
+      },
+    });
+
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    const afterFirst = getSubscription(db, session);
+
+    // Simulate Stripe redelivering the exact same event a second time.
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    const afterSecond = getSubscription(db, session);
+
+    expect(afterSecond).toEqual(afterFirst);
+    expect(afterSecond?.lastWebhookEventId).toBe("evt_replay_test_1");
+  });
+
+  it("is idempotent against an exact replay of the same customer.subscription.updated event", async () => {
+    const db = createTestDb();
+    const { session } = await signUp(db, {
+      businessName: "Sparkle Windows",
+      ownerEmail: "owner@sparkle.example",
+      password: "correct-horse-battery",
+    });
+    upsertSubscription(db, session.businessId, {
+      planId: "starter",
+      status: "trialing",
+      providerSubscriptionId: "sub_idempotency_check",
+    });
+
+    const payload = JSON.stringify({
+      id: "evt_replay_test_2",
+      type: "customer.subscription.updated",
+      data: { object: { id: "sub_idempotency_check", status: "active" } },
+    });
+
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET); // redelivered
+
+    expect(getSubscription(db, session)?.status).toBe("active");
+    expect(getSubscription(db, session)?.lastWebhookEventId).toBe("evt_replay_test_2");
+  });
+
+  it("still applies a genuinely NEW event after a previous one, rather than treating every event after the first as a duplicate", async () => {
+    const db = createTestDb();
+    const { session } = await signUp(db, {
+      businessName: "Sparkle Windows",
+      ownerEmail: "owner@sparkle.example",
+      password: "correct-horse-battery",
+    });
+    upsertSubscription(db, session.businessId, {
+      planId: "starter",
+      status: "trialing",
+      providerSubscriptionId: "sub_sequence_check",
+    });
+
+    const first = JSON.stringify({
+      id: "evt_sequence_1",
+      type: "customer.subscription.updated",
+      data: { object: { id: "sub_sequence_check", status: "active" } },
+    });
+    const second = JSON.stringify({
+      id: "evt_sequence_2",
+      type: "customer.subscription.deleted",
+      data: { object: { id: "sub_sequence_check", status: "canceled" } },
+    });
+
+    handleStripeWebhook(db, first, signPayload(first), SECRET);
+    expect(getSubscription(db, session)?.status).toBe("active");
+
+    handleStripeWebhook(db, second, signPayload(second), SECRET);
+    expect(getSubscription(db, session)?.status).toBe("canceled");
+  });
 });

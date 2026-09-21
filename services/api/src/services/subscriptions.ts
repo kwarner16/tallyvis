@@ -66,20 +66,36 @@ export function hasProductAccess(subscription: Subscription | undefined, now: nu
  * price, and never actually charged by this function; see
  * docs/decisions/0016 for what this phase does and doesn't wire up to a
  * real charge.
+ *
+ * Idempotent with respect to the trial clock (hardening from a
+ * post-launch audit): re-selecting a plan while already `trialing` or
+ * `active` — including switching to a DIFFERENT plan mid-trial — only
+ * changes `planId`, it never resets `trialStartedAt`/`trialEndsAt`. A
+ * fresh 7-day window is only granted when there's no subscription row
+ * yet, or the existing one is `canceled`/`expired`/`incomplete` (a
+ * genuine (re)start). Without this, a business could indefinitely extend
+ * a "free" trial by repeatedly clicking "Choose plan."
  */
 export function startTrial(db: DatabaseSync, session: AuthSession, planId: string): Subscription {
   if (!isPlanId(planId)) {
     throw new Error(`Unknown plan "${planId}".`);
   }
 
+  const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+  const alreadyEntitled = existing && (existing.status === "trialing" || existing.status === "active");
+
   const now = new Date();
   const trialEndsAt = new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
 
+  // Every field left out below is preserved as-is by `upsertSubscription`'s
+  // COALESCE-based partial-patch update (see that function's own comment)
+  // — no need to thread `existing?.X` through fields this function has no
+  // opinion about, like a previously-linked Stripe customer/subscription id.
   const subscription = subscriptionsRepo.upsertSubscription(db, session.businessId, {
     planId,
-    status: "trialing",
-    trialStartedAt: now.toISOString(),
-    trialEndsAt: trialEndsAt.toISOString(),
+    status: alreadyEntitled ? existing.status : "trialing",
+    trialStartedAt: alreadyEntitled ? existing.trialStartedAt : now.toISOString(),
+    trialEndsAt: alreadyEntitled ? existing.trialEndsAt : trialEndsAt.toISOString(),
   });
 
   if (!billingChargesRepo.getBillingChargeByKind(db, session.businessId, WEBSITE_INSTALLATION_FEE.kind)) {
@@ -123,7 +139,7 @@ export async function createCheckoutSessionForPlan(
   if (!plan) throw new Error(`Unknown plan "${planId}".`);
 
   const business = getBusinessById(db, session.businessId);
-  if (!business) throw new Error(`Business "${session.businessId}" not found.`);
+  if (!business) throw new Error("Business not found.");
 
   const result = await providerCreateCheckoutSession({
     customerEmail: business.email,
@@ -136,18 +152,14 @@ export async function createCheckoutSessionForPlan(
     metadata: { businessId: session.businessId, planId: plan.id },
   });
 
+  // As with `startTrial`, every field left out here is preserved as-is by
+  // `upsertSubscription`'s partial-patch update — only `planId`/`status`
+  // (always required) and the freshly-created checkout session id change.
   const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
   subscriptionsRepo.upsertSubscription(db, session.businessId, {
     planId: plan.id,
     status: existing?.status ?? "incomplete",
-    trialStartedAt: existing?.trialStartedAt,
-    trialEndsAt: existing?.trialEndsAt,
-    currentPeriodStart: existing?.currentPeriodStart,
-    currentPeriodEnd: existing?.currentPeriodEnd,
-    billingCustomerId: existing?.billingCustomerId,
-    providerSubscriptionId: existing?.providerSubscriptionId,
     providerCheckoutSessionId: result.id,
-    canceledAt: existing?.canceledAt,
   });
 
   return { url: result.url };

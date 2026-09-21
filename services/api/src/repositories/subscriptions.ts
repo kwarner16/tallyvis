@@ -27,6 +27,8 @@ export interface Subscription {
   providerSubscriptionId?: string;
   providerCheckoutSessionId?: string;
   canceledAt?: string;
+  /** The most recently APPLIED Stripe webhook event's id — see 0005_webhook_idempotency.sql. Used to recognize and skip an exact replay of an already-processed event (Stripe explicitly documents at-least-once delivery). */
+  lastWebhookEventId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -44,6 +46,7 @@ interface SubscriptionRow {
   provider_subscription_id: string | null;
   provider_checkout_session_id: string | null;
   canceled_at: string | null;
+  last_webhook_event_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -62,6 +65,7 @@ function toSubscription(row: SubscriptionRow): Subscription {
     providerSubscriptionId: row.provider_subscription_id ?? undefined,
     providerCheckoutSessionId: row.provider_checkout_session_id ?? undefined,
     canceledAt: row.canceled_at ?? undefined,
+    lastWebhookEventId: row.last_webhook_event_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -85,9 +89,26 @@ export interface UpsertSubscriptionInput {
   providerSubscriptionId?: string;
   providerCheckoutSessionId?: string;
   canceledAt?: string;
+  lastWebhookEventId?: string;
 }
 
-/** Inserts this business's subscription row, or fully replaces its editable fields if one already exists — a business has at most one subscription row, ever (see the table's UNIQUE constraint on business_id). */
+/**
+ * Inserts this business's subscription row, or updates one that already
+ * exists — a business has at most one subscription row, ever (see the
+ * table's UNIQUE constraint on business_id). `planId`/`status` are always
+ * set explicitly (required fields); every other, OPTIONAL field is a true
+ * partial patch on the update path via `COALESCE` — omitting one (passing
+ * `undefined`) leaves the existing stored value untouched rather than
+ * nulling it out, the same pattern `recordQuoteViewed` in
+ * `repositories/quotes.ts` already uses for the same reason. This was a
+ * genuine bug before this hardening pass: a caller (`startTrial`) that
+ * only cared about the trial fields was unconditionally nulling out any
+ * already-linked Stripe customer/subscription id on every re-selection,
+ * because the old UPDATE unconditionally overwrote every column with
+ * whatever the caller happened to pass (or didn't). Callers may still
+ * pass an explicit value to set/change a field; they just no longer HAVE
+ * to thread through every unrelated field just to avoid erasing it.
+ */
 export function upsertSubscription(
   db: DatabaseSync,
   businessId: string,
@@ -99,9 +120,17 @@ export function upsertSubscription(
   if (existing) {
     db.prepare(
       `UPDATE subscriptions SET
-         plan_id = ?, status = ?, trial_started_at = ?, trial_ends_at = ?,
-         current_period_start = ?, current_period_end = ?, billing_customer_id = ?,
-         provider_subscription_id = ?, provider_checkout_session_id = ?, canceled_at = ?, updated_at = ?
+         plan_id = ?, status = ?,
+         trial_started_at = COALESCE(?, trial_started_at),
+         trial_ends_at = COALESCE(?, trial_ends_at),
+         current_period_start = COALESCE(?, current_period_start),
+         current_period_end = COALESCE(?, current_period_end),
+         billing_customer_id = COALESCE(?, billing_customer_id),
+         provider_subscription_id = COALESCE(?, provider_subscription_id),
+         provider_checkout_session_id = COALESCE(?, provider_checkout_session_id),
+         canceled_at = COALESCE(?, canceled_at),
+         last_webhook_event_id = COALESCE(?, last_webhook_event_id),
+         updated_at = ?
        WHERE business_id = ?`,
     ).run(
       input.planId,
@@ -114,6 +143,7 @@ export function upsertSubscription(
       input.providerSubscriptionId ?? null,
       input.providerCheckoutSessionId ?? null,
       input.canceledAt ?? null,
+      input.lastWebhookEventId ?? null,
       now,
       businessId,
     );
@@ -123,8 +153,8 @@ export function upsertSubscription(
          id, business_id, plan_id, status, trial_started_at, trial_ends_at,
          current_period_start, current_period_end, billing_customer_id,
          provider_subscription_id, provider_checkout_session_id, canceled_at,
-         created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         last_webhook_event_id, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       makeId("subscription"),
       businessId,
@@ -138,6 +168,7 @@ export function upsertSubscription(
       input.providerSubscriptionId ?? null,
       input.providerCheckoutSessionId ?? null,
       input.canceledAt ?? null,
+      input.lastWebhookEventId ?? null,
       now,
       now,
     );

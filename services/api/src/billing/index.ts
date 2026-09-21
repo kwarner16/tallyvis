@@ -17,8 +17,13 @@ export {
 function resolveBillingProvider(): BillingProvider {
   const secretKey = process.env.STRIPE_SECRET_KEY;
   if (!secretKey) {
+    // The message here is what a business owner sees verbatim — kept
+    // free of env var names/internal config details (those belong in
+    // server logs, not the browser). See
+    // docs/decisions/0017-billing-hardening.md.
+    console.error("Billing provider not configured: STRIPE_SECRET_KEY is unset.");
     throw new BillingProviderError(
-      "Billing isn't configured for this environment yet (STRIPE_SECRET_KEY is unset).",
+      "Billing isn't configured yet. Please contact the Tallyvis team.",
       "not-configured",
     );
   }

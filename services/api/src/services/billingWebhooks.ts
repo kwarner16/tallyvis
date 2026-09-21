@@ -27,6 +27,8 @@ const STRIPE_TO_INTERNAL_STATUS: Record<string, SubscriptionStatus> = {
 export class WebhookVerificationError extends Error {}
 
 interface StripeEvent {
+  /** Stripe's own event id (e.g. "evt_..."), used for replay/idempotency detection below — see `lastWebhookEventId`. Absent only in hand-built test payloads that don't care about idempotency; real Stripe events always include it. */
+  id?: string;
   type: string;
   data: { object: Record<string, unknown> };
 }
@@ -39,6 +41,15 @@ interface StripeEvent {
  * sync: a completed checkout activates the subscription; Stripe's own
  * subscription updates/cancellation events keep status current after
  * that.
+ *
+ * Idempotency: Stripe explicitly documents at-least-once webhook delivery
+ * — the same event can be (and, on any delivery hiccup, will be) sent
+ * more than once. Each branch below checks the target subscription's
+ * `lastWebhookEventId` before applying anything; an exact replay of the
+ * event most recently applied to that row is recognized and skipped. This
+ * guards against reapplying the same event twice, not against
+ * out-of-order delivery of DIFFERENT events — a documented, deliberate
+ * scope limit (see docs/decisions/0017-billing-hardening.md).
  */
 export function handleStripeWebhook(
   db: DatabaseSync,
@@ -62,14 +73,14 @@ export function handleStripeWebhook(
     if (!businessId) return; // Not one of ours (or malformed) — nothing to reconcile.
 
     const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, businessId);
+    if (event.id && existing?.lastWebhookEventId === event.id) return; // Exact replay — already applied.
+
     subscriptionsRepo.upsertSubscription(db, businessId, {
       planId: session.metadata?.planId ?? existing?.planId ?? "starter",
       status: "active",
-      trialStartedAt: existing?.trialStartedAt,
-      trialEndsAt: existing?.trialEndsAt,
-      billingCustomerId: session.customer ?? existing?.billingCustomerId,
-      providerSubscriptionId: session.subscription ?? existing?.providerSubscriptionId,
-      providerCheckoutSessionId: existing?.providerCheckoutSessionId,
+      billingCustomerId: session.customer,
+      providerSubscriptionId: session.subscription,
+      lastWebhookEventId: event.id,
     });
     return;
   }
@@ -84,6 +95,7 @@ export function handleStripeWebhook(
     };
     const existing = subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
     if (!existing) return;
+    if (event.id && existing.lastWebhookEventId === event.id) return; // Exact replay — already applied.
 
     const status: SubscriptionStatus =
       event.type === "customer.subscription.deleted"
@@ -93,18 +105,14 @@ export function handleStripeWebhook(
     subscriptionsRepo.upsertSubscription(db, existing.businessId, {
       planId: existing.planId,
       status,
-      trialStartedAt: existing.trialStartedAt,
-      trialEndsAt: existing.trialEndsAt,
       currentPeriodStart: stripeSub.current_period_start
         ? new Date(stripeSub.current_period_start * 1000).toISOString()
-        : existing.currentPeriodStart,
+        : undefined,
       currentPeriodEnd: stripeSub.current_period_end
         ? new Date(stripeSub.current_period_end * 1000).toISOString()
-        : existing.currentPeriodEnd,
-      billingCustomerId: existing.billingCustomerId,
-      providerSubscriptionId: existing.providerSubscriptionId,
-      providerCheckoutSessionId: existing.providerCheckoutSessionId,
-      canceledAt: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000).toISOString() : existing.canceledAt,
+        : undefined,
+      canceledAt: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000).toISOString() : undefined,
+      lastWebhookEventId: event.id,
     });
   }
 }

@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WEBSITE_INSTALLATION_FEE } from "@tallyvis/config";
 import { createTestDb } from "../db/client";
 import { signUp } from "../services/auth";
 import { createQuote } from "../services/quotes";
 import {
+  createCheckoutSessionForPlan,
   getSubscription,
   hasProductAccess,
   listBillingCharges,
@@ -100,6 +101,71 @@ describe("startTrial", () => {
     const { db, session } = await setUp();
     startTrial(db, session, "pro");
     expect(getSubscription(db, session)?.planId).toBe("pro");
+  });
+});
+
+describe("startTrial — hardening: repeated/duplicate plan selection", () => {
+  it("does not reset the trial clock when the same plan is re-selected while already trialing (idempotent repeated selection)", async () => {
+    const { db, session } = await setUp();
+    const first = startTrial(db, session, "starter");
+
+    // A later "clock" — if the bug were present, re-selecting would push trialEndsAt further out.
+    const second = startTrial(db, session, "starter");
+
+    expect(second.trialStartedAt).toBe(first.trialStartedAt);
+    expect(second.trialEndsAt).toBe(first.trialEndsAt);
+  });
+
+  it("does not reset the trial clock when switching to a DIFFERENT plan mid-trial — only planId changes", async () => {
+    const { db, session } = await setUp();
+    const first = startTrial(db, session, "starter");
+
+    const switched = startTrial(db, session, "pro");
+
+    expect(switched.planId).toBe("pro");
+    expect(switched.trialStartedAt).toBe(first.trialStartedAt);
+    expect(switched.trialEndsAt).toBe(first.trialEndsAt);
+  });
+
+  it("does not create a second subscription row on repeated selection — still exactly one row for the business", async () => {
+    const { db, session } = await setUp();
+    const first = startTrial(db, session, "starter");
+    const second = startTrial(db, session, "growth");
+    expect(second.id).toBe(first.id);
+  });
+
+  it("DOES grant a fresh 7-day trial when reactivating a canceled/expired subscription", async () => {
+    const { db, session } = await setUp();
+    startTrial(db, session, "starter");
+
+    const { upsertSubscription } = await import("../repositories/subscriptions");
+    upsertSubscription(db, session.businessId, { planId: "starter", status: "canceled" });
+
+    const reactivated = startTrial(db, session, "growth");
+    expect(reactivated.status).toBe("trialing");
+    const freshTrialMs =
+      new Date(reactivated.trialEndsAt!).getTime() - new Date(reactivated.trialStartedAt!).getTime();
+    expect(freshTrialMs).toBeCloseTo(7 * 24 * 60 * 60 * 1000, -3);
+    expect(new Date(reactivated.trialEndsAt!).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("never wipes an already-linked Stripe customer/subscription id when re-selecting a plan (regression: upsertSubscription used to fully overwrite every column)", async () => {
+    const { db, session } = await setUp();
+    startTrial(db, session, "starter");
+
+    const { upsertSubscription } = await import("../repositories/subscriptions");
+    upsertSubscription(db, session.businessId, {
+      planId: "starter",
+      status: "trialing",
+      billingCustomerId: "cus_already_linked",
+      providerSubscriptionId: "sub_already_linked",
+    });
+
+    startTrial(db, session, "growth"); // re-selecting must not erase the Stripe identifiers above
+
+    const after = getSubscription(db, session)!;
+    expect(after.billingCustomerId).toBe("cus_already_linked");
+    expect(after.providerSubscriptionId).toBe("sub_already_linked");
   });
 });
 
@@ -212,5 +278,85 @@ describe("business isolation", () => {
     startTrial(dbA, sessionA, "pro");
     expect(getSubscription(dbA, sessionB)).toBeUndefined();
     expect(getSubscription(dbA, sessionA)?.planId).toBe("pro");
+  });
+});
+
+describe("createCheckoutSessionForPlan", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.STRIPE_SECRET_KEY;
+  });
+
+  it("throws a categorized, safe 'not-configured' error when Stripe isn't configured — never an opaque failure", async () => {
+    const { db, session } = await setUp();
+    delete process.env.STRIPE_SECRET_KEY;
+
+    const { BillingProviderError } = await import("../billing");
+    try {
+      await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(BillingProviderError);
+      expect((err as InstanceType<typeof BillingProviderError>).category).toBe("not-configured");
+      // The message shown to a business owner is plain and actionable —
+      // no env var names or other internal config details, which belong
+      // in server logs only.
+      expect((err as InstanceType<typeof BillingProviderError>).message).toBe(
+        "Billing isn't configured yet. Please contact the Tallyvis team.",
+      );
+      expect((err as InstanceType<typeof BillingProviderError>).message).not.toContain("STRIPE_SECRET_KEY");
+    }
+  });
+
+  it("rejects an unknown plan id before ever calling the billing provider", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi.spyOn(billing, "createCheckoutSession");
+
+    await expect(
+      createCheckoutSessionForPlan(db, session, "not-a-real-plan", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+    ).rejects.toThrow(/unknown plan/i);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("derives price and business identity entirely server-side — the caller supplies only a planId, never a price or businessId — and persists the checkout session id", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi.spyOn(billing, "createCheckoutSession").mockResolvedValue({
+      id: "cs_test_mocked",
+      url: "https://checkout.stripe.example/cs_test_mocked",
+    });
+
+    const result = await createCheckoutSessionForPlan(db, session, "pro", {
+      successUrl: "https://x/success",
+      cancelUrl: "https://x/cancel",
+    });
+
+    expect(result.url).toBe("https://checkout.stripe.example/cs_test_mocked");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const callArg = spy.mock.calls[0]![0];
+    // The price sent to the provider is the PRO plan's real price from
+    // @tallyvis/config — there is no parameter through which a caller
+    // could have supplied a different number.
+    expect(callArg.monthlyPriceCents).toBe(29900);
+    expect(callArg.planId).toBe("pro");
+    // Business identity in the metadata is the session's own businessId —
+    // `createCheckoutSessionForPlan`'s signature has no businessId
+    // parameter a caller could substitute here.
+    expect(callArg.metadata.businessId).toBe(session.businessId);
+
+    expect(getSubscription(db, session)?.providerCheckoutSessionId).toBe("cs_test_mocked");
+  });
+
+  it("propagates a BillingProviderError from the provider layer as-is (already a safe, categorized message)", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    vi.spyOn(billing, "createCheckoutSession").mockRejectedValue(
+      new billing.BillingProviderError("The billing provider rejected the configured credentials.", "provider-error"),
+    );
+
+    await expect(
+      createCheckoutSessionForPlan(db, session, "starter", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+    ).rejects.toThrow(/rejected the configured credentials/);
   });
 });

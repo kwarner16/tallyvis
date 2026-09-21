@@ -7,17 +7,25 @@ import { PlanSelector } from "@/components/dashboard/PlanSelector";
 
 /**
  * Phase 14 — plan selection (see
- * docs/decisions/0016-onboarding-billing-embed.md). The intended-plan
- * cookie set at signup (from a marketing-site pricing link) is read once
- * and cleared here — it only ever preselects a radio-equivalent, it never
- * starts a trial on its own.
+ * docs/decisions/0016-onboarding-billing-embed.md).
+ *
+ * Hardening note (post-launch audit): this page previously called
+ * `cookies().delete(...)` directly in the Server Component's render body
+ * to consume the intended-plan cookie. Next.js only allows cookies to be
+ * mutated inside a Server Action or Route Handler — doing it here threw
+ * "Cookies can only be modified in a Server Action or Route Handler" on
+ * every single render, which is exactly the "Choose Plan" error this was
+ * reported as. The cookie is now only ever READ here (reading during
+ * render is fine); it's cleared as a side effect of `startTrialAction`/
+ * `createCheckoutSessionAction` in `subscriptionActions.ts`, both real
+ * Server Actions, once a plan is actually chosen. Until then the cookie
+ * simply expires on its own (1 hour) — harmless either way.
  */
 export default async function OnboardingPage() {
   await requireContext();
 
   const store = await cookies();
   const rawIntendedPlan = store.get(INTENDED_PLAN_COOKIE_NAME)?.value;
-  store.delete(INTENDED_PLAN_COOKIE_NAME);
   const intendedPlanId = rawIntendedPlan && isPlanId(rawIntendedPlan) ? rawIntendedPlan : undefined;
 
   return (
