@@ -33,8 +33,8 @@ export default async function OnboardingPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Choose your plan</h1>
         <p className="text-ink-soft">
-          Every plan includes a <span className="font-medium text-ink">7-day free trial</span> — no
-          credit card required to start.
+          Every plan includes a <span className="font-medium text-ink">7-day free trial</span>. A card
+          is required to start — you won&rsquo;t be charged until the trial ends.
         </p>
       </div>
       <PlanSelector initialPlanId={intendedPlanId} billingIsConfigured={billingConfigured()} />

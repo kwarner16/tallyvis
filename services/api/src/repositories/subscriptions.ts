@@ -29,6 +29,8 @@ export interface Subscription {
   canceledAt?: string;
   /** The most recently APPLIED Stripe webhook event's id — see 0005_webhook_idempotency.sql. Used to recognize and skip an exact replay of an already-processed event (Stripe explicitly documents at-least-once delivery). */
   lastWebhookEventId?: string;
+  /** The most recently APPLIED Stripe webhook event's `created` (Unix seconds) — see 0006_webhook_event_ordering.sql. Used to reject a late-arriving, OLDER, DISTINCT event from overwriting newer state. */
+  lastWebhookEventCreatedAt?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -47,6 +49,7 @@ interface SubscriptionRow {
   provider_checkout_session_id: string | null;
   canceled_at: string | null;
   last_webhook_event_id: string | null;
+  last_webhook_event_created_at: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -66,6 +69,7 @@ function toSubscription(row: SubscriptionRow): Subscription {
     providerCheckoutSessionId: row.provider_checkout_session_id ?? undefined,
     canceledAt: row.canceled_at ?? undefined,
     lastWebhookEventId: row.last_webhook_event_id ?? undefined,
+    lastWebhookEventCreatedAt: row.last_webhook_event_created_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -90,6 +94,7 @@ export interface UpsertSubscriptionInput {
   providerCheckoutSessionId?: string;
   canceledAt?: string;
   lastWebhookEventId?: string;
+  lastWebhookEventCreatedAt?: number;
 }
 
 /**
@@ -130,6 +135,7 @@ export function upsertSubscription(
          provider_checkout_session_id = COALESCE(?, provider_checkout_session_id),
          canceled_at = COALESCE(?, canceled_at),
          last_webhook_event_id = COALESCE(?, last_webhook_event_id),
+         last_webhook_event_created_at = COALESCE(?, last_webhook_event_created_at),
          updated_at = ?
        WHERE business_id = ?`,
     ).run(
@@ -144,6 +150,7 @@ export function upsertSubscription(
       input.providerCheckoutSessionId ?? null,
       input.canceledAt ?? null,
       input.lastWebhookEventId ?? null,
+      input.lastWebhookEventCreatedAt ?? null,
       now,
       businessId,
     );
@@ -153,8 +160,8 @@ export function upsertSubscription(
          id, business_id, plan_id, status, trial_started_at, trial_ends_at,
          current_period_start, current_period_end, billing_customer_id,
          provider_subscription_id, provider_checkout_session_id, canceled_at,
-         last_webhook_event_id, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         last_webhook_event_id, last_webhook_event_created_at, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       makeId("subscription"),
       businessId,
@@ -169,6 +176,7 @@ export function upsertSubscription(
       input.providerCheckoutSessionId ?? null,
       input.canceledAt ?? null,
       input.lastWebhookEventId ?? null,
+      input.lastWebhookEventCreatedAt ?? null,
       now,
       now,
     );

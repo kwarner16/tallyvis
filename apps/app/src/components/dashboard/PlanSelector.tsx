@@ -1,19 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { PLANS, TRIAL_DAYS, type PlanId } from "@tallyvis/config";
 import { buttonVariants, cn } from "@tallyvis/ui";
-import { startTrialAction, createCheckoutSessionAction } from "@/lib/subscriptionActions";
+import { createCheckoutSessionAction } from "@/lib/subscriptionActions";
 
 /**
- * Phase 14 — plan selection (see
- * docs/decisions/0016-onboarding-billing-embed.md). Plans come from
+ * Phase 14 (see docs/decisions/0016-onboarding-billing-embed.md), hardened
+ * for V1 in docs/decisions/0018-stripe-v1-hardening.md. Plans come from
  * `@tallyvis/config`'s `PLANS` — the single authoritative definition also
  * used by apps/web's marketing pricing section, never duplicated here.
- * "Start free trial" needs no payment method and always works; "Subscribe
- * now" only appears when billing is actually configured, and is honest
- * about that rather than showing a button that would fail.
+ *
+ * There is now exactly ONE production path here: Stripe Checkout, card
+ * required, Stripe-owned 7-day trial clock. The previous "start a trial
+ * with no card" button has been retired from this UI (the underlying
+ * DB-only `startTrial` still exists server-side for tests/internal use —
+ * see `services/subscriptions.ts`'s own comment — but a real signup can no
+ * longer reach it). When billing isn't configured in this environment at
+ * all, the button is disabled with an honest explanation rather than
+ * failing silently when clicked.
  */
 export function PlanSelector({
   initialPlanId,
@@ -22,26 +27,12 @@ export function PlanSelector({
   initialPlanId?: PlanId;
   billingIsConfigured: boolean;
 }) {
-  const router = useRouter();
   const [selected, setSelected] = useState<PlanId>(initialPlanId ?? "growth");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedPlan = PLANS.find((plan) => plan.id === selected);
 
-  async function handleStartTrial() {
-    setStarting(true);
-    setError(null);
-    try {
-      await startTrialAction(selected);
-      router.push("/dashboard");
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start your trial.");
-      setStarting(false);
-    }
-  }
-
-  async function handleSubscribeNow() {
+  async function handleStartCheckout() {
     setStarting(true);
     setError(null);
     try {
@@ -97,7 +88,7 @@ export function PlanSelector({
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       ) : null}
 
-      {/* Makes the choice and its consequence explicit before either button is clicked — which plan, what it costs, what the trial actually includes, and whether a card is needed. */}
+      {/* Makes the choice and its consequence explicit before the button is clicked — which plan, what it costs, how long the trial is, and that a card is required. */}
       <div className="rounded-xl border border-line bg-paper-alt px-4 py-3 text-sm text-ink-soft">
         <p>
           You&rsquo;re selecting <span className="font-medium text-ink">{selectedPlan?.name}</span> —
@@ -105,40 +96,26 @@ export function PlanSelector({
           your trial.
         </p>
         <p className="mt-1">
-          Starting the trial gives you full access to every dashboard feature for{" "}
-          <span className="font-medium text-ink">{TRIAL_DAYS} days</span>, starting now — no credit card,
-          no charge today.
+          Every plan includes a <span className="font-medium text-ink">{TRIAL_DAYS}-day free trial</span> —
+          full dashboard access starting now. A card is required to start; billing begins automatically
+          when the trial ends unless you cancel first.
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={handleStartTrial}
-          disabled={starting}
+          onClick={handleStartCheckout}
+          disabled={starting || !billingIsConfigured}
           className={buttonVariants({ variant: "primary" })}
         >
-          {starting ? "Starting…" : `Start ${TRIAL_DAYS}-day free trial`}
+          {starting ? "Starting checkout…" : `Start ${TRIAL_DAYS}-day free trial`}
         </button>
-        {billingIsConfigured ? (
-          <button
-            type="button"
-            onClick={handleSubscribeNow}
-            disabled={starting}
-            className={buttonVariants({ variant: "outline" })}
-          >
-            {starting ? "Starting checkout…" : "Enter card details now instead"}
-          </button>
-        ) : null}
       </div>
-      <p className="text-xs text-ink-faint">
-        Either way, you&rsquo;ll land back on your dashboard next — the trial starts immediately;
-        checkout takes you to Stripe first to add a payment method, then back here.
-      </p>
       {!billingIsConfigured ? (
         <p className="text-xs text-ink-faint">
-          Billing isn&rsquo;t configured in this environment yet — trials work fully; paid checkout will
-          be available once billing credentials are configured.
+          Billing isn&rsquo;t configured in this environment yet — starting a trial requires Stripe
+          credentials to be configured.
         </p>
       ) : null}
     </div>

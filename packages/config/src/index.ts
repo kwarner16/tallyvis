@@ -3,7 +3,7 @@ import type { PricingConfiguration, WindowCleaningPricingRules } from "@tallyvis
 export {
   PLANS,
   TRIAL_DAYS,
-  WEBSITE_INSTALLATION_FEE,
+  PROFESSIONAL_INSTALLATION_FEE,
   getPlan,
   isPlanId,
   type Plan,

@@ -60,6 +60,12 @@ export function getBillingChargeByKind(
   return row ? toCharge(row) : undefined;
 }
 
+/** Looked up by the Stripe webhook handler for a one-time (payment-mode) checkout, which knows the charge id round-tripped through Checkout metadata, not which business it belongs to until this resolves it. */
+export function getBillingChargeById(db: DatabaseSync, id: string): BillingCharge | undefined {
+  const row = db.prepare(`SELECT * FROM billing_charges WHERE id = ?`).get(id) as BillingChargeRow | undefined;
+  return row ? toCharge(row) : undefined;
+}
+
 export function listBillingCharges(db: DatabaseSync, businessId: string): BillingCharge[] {
   const rows = db
     .prepare(`SELECT * FROM billing_charges WHERE business_id = ? ORDER BY created_at DESC`)
@@ -70,19 +76,20 @@ export function listBillingCharges(db: DatabaseSync, businessId: string): Billin
 export function createBillingCharge(
   db: DatabaseSync,
   businessId: string,
-  input: { kind: BillingChargeKind; amountCents: number; currency: string },
+  input: { kind: BillingChargeKind; amountCents: number; currency: string; status?: BillingChargeStatus },
 ): BillingCharge {
   const id = makeId("charge");
   const now = new Date().toISOString();
+  const status = input.status ?? "pending";
   db.prepare(
     `INSERT INTO billing_charges (id, business_id, kind, status, amount_cents, currency, provider_charge_id, created_at, updated_at)
-     VALUES (?, ?, ?, 'pending', ?, ?, NULL, ?, ?)`,
-  ).run(id, businessId, input.kind, input.amountCents, input.currency, now, now);
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+  ).run(id, businessId, input.kind, status, input.amountCents, input.currency, now, now);
   return {
     id,
     businessId,
     kind: input.kind,
-    status: "pending",
+    status,
     amountCents: input.amountCents,
     currency: input.currency,
     createdAt: now,

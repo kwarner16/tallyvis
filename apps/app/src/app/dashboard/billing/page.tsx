@@ -3,6 +3,8 @@ import { getPlan, TRIAL_DAYS } from "@tallyvis/config";
 import { billingConfigured, getSubscription, listBillingCharges, resolveEffectiveStatus } from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { requireContext } from "@/lib/session";
+import { InstallationChoice } from "@/components/dashboard/InstallationChoice";
+import { ManageBillingButton } from "@/components/dashboard/ManageBillingButton";
 
 const STATUS_LABELS: Record<string, string> = {
   trialing: "Trialing",
@@ -27,12 +29,13 @@ function daysRemainingUntil(iso: string): number {
 export default async function BillingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ checkout?: string }>;
+  searchParams: Promise<{ checkout?: string; installation?: string }>;
 }) {
   const { db, session } = await requireContext();
-  const { checkout } = await searchParams;
+  const { checkout, installation } = await searchParams;
   const subscription = getSubscription(db, session);
   const charges = listBillingCharges(db, session);
+  const installationCharge = charges.find((charge) => charge.kind === "website_installation");
 
   if (!subscription) {
     return (
@@ -67,6 +70,16 @@ export default async function BillingPage({
           Checkout was canceled — no changes were made.
         </p>
       ) : null}
+      {installation === "success" ? (
+        <p className="rounded-lg border border-accent bg-accent-soft px-4 py-2.5 text-sm text-accent-strong">
+          Installation payment complete — it will show as paid below once confirmed.
+        </p>
+      ) : null}
+      {installation === "canceled" ? (
+        <p className="rounded-lg border border-line bg-paper-alt px-4 py-2.5 text-sm text-ink-soft">
+          Installation checkout was canceled — no changes were made.
+        </p>
+      ) : null}
 
       <div className="rounded-2xl border border-line bg-paper p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -90,9 +103,12 @@ export default async function BillingPage({
             Your trial has ended. Reactivate to keep creating quotes from the dashboard.
           </p>
         ) : null}
-        <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "outline", className: "mt-4" })}>
-          {effectiveStatus === "active" ? "Change plan" : "Reactivate / change plan"}
-        </Link>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "outline" })}>
+            {effectiveStatus === "active" ? "Change plan" : "Reactivate / change plan"}
+          </Link>
+          {subscription.billingCustomerId ? <ManageBillingButton /> : null}
+        </div>
         {!billingConfigured() ? (
           <p className="mt-3 text-xs text-ink-faint">
             Billing isn&rsquo;t configured in this environment — trial state is fully functional; paid
@@ -102,28 +118,28 @@ export default async function BillingPage({
       </div>
 
       <div className="rounded-2xl border border-line bg-paper p-6">
-        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">One-time charges</p>
-        {charges.length === 0 ? (
-          <p className="mt-2 text-sm text-ink-faint">None yet.</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Website installation</p>
+        {!installationCharge ? (
+          <div className="mt-3">
+            <InstallationChoice />
+          </div>
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
-            {charges.map((charge) => (
-              <li key={charge.id} className="flex items-center justify-between text-sm">
-                <span className="text-ink-soft">
-                  {charge.kind === "website_installation" ? "Website installation & setup" : charge.kind}
+            <li className="flex items-center justify-between text-sm">
+              <span className="text-ink-soft">
+                {installationCharge.amountCents === 0 ? "Self-install" : "Professional installation & setup"}
+              </span>
+              <span className="flex items-center gap-3">
+                <span className="font-mono text-ink">${(installationCharge.amountCents / 100).toFixed(2)}</span>
+                <span className="rounded-full bg-paper-alt px-2 py-0.5 text-xs text-ink-faint">
+                  {CHARGE_STATUS_LABELS[installationCharge.status] ?? installationCharge.status}
                 </span>
-                <span className="flex items-center gap-3">
-                  <span className="font-mono text-ink">${(charge.amountCents / 100).toFixed(2)}</span>
-                  <span className="rounded-full bg-paper-alt px-2 py-0.5 text-xs text-ink-faint">
-                    {CHARGE_STATUS_LABELS[charge.status] ?? charge.status}
-                  </span>
-                </span>
-              </li>
-            ))}
+              </span>
+            </li>
           </ul>
         )}
         <p className="mt-3 text-xs text-ink-faint">
-          Separate from your recurring plan — a one-time fee for getting the estimator installed on
+          Separate from your recurring plan — a one-time choice for getting the estimator installed on
           your website.
         </p>
       </div>

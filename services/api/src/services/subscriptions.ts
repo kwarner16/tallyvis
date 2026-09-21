@@ -1,19 +1,26 @@
 import type { DatabaseSync } from "node:sqlite";
-import { getPlan, isPlanId, TRIAL_DAYS, WEBSITE_INSTALLATION_FEE } from "@tallyvis/config";
+import { getPlan, isPlanId, TRIAL_DAYS, PROFESSIONAL_INSTALLATION_FEE } from "@tallyvis/config";
 import type { AuthSession } from "../auth/session";
 import * as subscriptionsRepo from "../repositories/subscriptions";
 import type { Subscription, SubscriptionStatus } from "../repositories/subscriptions";
 import * as billingChargesRepo from "../repositories/billingCharges";
 import type { BillingCharge } from "../repositories/billingCharges";
 import { getBusinessById } from "../repositories/businesses";
-import { createCheckoutSession as providerCreateCheckoutSession, isBillingConfigured } from "../billing";
+import {
+  createCheckoutSession as providerCreateCheckoutSession,
+  createPortalSession as providerCreatePortalSession,
+  isBillingConfigured,
+  resolveStripePriceId,
+  resolveInstallationPriceId,
+} from "../billing";
 
 export type { Subscription, SubscriptionStatus } from "../repositories/subscriptions";
 export type { BillingCharge } from "../repositories/billingCharges";
 
 /**
- * Phase 14 — SaaS plan/trial/subscription foundation (see
- * docs/decisions/0016-onboarding-billing-embed.md).
+ * Phase 14 SaaS plan/trial/subscription foundation (see
+ * docs/decisions/0016-onboarding-billing-embed.md), hardened for V1 in
+ * docs/decisions/0018-stripe-v1-hardening.md.
  *
  * `subscriptions` deliberately has NO row for a business until it
  * actually starts a trial or subscribes — every business created before
@@ -48,7 +55,14 @@ export function resolveEffectiveStatus(subscription: Subscription, now: number =
  * The server-authoritative access gate. `undefined` (no subscription row
  * at all) is legacy access, not a lockout — see this file's own comment.
  * Once a subscription row exists, access requires an effective status of
- * "trialing" or "active."
+ * "trialing" or "active." "active" also covers Stripe's own `past_due`
+ * grace period (see `billingWebhooks.ts`'s status-mapping table) —
+ * Stripe's Smart Retries are already attempting recovery, and revoking
+ * access the moment a single payment attempt fails, ahead of a transient
+ * webhook delay or before retries are exhausted, would lock out a
+ * business over what's often a temporary card issue. Only a subscription
+ * Stripe has fully given up on (`canceled`/`unpaid`/`incomplete_expired`)
+ * or a locally-expired trial denies access.
  */
 export function hasProductAccess(subscription: Subscription | undefined, now: number = Date.now()): boolean {
   if (!subscription) return true;
@@ -57,15 +71,16 @@ export function hasProductAccess(subscription: Subscription | undefined, now: nu
 }
 
 /**
- * Starts (or restarts) a business's free trial for the given plan — the
- * self-serve path the brief's "select plan → start 7-day trial → product
- * access" flow describes, with no payment step. Also records the one-time
- * website-installation fee as a separate, pending billing concept (see
- * `@tallyvis/config`'s `WEBSITE_INSTALLATION_FEE`) the first time a
- * business reaches this point — never bundled into the recurring plan
- * price, and never actually charged by this function; see
- * docs/decisions/0016 for what this phase does and doesn't wire up to a
- * real charge.
+ * DB-only, no-card trial start — NOT reachable from the production
+ * onboarding UI as of the Phase 14 Stripe V1 hardening pass (see
+ * docs/decisions/0018-stripe-v1-hardening.md). Retained because it's
+ * useful test/internal infrastructure (most of this file's own test suite
+ * uses it to set up a trialing subscription without mocking Stripe), but
+ * `PlanSelector` now only ever calls `createCheckoutSessionForPlan` below
+ * — Stripe Checkout, card required, Stripe-owned trial clock, is the one
+ * unambiguous production signup path. Do not wire this back into any
+ * customer-facing "start trial" affordance; a real signup must never be
+ * able to acquire product access without ever going through Stripe.
  *
  * Idempotent with respect to the trial clock (hardening from a
  * post-launch audit): re-selecting a plan while already `trialing` or
@@ -91,22 +106,12 @@ export function startTrial(db: DatabaseSync, session: AuthSession, planId: strin
   // COALESCE-based partial-patch update (see that function's own comment)
   // — no need to thread `existing?.X` through fields this function has no
   // opinion about, like a previously-linked Stripe customer/subscription id.
-  const subscription = subscriptionsRepo.upsertSubscription(db, session.businessId, {
+  return subscriptionsRepo.upsertSubscription(db, session.businessId, {
     planId,
     status: alreadyEntitled ? existing.status : "trialing",
     trialStartedAt: alreadyEntitled ? existing.trialStartedAt : now.toISOString(),
     trialEndsAt: alreadyEntitled ? existing.trialEndsAt : trialEndsAt.toISOString(),
   });
-
-  if (!billingChargesRepo.getBillingChargeByKind(db, session.businessId, WEBSITE_INSTALLATION_FEE.kind)) {
-    billingChargesRepo.createBillingCharge(db, session.businessId, {
-      kind: WEBSITE_INSTALLATION_FEE.kind,
-      amountCents: WEBSITE_INSTALLATION_FEE.amountCents,
-      currency: WEBSITE_INSTALLATION_FEE.currency,
-    });
-  }
-
-  return subscription;
 }
 
 export function listBillingCharges(db: DatabaseSync, session: AuthSession): BillingCharge[] {
@@ -119,15 +124,28 @@ export function billingConfigured(): boolean {
 
 /**
  * Creates a real Stripe Checkout session for this business's chosen plan —
- * only reachable when Stripe is actually configured (`STRIPE_SECRET_KEY`
- * set); throws a `BillingProviderError` categorized `"not-configured"`
+ * the ONE production onboarding path (see this file's `startTrial`
+ * comment). Only reachable when Stripe is actually configured
+ * (`STRIPE_SECRET_KEY` AND that plan's `STRIPE_PRICE_*` env var both set);
+ * throws a `BillingProviderError` categorized `"not-configured"`
  * otherwise, which the UI renders as an honest message rather than a
- * button that fails silently. The session id is stored on the
- * subscription row immediately (so a webhook can later resolve which
- * business a completed checkout belongs to via `metadata.businessId`
- * as well); the subscription's `status` itself is only changed once the
- * webhook confirms the checkout actually completed — this function alone
- * never marks a business as paying.
+ * button that fails silently.
+ *
+ * Reuses this business's existing Stripe Customer (`billingCustomerId`)
+ * when one is already on file — from a previous checkout, however it
+ * completed — rather than letting Stripe mint a new Customer on every
+ * attempt; only a business's very first checkout falls back to
+ * `customer_email`. The session id is stored on the subscription row
+ * immediately (so a webhook can later resolve which business a completed
+ * checkout belongs to via `metadata.businessId` as well); the
+ * subscription's `status` itself is left exactly as it was
+ * (`upsertSubscription`'s partial-patch semantics don't apply to `status`,
+ * which is always required, so it's passed through explicitly as
+ * `existing?.status ?? "incomplete"`) — this function alone never marks a
+ * business as trialing/active. Only a verified webhook does that (see
+ * `billingWebhooks.ts`, and docs/decisions/0018 for the bug this fixes:
+ * `checkout.session.completed` used to hardcode "active" even when Stripe
+ * actually started a trial).
  */
 export async function createCheckoutSessionForPlan(
   db: DatabaseSync,
@@ -141,26 +159,123 @@ export async function createCheckoutSessionForPlan(
   const business = getBusinessById(db, session.businessId);
   if (!business) throw new Error("Business not found.");
 
+  const priceId = resolveStripePriceId(plan.id);
+  const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+
   const result = await providerCreateCheckoutSession({
-    customerEmail: business.email,
-    planId: plan.id,
-    planName: plan.name,
-    monthlyPriceCents: plan.monthlyPriceCents,
+    mode: "subscription",
+    priceId,
+    customerId: existing?.billingCustomerId,
+    customerEmail: existing?.billingCustomerId ? undefined : business.email,
     trialDays: TRIAL_DAYS,
     successUrl: urls.successUrl,
     cancelUrl: urls.cancelUrl,
     metadata: { businessId: session.businessId, planId: plan.id },
   });
 
-  // As with `startTrial`, every field left out here is preserved as-is by
-  // `upsertSubscription`'s partial-patch update — only `planId`/`status`
-  // (always required) and the freshly-created checkout session id change.
-  const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
   subscriptionsRepo.upsertSubscription(db, session.businessId, {
     planId: plan.id,
     status: existing?.status ?? "incomplete",
     providerCheckoutSessionId: result.id,
   });
 
+  return { url: result.url };
+}
+
+/**
+ * Creates a real Stripe Checkout session, in `payment` mode, for the
+ * optional one-time professional installation fee — entirely separate
+ * from the recurring subscription (see
+ * docs/decisions/0018-stripe-v1-hardening.md). Reuses (rather than
+ * duplicating) a `pending` charge from an earlier abandoned attempt;
+ * refuses to start a new one once this business's installation charge has
+ * already been resolved (`paid` or `waived`) so a business can't
+ * accidentally pay twice or re-litigate a founder-waived fee.
+ */
+export async function createInstallationCheckoutSession(
+  db: DatabaseSync,
+  session: AuthSession,
+  urls: { successUrl: string; cancelUrl: string },
+): Promise<{ url: string }> {
+  const business = getBusinessById(db, session.businessId);
+  if (!business) throw new Error("Business not found.");
+
+  const existingCharge = billingChargesRepo.getBillingChargeByKind(
+    db,
+    session.businessId,
+    PROFESSIONAL_INSTALLATION_FEE.kind,
+  );
+  if (existingCharge && existingCharge.status !== "pending") {
+    throw new Error("Installation has already been resolved for this business.");
+  }
+  const charge =
+    existingCharge ??
+    billingChargesRepo.createBillingCharge(db, session.businessId, {
+      kind: PROFESSIONAL_INSTALLATION_FEE.kind,
+      amountCents: PROFESSIONAL_INSTALLATION_FEE.amountCents,
+      currency: PROFESSIONAL_INSTALLATION_FEE.currency,
+    });
+
+  const existingSubscription = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+
+  const result = await providerCreateCheckoutSession({
+    mode: "payment",
+    priceId: resolveInstallationPriceId(),
+    customerId: existingSubscription?.billingCustomerId,
+    customerEmail: existingSubscription?.billingCustomerId ? undefined : business.email,
+    successUrl: urls.successUrl,
+    cancelUrl: urls.cancelUrl,
+    // `kind` lets the webhook tell a subscription checkout apart from an
+    // installation checkout without depending on Stripe's `mode` field;
+    // `billingChargeId` is the trusted, unguessable reference the webhook
+    // uses to find and update the exact right charge — never trusting a
+    // client-suppliable businessId/amount at that point either.
+    metadata: { businessId: session.businessId, billingChargeId: charge.id, kind: PROFESSIONAL_INSTALLATION_FEE.kind },
+  });
+
+  return { url: result.url };
+}
+
+/**
+ * Records that a business chose to install the estimator itself, at no
+ * cost — never creates a Stripe charge of any kind (see
+ * docs/decisions/0018: "do not create fake $0 Stripe payments unless
+ * there is a concrete reason"). Recorded as an immediately-`waived`,
+ * $0 `billing_charges` row purely so the dashboard has one durable place
+ * to show "you chose self-install" and doesn't re-prompt — refuses if this
+ * business's installation choice has already been resolved either way.
+ */
+export function chooseSelfInstall(db: DatabaseSync, session: AuthSession): BillingCharge {
+  const existing = billingChargesRepo.getBillingChargeByKind(db, session.businessId, PROFESSIONAL_INSTALLATION_FEE.kind);
+  if (existing) {
+    throw new Error("Installation has already been resolved for this business.");
+  }
+  return billingChargesRepo.createBillingCharge(db, session.businessId, {
+    kind: PROFESSIONAL_INSTALLATION_FEE.kind,
+    amountCents: 0,
+    currency: PROFESSIONAL_INSTALLATION_FEE.currency,
+    status: "waived",
+  });
+}
+
+/**
+ * Creates a Stripe Customer Portal session so a business can manage its
+ * own billing (update card, view invoices, cancel, switch plans) —
+ * Stripe-hosted, no custom UI (see docs/decisions/0018). Requires a real
+ * Stripe Customer to already exist, which only happens once this business
+ * has gone through Checkout at least once; there's deliberately no
+ * fallback that creates a bare Customer just to open the portal, since a
+ * business with no billing history has nothing to manage yet.
+ */
+export async function createBillingPortalSession(
+  db: DatabaseSync,
+  session: AuthSession,
+  returnUrl: string,
+): Promise<{ url: string }> {
+  const subscription = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+  if (!subscription?.billingCustomerId) {
+    throw new Error("No billing account yet — start checkout before managing billing.");
+  }
+  const result = await providerCreatePortalSession({ customerId: subscription.billingCustomerId, returnUrl });
   return { url: result.url };
 }

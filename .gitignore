@@ -2,6 +2,10 @@
 node_modules/
 .pnpm-store/
 
+# This project uses pnpm exclusively (see packageManager in package.json) —
+# an npm lockfile here is always stray drift, never intentional.
+package-lock.json
+
 # Build outputs
 .next/
 dist/

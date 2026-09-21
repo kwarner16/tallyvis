@@ -5,24 +5,29 @@ import { revalidatePath } from "next/cache";
 import {
   BillingProviderError,
   createCheckoutSessionForPlan,
+  createInstallationCheckoutSession,
+  chooseSelfInstall,
+  createBillingPortalSession,
   startTrial as apiStartTrial,
   type Subscription,
+  type BillingCharge,
 } from "@tallyvis/api";
 import { requireContext } from "./session";
 import { APP_URL } from "./urls";
 import { INTENDED_PLAN_COOKIE_NAME } from "./constants";
 
 /**
- * Phase 14 — SaaS plan/trial/subscription foundation (see
- * docs/decisions/0016-onboarding-billing-embed.md). Same
+ * Phase 14 SaaS plan/trial/subscription foundation (see
+ * docs/decisions/0016-onboarding-billing-embed.md), extended for V1 in
+ * docs/decisions/0018-stripe-v1-hardening.md. Same
  * `requireContext()`-derives-the-business pattern every other mutation in
  * this app already follows — nothing here accepts or trusts a
  * client-supplied businessId, and a plan id is always re-validated
- * server-side (`apiStartTrial`/`createCheckoutSessionForPlan` both reject
- * anything not in `@tallyvis/config`'s `PLANS`) — never trusted just
- * because the browser sent it.
+ * server-side (the service layer rejects anything not in
+ * `@tallyvis/config`'s `PLANS`) — never trusted just because the browser
+ * sent it.
  *
- * Both actions clear the intended-plan cookie (set at signup from a
+ * Both plan actions clear the intended-plan cookie (set at signup from a
  * marketing-site pricing link) as a side effect of actually choosing a
  * plan — cookie mutation is only legal here, inside a real Server Action,
  * never in `/dashboard/onboarding`'s own render (see that page's comment
@@ -32,18 +37,27 @@ import { INTENDED_PLAN_COOKIE_NAME } from "./constants";
  * reaches the browser — `BillingProviderError`'s own message (already
  * hand-written to be safe, e.g. "Billing isn't configured...") or the
  * handful of validation messages the service layer throws (e.g. "Unknown
- * plan"). Anything else (a database error, a network failure, any
- * unexpected exception) is logged server-side with full detail and
- * replaced with one generic, safe message — the browser never sees a
- * stack trace, a SQL error, or a raw provider exception.
+ * plan", "Installation has already been resolved..."). Anything else (a
+ * database error, a network failure, any unexpected exception) is logged
+ * server-side with full detail and replaced with one generic, safe
+ * message — the browser never sees a stack trace, a SQL error, or a raw
+ * provider exception.
  */
 
 const GENERIC_TRIAL_ERROR = "Could not start your trial. Please try again.";
 const GENERIC_CHECKOUT_ERROR = "We couldn't start checkout. Please try again.";
+const GENERIC_INSTALLATION_ERROR = "We couldn't start installation checkout. Please try again.";
+const GENERIC_SELF_INSTALL_ERROR = "Could not record your installation choice. Please try again.";
+const GENERIC_PORTAL_ERROR = "Could not open your billing portal. Please try again.";
 
 /** Messages the service layer deliberately hand-writes for the caller to see as-is — never derived from a raw exception, never containing internal ids/details. */
-const SAFE_MESSAGE_PATTERN = /^Unknown plan "/;
+const SAFE_MESSAGE_PATTERN = /^(Unknown plan "|Installation has already been resolved|No billing account yet)/;
 
+/**
+ * DB-only, no-card trial start — NOT called by any production UI as of the
+ * Stripe V1 hardening pass (see `services/subscriptions.ts`'s `startTrial`
+ * comment and docs/decisions/0018). Retained for tests/internal use only.
+ */
 export async function startTrialAction(planId: string): Promise<Subscription> {
   const { db, session } = await requireContext();
   try {
@@ -60,12 +74,11 @@ export async function startTrialAction(planId: string): Promise<Subscription> {
 }
 
 /**
- * Creates a real Stripe Checkout session and returns the URL to redirect
- * to — only succeeds when billing is actually configured
- * (`STRIPE_SECRET_KEY` set); throws a plain, safe-to-display message
- * otherwise ("Billing isn't configured...") rather than a raw provider
- * error, the same `BillingProviderError`-to-`Error.message` pattern
- * `quoteActions.ts` already uses for `AiProviderError`.
+ * Creates a real Stripe Checkout session (mode: subscription, 7-day trial,
+ * card required) and returns the URL to redirect to — the ONE production
+ * onboarding path. Only succeeds when billing is actually configured
+ * (`STRIPE_SECRET_KEY` and that plan's Price id both set); throws a plain,
+ * safe-to-display message otherwise rather than a raw provider error.
  */
 export async function createCheckoutSessionAction(planId: string): Promise<{ url: string }> {
   const { db, session } = await requireContext();
@@ -81,5 +94,48 @@ export async function createCheckoutSessionAction(planId: string): Promise<{ url
     if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
     console.error("createCheckoutSessionAction failed:", err);
     throw new Error(GENERIC_CHECKOUT_ERROR);
+  }
+}
+
+/** Creates a real Stripe Checkout session (mode: payment, one-time) for the optional $299 professional installation fee. */
+export async function createInstallationCheckoutSessionAction(): Promise<{ url: string }> {
+  const { db, session } = await requireContext();
+  try {
+    return await createInstallationCheckoutSession(db, session, {
+      successUrl: `${APP_URL}/dashboard/billing?installation=success`,
+      cancelUrl: `${APP_URL}/dashboard/billing?installation=canceled`,
+    });
+  } catch (err) {
+    if (err instanceof BillingProviderError) throw new Error(err.message);
+    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
+    console.error("createInstallationCheckoutSessionAction failed:", err);
+    throw new Error(GENERIC_INSTALLATION_ERROR);
+  }
+}
+
+/** Records a self-install choice (free, no Stripe interaction). */
+export async function chooseSelfInstallAction(): Promise<BillingCharge> {
+  const { db, session } = await requireContext();
+  try {
+    const charge = chooseSelfInstall(db, session);
+    revalidatePath("/dashboard/billing");
+    return charge;
+  } catch (err) {
+    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
+    console.error("chooseSelfInstallAction failed:", err);
+    throw new Error(GENERIC_SELF_INSTALL_ERROR);
+  }
+}
+
+/** Creates a Stripe Customer Portal session so the business can manage its own billing, and returns the URL to redirect to. */
+export async function createBillingPortalSessionAction(): Promise<{ url: string }> {
+  const { db, session } = await requireContext();
+  try {
+    return await createBillingPortalSession(db, session, `${APP_URL}/dashboard/billing`);
+  } catch (err) {
+    if (err instanceof BillingProviderError) throw new Error(err.message);
+    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
+    console.error("createBillingPortalSessionAction failed:", err);
+    throw new Error(GENERIC_PORTAL_ERROR);
   }
 }

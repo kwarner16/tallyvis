@@ -6,25 +6,33 @@ import { BillingProviderError } from "../billing/types";
 
 /**
  * The real Stripe provider adapter, verified against a local fake HTTP
- * server standing in for Stripe's API — not the live API (no credentials
- * exist in this environment; see
- * docs/decisions/0017-billing-hardening.md for exactly what this does and
- * does not prove). Mirrors the exact pattern
+ * server standing in for Stripe's API — not the live API (see
+ * docs/decisions/0017-billing-hardening.md and
+ * docs/decisions/0018-stripe-v1-hardening.md for exactly what this does
+ * and does not prove). Mirrors the exact pattern
  * `services/ai/src/__tests__/anthropic.test.ts` already established for
  * the AI provider: a local server proves request construction and
  * response/error handling end-to-end without needing real network access
  * or a key.
  */
 
-const sampleInput = () => ({
+const sampleSubscriptionInput = () => ({
+  mode: "subscription" as const,
   customerEmail: "owner@sparkle.example",
-  planId: "growth",
-  planName: "Growth",
-  monthlyPriceCents: 14900,
+  priceId: "price_test_growth",
   trialDays: 7,
   successUrl: "https://app.tallyvis.example/dashboard/billing?checkout=success",
   cancelUrl: "https://app.tallyvis.example/dashboard/billing?checkout=canceled",
   metadata: { businessId: "business_abc123", planId: "growth" },
+});
+
+const samplePaymentInput = () => ({
+  mode: "payment" as const,
+  customerEmail: "owner@sparkle.example",
+  priceId: "price_test_installation",
+  successUrl: "https://app.tallyvis.example/dashboard/billing?installation=success",
+  cancelUrl: "https://app.tallyvis.example/dashboard/billing?installation=canceled",
+  metadata: { businessId: "business_abc123", billingChargeId: "charge_abc123", kind: "website_installation" },
 });
 
 let server: Server | undefined;
@@ -51,8 +59,8 @@ async function readFormBody(req: Parameters<RequestListener>[0]): Promise<URLSea
   return new URLSearchParams(Buffer.concat(chunks).toString("utf-8"));
 }
 
-describe("createStripeProvider — request construction", () => {
-  it("sends the exact plan-derived price server-side computed — never a client-suppliable value — as unit_amount, plus the trial length and metadata", async () => {
+describe("createStripeProvider — subscription checkout (mode: subscription)", () => {
+  it("sends the persistent Price id, trial length, and metadata — never a client-suppliable amount", async () => {
     let received: URLSearchParams | undefined;
     const baseUrl = await listen(async (req, res) => {
       received = await readFormBody(req);
@@ -61,18 +69,38 @@ describe("createStripeProvider — request construction", () => {
     });
 
     const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
-    const result = await provider.createCheckoutSession(sampleInput());
+    const result = await provider.createCheckoutSession(sampleSubscriptionInput());
 
     expect(result).toEqual({ id: "cs_test_123", url: "https://checkout.stripe.example/cs_test_123" });
     expect(received?.get("mode")).toBe("subscription");
     expect(received?.get("customer_email")).toBe("owner@sparkle.example");
-    expect(received?.get("line_items[0][price_data][unit_amount]")).toBe("14900");
-    expect(received?.get("line_items[0][price_data][currency]")).toBe("usd");
-    expect(received?.get("line_items[0][price_data][recurring][interval]")).toBe("month");
+    expect(received?.get("line_items[0][price]")).toBe("price_test_growth");
     expect(received?.get("subscription_data[trial_period_days]")).toBe("7");
     expect(received?.get("metadata[businessId]")).toBe("business_abc123");
-    expect(received?.get("success_url")).toBe(sampleInput().successUrl);
-    expect(received?.get("cancel_url")).toBe(sampleInput().cancelUrl);
+    expect(received?.get("subscription_data[metadata][businessId]")).toBe("business_abc123");
+    expect(received?.get("success_url")).toBe(sampleSubscriptionInput().successUrl);
+    expect(received?.get("cancel_url")).toBe(sampleSubscriptionInput().cancelUrl);
+    // No inline price_data anywhere — this is a persistent-Price integration.
+    expect(received?.has("line_items[0][price_data][unit_amount]")).toBe(false);
+  });
+
+  it("reuses an existing Stripe Customer (passes `customer`, not `customer_email`) when one is already on file", async () => {
+    let received: URLSearchParams | undefined;
+    const baseUrl = await listen(async (req, res) => {
+      received = await readFormBody(req);
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ id: "cs_test_123", url: "https://checkout.stripe.example/cs_test_123" }));
+    });
+
+    const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
+    await provider.createCheckoutSession({
+      ...sampleSubscriptionInput(),
+      customerId: "cus_already_linked",
+      customerEmail: undefined,
+    });
+
+    expect(received?.get("customer")).toBe("cus_already_linked");
+    expect(received?.has("customer_email")).toBe(false);
   });
 
   it("sends the secret key only via the Authorization header, never in the body or a logged/visible place", async () => {
@@ -85,9 +113,62 @@ describe("createStripeProvider — request construction", () => {
     });
 
     const provider = createStripeProvider({ secretKey: "sk_test_super_secret", baseUrl });
-    await provider.createCheckoutSession(sampleInput());
+    await provider.createCheckoutSession(sampleSubscriptionInput());
 
     expect(authHeader).toBe("Bearer sk_test_super_secret");
+  });
+});
+
+describe("createStripeProvider — one-time installation checkout (mode: payment)", () => {
+  it("sends mode=payment with no trial/subscription_data, plus the charge-correlating metadata", async () => {
+    let received: URLSearchParams | undefined;
+    const baseUrl = await listen(async (req, res) => {
+      received = await readFormBody(req);
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ id: "cs_test_pay_123", url: "https://checkout.stripe.example/cs_test_pay_123" }));
+    });
+
+    const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
+    const result = await provider.createCheckoutSession(samplePaymentInput());
+
+    expect(result.id).toBe("cs_test_pay_123");
+    expect(received?.get("mode")).toBe("payment");
+    expect(received?.get("line_items[0][price]")).toBe("price_test_installation");
+    expect(received?.get("metadata[billingChargeId]")).toBe("charge_abc123");
+    expect(received?.has("subscription_data[trial_period_days]")).toBe(false);
+  });
+});
+
+describe("createStripeProvider — Customer Portal session", () => {
+  it("sends the Stripe Customer id and return url, and returns the portal url", async () => {
+    let received: URLSearchParams | undefined;
+    const baseUrl = await listen(async (req, res) => {
+      received = await readFormBody(req);
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ url: "https://billing.stripe.example/p/session_123" }));
+    });
+
+    const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
+    const result = await provider.createPortalSession({
+      customerId: "cus_already_linked",
+      returnUrl: "https://app.tallyvis.example/dashboard/billing",
+    });
+
+    expect(result).toEqual({ url: "https://billing.stripe.example/p/session_123" });
+    expect(received?.get("customer")).toBe("cus_already_linked");
+    expect(received?.get("return_url")).toBe("https://app.tallyvis.example/dashboard/billing");
+  });
+
+  it("treats a missing portal url as a provider error", async () => {
+    const baseUrl = await listen((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ url: null }));
+    });
+
+    const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
+    await expect(
+      provider.createPortalSession({ customerId: "cus_x", returnUrl: "https://app.tallyvis.example/dashboard/billing" }),
+    ).rejects.toMatchObject({ category: "provider-error" });
   });
 });
 
@@ -101,7 +182,7 @@ describe("createStripeProvider — error handling", () => {
 
     const provider = createStripeProvider({ secretKey: "sk_test_bad", baseUrl });
     try {
-      await provider.createCheckoutSession(sampleInput());
+      await provider.createCheckoutSession(sampleSubscriptionInput());
       expect.unreachable();
     } catch (err) {
       expect(err).toBeInstanceOf(BillingProviderError);
@@ -118,7 +199,7 @@ describe("createStripeProvider — error handling", () => {
     });
 
     const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
-    await expect(provider.createCheckoutSession(sampleInput())).rejects.toMatchObject({
+    await expect(provider.createCheckoutSession(sampleSubscriptionInput())).rejects.toMatchObject({
       category: "invalid-request",
       message: "Invalid email address.",
     });
@@ -127,7 +208,7 @@ describe("createStripeProvider — error handling", () => {
   it("maps an unreachable server to a safe 'provider-error', never a raw network exception", async () => {
     // Nothing is listening on this port.
     const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl: "http://127.0.0.1:1" });
-    await expect(provider.createCheckoutSession(sampleInput())).rejects.toMatchObject({
+    await expect(provider.createCheckoutSession(sampleSubscriptionInput())).rejects.toMatchObject({
       category: "provider-error",
       message: "Could not reach the billing provider.",
     });
@@ -140,7 +221,7 @@ describe("createStripeProvider — error handling", () => {
     });
 
     const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
-    await expect(provider.createCheckoutSession(sampleInput())).rejects.toMatchObject({
+    await expect(provider.createCheckoutSession(sampleSubscriptionInput())).rejects.toMatchObject({
       category: "provider-error",
     });
   });
