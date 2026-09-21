@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { buttonVariants } from "@tallyvis/ui";
-import { analyzeProperty } from "@tallyvis/ai";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { isPropertyComplete } from "@/lib/estimator/types";
+import { blobUrlToDataUrl } from "@/lib/imageEncoding";
+import { analyzePublicPropertyAction, isUsingMockAiProviderAction } from "@/lib/publicActions";
 
 const STAGES = [
   "Analyzing your property...",
@@ -25,6 +26,11 @@ export default function AnalyzingStepPage() {
   const router = useRouter();
   const [stageIndex, setStageIndex] = useState(0);
   const [retryToken, setRetryToken] = useState(0);
+  const [isMockProvider, setIsMockProvider] = useState(true);
+
+  useEffect(() => {
+    isUsingMockAiProviderAction().then(setIsMockProvider);
+  }, []);
 
   useEffect(() => {
     if (!isPropertyComplete(input.property) || input.photos.length === 0) {
@@ -49,14 +55,23 @@ export default function AnalyzingStepPage() {
 
     const minDisplay = new Promise<void>((resolve) => setTimeout(resolve, MIN_DISPLAY_MS));
 
-    const images = input.photos.map((photo) => ({ url: photo.previewUrl }));
-    const metadata = {
-      vertical: "window-cleaning" as const,
-      address: input.property.address || undefined,
-      customerDeclaredStories: input.property.stories ?? undefined,
-    };
+    // Photos live only as blob: URLs in this tab (see EstimatorContext) —
+    // meaningless to the server, so each is re-read into a data: URI right
+    // here, on demand, and sent to the Server Action that actually calls
+    // the AI provider. Nothing is uploaded or stored anywhere new; see
+    // docs/decisions/0013-ai-analysis-foundation.md.
+    const analyze = Promise.all(input.photos.map((photo) => blobUrlToDataUrl(photo.previewUrl))).then(
+      (dataUrls) =>
+        analyzePublicPropertyAction({
+          images: dataUrls.map((url) => ({ url })),
+          property: {
+            address: input.property.address || undefined,
+            stories: input.property.stories ?? undefined,
+          },
+        }),
+    );
 
-    Promise.all([analyzeProperty(images, metadata), minDisplay])
+    Promise.all([analyze, minDisplay])
       .then(([result]) => {
         if (cancelled) return;
         clearInterval(stageTimer);
@@ -130,7 +145,9 @@ export default function AnalyzingStepPage() {
       </div>
 
       <p className="text-xs text-ink-faint">
-        This analysis is simulated for this prototype — not a live computer-vision result.
+        {isMockProvider
+          ? "This analysis is simulated for this prototype — not a live computer-vision result."
+          : "Your photos are analyzed securely on our servers."}
       </p>
     </div>
   );

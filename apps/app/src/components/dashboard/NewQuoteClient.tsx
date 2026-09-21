@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type {
@@ -12,12 +12,24 @@ import type {
   TriState,
   WindowCleaningCharacteristics,
 } from "@tallyvis/types";
+import type { RawPropertyObservation } from "@tallyvis/api";
 import { calculateEstimate, reconcilePricingInput } from "@tallyvis/pricing";
 import { buttonVariants } from "@tallyvis/ui";
-import { createQuoteAction } from "@/lib/quoteActions";
+import { analyzePropertyAction, createQuoteAction } from "@/lib/quoteActions";
 import { windowCleaningEstimatorConfig } from "@/lib/estimator/industry-config";
+import { fileToDataUrl } from "@/lib/imageEncoding";
 import { OptionButton } from "@/components/OptionButton";
 import { JobCharacteristicsFields } from "@/components/dashboard/JobCharacteristicsFields";
+import { AiObservationSummary } from "@/components/dashboard/AiObservationSummary";
+
+const MAX_ANALYSIS_PHOTOS = 8;
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+
+interface AnalysisPhoto {
+  id: string;
+  name: string;
+  dataUrl: string;
+}
 
 const PROPERTY_TYPES: { value: PropertyType; label: string }[] = [
   { value: "single-family", label: "Single-family home" },
@@ -69,13 +81,17 @@ function isValidEmail(email: string): boolean {
  * The business-initiated counterpart to the customer's self-service
  * `/estimate/*` wizard — for when a business wants to create a quote
  * directly (over the phone, from a site visit) instead of waiting for the
- * customer to submit one. A single page rather than a multi-step wizard:
- * there's no photo upload or AI analysis step here, so nothing needs to be
- * split across routes. The live preview below calls `calculateEstimate()`
- * client-side against the active configuration (loaded server-side, see
- * the page wrapping this) purely for instant feedback — saving always goes
- * through `createQuoteAction`, which recomputes the estimate server-side
- * from scratch and never trusts this preview's numbers.
+ * customer to submit one. A single page rather than a multi-step wizard —
+ * even with Phase 11's optional AI-assisted photo analysis (see
+ * docs/decisions/0013-ai-analysis-foundation.md), there's no separate
+ * "analyzing"/"result" route the way the customer wizard has; analysis
+ * happens inline and pre-fills the same editable fields below it, rather
+ * than gating the page behind it. The live preview below calls
+ * `calculateEstimate()` client-side against the active configuration
+ * (loaded server-side, see the page wrapping this) purely for instant
+ * feedback — saving always goes through `createQuoteAction`, which
+ * recomputes the estimate server-side from scratch and never trusts this
+ * preview's numbers, or anything the AI analysis step suggested directly.
  */
 export function NewQuoteClient({ configuration }: { configuration: PricingConfiguration }) {
   const router = useRouter();
@@ -93,6 +109,12 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  const [analysisPhotos, setAnalysisPhotos] = useState<AnalysisPhoto[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [observation, setObservation] = useState<RawPropertyObservation | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const propertyComplete = propertyType !== null && stories !== null;
   const customerComplete = customer.name.trim().length > 0 && isValidEmail(customer.email);
@@ -133,8 +155,11 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
         photos: [],
         analysis: {
           characteristics: effectiveCharacteristics,
-          // Entered directly by the business, not an AI guess — nothing to be
-          // uncertain about, so this doesn't use the confidence-band display.
+          // Whatever is on screen when "Save quote" is clicked — whether typed
+          // directly or pre-filled by AI analysis below — has been reviewed
+          // and (implicitly, by saving) confirmed by the business, so this
+          // is recorded as a confident, human-backed value either way. AI
+          // uncertainty never reaches the saved quote un-reviewed.
           metadata: { confidence: "high" },
         },
       });
@@ -142,6 +167,47 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Could not save this quote.");
       setSaving(false);
+    }
+  }
+
+  async function handleAddPhotos(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    setAnalyzeError(null);
+    const remainingSlots = MAX_ANALYSIS_PHOTOS - analysisPhotos.length;
+    const accepted: AnalysisPhoto[] = [];
+
+    for (const file of Array.from(fileList).slice(0, remainingSlots)) {
+      if (!file.type.startsWith("image/")) continue;
+      if (file.size > MAX_PHOTO_BYTES) {
+        setAnalyzeError(`${file.name} is larger than 10 MB and was skipped.`);
+        continue;
+      }
+      accepted.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name: file.name, dataUrl: await fileToDataUrl(file) });
+    }
+
+    if (accepted.length > 0) setAnalysisPhotos((prev) => [...prev, ...accepted]);
+  }
+
+  function handleRemovePhoto(id: string) {
+    setAnalysisPhotos((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  async function handleAnalyze() {
+    if (analysisPhotos.length === 0) return;
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const { analysis, observation: newObservation } = await analyzePropertyAction({
+        images: analysisPhotos.map((p) => ({ url: p.dataUrl })),
+        property: { stories: stories ?? undefined, address: address.trim() || undefined },
+      });
+      setObservation(newObservation);
+      setCharacteristics(analysis.characteristics);
+      setStories(analysis.characteristics.stories as (typeof STORY_OPTIONS)[number]);
+    } catch (err) {
+      setAnalyzeError(err instanceof Error ? err.message : "Could not analyze these photos.");
+    } finally {
+      setAnalyzing(false);
     }
   }
 
@@ -253,11 +319,80 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
           <section className="flex flex-col gap-4 rounded-2xl border border-line bg-paper p-5">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
+                Analyze from photos <span className="font-normal normal-case text-ink-faint">(optional)</span>
+              </p>
+              <p className="text-xs text-ink-faint">
+                Upload photos of the property and Tallyvis will suggest the fields below — you always
+                review and confirm before saving. AI never sets the price directly.
+              </p>
+            </div>
+
+            {analysisPhotos.length > 0 ? (
+              <ul className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+                {analysisPhotos.map((photo) => (
+                  <li key={photo.id} className="group relative aspect-square overflow-hidden rounded-lg border border-line">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- locally-read data: URI, not a remote/optimizable asset */}
+                    <img src={photo.dataUrl} alt="" className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => handleRemovePhoto(photo.id)}
+                      aria-label={`Remove photo ${photo.name}`}
+                      className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-ink/70 text-paper opacity-90 transition-opacity hover:bg-ink focus-visible:opacity-100"
+                    >
+                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3.5 w-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+                      </svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="sr-only"
+                onChange={(e) => {
+                  void handleAddPhotos(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => photoInputRef.current?.click()}
+                disabled={analysisPhotos.length >= MAX_ANALYSIS_PHOTOS}
+                className={buttonVariants({ variant: "outline" })}
+              >
+                {analysisPhotos.length >= MAX_ANALYSIS_PHOTOS ? "Maximum photos added" : "Add photos"}
+              </button>
+              <button
+                type="button"
+                onClick={handleAnalyze}
+                disabled={analysisPhotos.length === 0 || analyzing}
+                className={buttonVariants({ variant: "primary" })}
+              >
+                {analyzing ? "Analyzing…" : "Analyze with AI"}
+              </button>
+            </div>
+
+            {analyzeError ? (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{analyzeError}</p>
+            ) : null}
+
+            {observation ? <AiObservationSummary observation={observation} /> : null}
+          </section>
+
+          <section className="flex flex-col gap-4 rounded-2xl border border-line bg-paper p-5">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">
                 What&rsquo;s on the property
               </p>
               <p className="text-xs text-ink-faint">
-                Job characteristics the estimate is priced from — the same fields Tallyvis&rsquo;s
-                mock analyzer would produce from photos.
+                Job characteristics the estimate is priced from — filled in above by AI analysis if you
+                used it, or enter them directly.
               </p>
             </div>
             <JobCharacteristicsFields

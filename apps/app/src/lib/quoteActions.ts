@@ -9,6 +9,7 @@ import type {
   WindowCleaningCharacteristics,
 } from "@tallyvis/types";
 import {
+  analyzePropertyForBusiness,
   createQuote as apiCreateQuote,
   generateShareLink,
   getConfigurationById,
@@ -18,6 +19,8 @@ import {
   updateQuoteAnalysis as apiUpdateQuoteAnalysis,
   updateQuoteCustomer as apiUpdateQuoteCustomer,
   updateQuoteStatus as apiUpdateQuoteStatus,
+  type AnalyzePropertyInput,
+  type AnalyzePropertyResult,
   type CreateQuoteInput,
   type ShareLinkStatus,
 } from "@tallyvis/api";
@@ -40,6 +43,22 @@ export async function createQuoteAction(input: CreateQuoteInput): Promise<Quote>
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard");
   return quote;
+}
+
+/**
+ * Phase 11 — AI-assisted photo analysis for a business creating a quote
+ * itself (see docs/decisions/0013-ai-analysis-foundation.md).
+ * `requireContext()` derives the business from the session exactly like
+ * every other action in this file; there is no businessId parameter for a
+ * caller to substitute. Returns the full `AnalyzePropertyResult`
+ * (reconciled characteristics *and* the raw per-field observation), since
+ * `NewQuoteClient`'s review step shows the AI's own confidence per field
+ * before the business confirms/edits and saves — the public estimator's
+ * counterpart (`analyzePublicPropertyAction`) deliberately returns less.
+ */
+export async function analyzePropertyAction(input: AnalyzePropertyInput): Promise<AnalyzePropertyResult> {
+  const { db, session } = await requireContext();
+  return analyzePropertyForBusiness(db, session, input);
 }
 
 export async function updateQuoteAnalysisAction(

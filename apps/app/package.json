@@ -10,7 +10,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tallyvis/ai": "workspace:*",
     "@tallyvis/api": "workspace:*",
     "@tallyvis/config": "workspace:*",
     "@tallyvis/pricing": "workspace:*",

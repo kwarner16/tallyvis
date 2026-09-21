@@ -12,6 +12,7 @@
     "seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
+    "@tallyvis/ai": "workspace:*",
     "@tallyvis/config": "workspace:*",
     "@tallyvis/pricing": "workspace:*",
     "@tallyvis/types": "workspace:*",

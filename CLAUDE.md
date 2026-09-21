@@ -99,8 +99,8 @@ simplification pending real multi-business public routing — see
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 10 (Customer-facing quote experience &
-secure quote sharing) — complete.**
+reason. Current phase: **Phase 11 (AI estimation intelligence & property
+analysis foundation) — complete.**
 
 1. Foundation
 2. Marketing website foundation
@@ -138,12 +138,23 @@ secure quote sharing) — complete.**
     view/response activity tracking. Reordered ahead of the AI/CV work
     below at the founder's direction — see
     `docs/decisions/0012-secure-quote-sharing.md`
-11. Real AI / computer vision integration (replaces the Phase 4 mock)
-12. Human review / confidence system
-13. Data flywheel — using the real usage data Phase 9's persistence now
+11. AI estimation intelligence & property analysis foundation — the
+    Phase 4 mock analyzer's `AnalyzeProperty` interface is unchanged, but
+    the call moves fully server-side (`apps/app` no longer depends on
+    `@tallyvis/ai` at all — only `services/api`), gains a real provider
+    (Claude, via `@anthropic-ai/sdk`) alongside the mock behind the same
+    `AiProvider` abstraction, and a validated, per-field-uncertain
+    `RawPropertyObservation` type that a basic human-review step (the
+    dashboard's "New quote" flow) shows before characteristics reach
+    `calculateEstimate()`. `packages/pricing` is untouched — AI still only
+    ever produces estimator inputs, never a price. See
+    `docs/decisions/0013-ai-analysis-foundation.md`. A more elaborate
+    review/confidence system (e.g. automatic flagging or a review queue
+    for low-confidence quotes) remains future work.
+12. Data flywheel — using the real usage data Phase 9's persistence now
     captures to improve AI/pricing defaults over time
-14. Billing (Phase 9 already shipped real authentication)
-15. Integrations and additional verticals
+13. Billing (Phase 9 already shipped real authentication)
+14. Integrations and additional verticals
 
 ## Product ownership
 

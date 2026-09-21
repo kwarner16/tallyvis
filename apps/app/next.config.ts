@@ -6,7 +6,6 @@ const nextConfig: NextConfig = {
     "@tallyvis/pricing",
     "@tallyvis/config",
     "@tallyvis/types",
-    "@tallyvis/ai",
     "@tallyvis/api",
   ],
 };

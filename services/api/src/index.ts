@@ -64,3 +64,15 @@ export {
   type PublicQuoteView,
   type PublicBusinessSummary,
 } from "./services/quoteSharing";
+
+// AI-related types re-exported from @tallyvis/ai so apps/app depends on this
+// package for anything AI-related, never on @tallyvis/ai directly — see
+// docs/decisions/0013-ai-analysis-foundation.md.
+export type { RawPropertyObservation, ObservedValue } from "@tallyvis/ai";
+
+export {
+  analyzePropertyForBusiness,
+  analyzePropertyPublic,
+  type AnalyzePropertyInput,
+  type AnalyzePropertyResult,
+} from "./services/aiAnalysis";

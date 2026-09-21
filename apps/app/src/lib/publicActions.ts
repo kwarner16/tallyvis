@@ -1,8 +1,9 @@
 "use server";
 
-import type { Business, PricingConfiguration, Quote } from "@tallyvis/types";
+import type { Business, PricingConfiguration, PropertyAnalysisResult, Quote } from "@tallyvis/types";
 import {
   acceptQuoteByToken,
+  analyzePropertyPublic,
   createQuotePublic,
   declineQuoteByToken,
   getActiveConfigurationForBusiness,
@@ -10,6 +11,7 @@ import {
   getDefaultPublicBusiness,
   getQuoteByShareToken,
   requestQuoteChangesByToken,
+  type AnalyzePropertyInput,
   type CreateQuoteInput,
   type PublicQuoteView,
 } from "@tallyvis/api";
@@ -40,6 +42,36 @@ export async function getPublicBusinessAction(): Promise<Business> {
 export async function getPublicActiveConfigurationAction(): Promise<PricingConfiguration> {
   const businessId = await requirePublicBusinessId();
   return getActiveConfigurationForBusiness(getDb(), businessId);
+}
+
+/**
+ * Phase 11 — the customer estimator's AI analysis step, moved server-side
+ * (see docs/decisions/0013-ai-analysis-foundation.md). Previously
+ * `/estimate/analyzing` imported `@tallyvis/ai` and called it directly
+ * from the browser; that only worked because the Phase 4 mock needs no
+ * secret. This is the one and only reachable path from an unauthenticated
+ * caller to AI analysis — `/quote/[token]`'s public actions have no
+ * equivalent, by design. Returns only the reconciled
+ * `PropertyAnalysisResult`, not the raw per-field observation — the
+ * public wizard has no business-side review step for it.
+ */
+export async function analyzePublicPropertyAction(input: AnalyzePropertyInput): Promise<PropertyAnalysisResult> {
+  const businessId = await requirePublicBusinessId();
+  const result = await analyzePropertyPublic(getDb(), businessId, input);
+  return result.analysis;
+}
+
+/**
+ * Whether AI analysis is currently the Phase 4/11 heuristic mock (the
+ * default — see `.env.example`) rather than a real computer-vision
+ * provider. Not a secret — `AI_PROVIDER` only ever selects "mock" or
+ * "anthropic", never the API key — but it must still be read server-side
+ * and handed to the client explicitly rather than assumed, so the
+ * "simulated" disclaimer CLAUDE.md requires for mocks stays accurate
+ * if/when a business actually configures a real provider.
+ */
+export async function isUsingMockAiProviderAction(): Promise<boolean> {
+  return (process.env.AI_PROVIDER?.trim() || "mock") !== "anthropic";
 }
 
 /**
