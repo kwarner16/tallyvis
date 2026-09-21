@@ -62,4 +62,5 @@ export {
   type ShareLinkStatus,
   type ShareLinkResult,
   type PublicQuoteView,
+  type PublicBusinessSummary,
 } from "./services/quoteSharing";

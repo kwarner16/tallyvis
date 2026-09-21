@@ -8,6 +8,9 @@ import { formatQuoteNumber } from "@/lib/quoteNumber";
 import { PROPERTY_TYPE_LABELS } from "@/lib/propertyTypeLabels";
 import { QuoteStatusBadge } from "@/components/dashboard/QuoteStatusBadge";
 
+/** Only the fields this component actually renders — the public page's source (`PublicBusinessSummary` in `@tallyvis/api`) is intentionally narrower than the full `Business` record; the authenticated preview page happens to pass a full `Business`, which satisfies this structurally without needing its extra fields. */
+type BusinessSummary = Pick<Business, "name" | "phone">;
+
 export interface CustomerQuoteActions {
   onAccept: () => void;
   onDecline: () => void;
@@ -18,7 +21,7 @@ export interface CustomerQuoteActions {
 
 export interface CustomerQuoteViewProps {
   quote: Quote;
-  business: Business;
+  business: BusinessSummary;
   /** Present when the quote was reached through a real share link — omitted in the business's own authenticated preview, where there's nothing to "expire". */
   expiresAt?: string;
   /**

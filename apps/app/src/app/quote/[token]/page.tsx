@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import type { Business, Quote } from "@tallyvis/types";
+import type { PublicQuoteView } from "@tallyvis/api";
 import {
   acceptPublicQuoteAction,
   declinePublicQuoteAction,
@@ -25,9 +25,7 @@ export default function CustomerQuotePage() {
   const params = useParams<{ token: string }>();
   const token = Array.isArray(params.token) ? params.token[0]! : params.token;
 
-  const [data, setData] = useState<{ quote: Quote; business: Business; expiresAt: string } | null | undefined>(
-    undefined,
-  );
+  const [data, setData] = useState<PublicQuoteView | null | undefined>(undefined);
   const [pending, setPending] = useState<CustomerQuoteActions["pending"]>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 

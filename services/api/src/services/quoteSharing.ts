@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { randomBytes, createHash } from "node:crypto";
-import type { Business, Quote, QuoteStatus } from "@tallyvis/types";
+import type { Quote, QuoteStatus } from "@tallyvis/types";
 import { canTransitionQuoteStatus } from "@tallyvis/types";
 import type { AuthSession } from "../auth/session";
 import { getBusinessById } from "../repositories/businesses";
@@ -105,9 +105,22 @@ export function revokeShareLink(db: DatabaseSync, session: AuthSession, quoteId:
   shareTokensRepo.revokeActiveShareToken(db, session.businessId, quoteId);
 }
 
+/**
+ * Only what the customer-facing page actually renders (business name and
+ * phone) — deliberately NOT the full `Business` record. `getBusinessById`
+ * also returns `email` (the owner's login identifier) and `createdAt`,
+ * neither of which the public quote page displays or has any legitimate
+ * need for; sending them to an anonymous holder of a share link would be
+ * pure unnecessary exposure of internal account information.
+ */
+export interface PublicBusinessSummary {
+  name: string;
+  phone: string;
+}
+
 export interface PublicQuoteView {
   quote: Quote;
-  business: Business;
+  business: PublicBusinessSummary;
   expiresAt: string;
 }
 
@@ -131,7 +144,11 @@ export function getQuoteByShareToken(db: DatabaseSync, rawToken: string): Public
   if (!quote) return undefined;
 
   const active = shareTokensRepo.getActiveShareToken(db, resolved.businessId, resolved.quoteId);
-  return { quote, business, expiresAt: active?.expiresAt ?? "" };
+  return {
+    quote,
+    business: { name: business.name, phone: business.phone },
+    expiresAt: active?.expiresAt ?? "",
+  };
 }
 
 /** Resolves a token to its quote, or throws a single generic message that deliberately doesn't distinguish "unknown token" from "revoked" from "expired" from "quote gone" — any of those should look identical to whoever's holding an invalid link. */

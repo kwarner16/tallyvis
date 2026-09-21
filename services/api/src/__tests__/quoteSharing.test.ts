@@ -171,8 +171,18 @@ describe("getQuoteByShareToken — public resolution", () => {
 
     const result = getQuoteByShareToken(db, token);
     expect(result?.quote.id).toBe(quote.id);
-    expect(result?.business.id).toBe(session.businessId);
+    expect(result?.business.name).toBe("Sparkle Windows");
     expect(result?.expiresAt).toBeTruthy();
+  });
+
+  it("returns only the business fields the public page actually needs — never the owner's login email or other internal fields", async () => {
+    const { db, session, quote } = await setUpBusinessWithQuote();
+    const { token } = generateShareLink(db, session, quote.id);
+
+    const result = getQuoteByShareToken(db, token)!;
+    expect(Object.keys(result.business).sort()).toEqual(["name", "phone"]);
+    expect(JSON.stringify(result.business)).not.toContain("owner@sparkle.example");
+    expect(JSON.stringify(result.business)).not.toContain(session.businessId);
   });
 
   it("records first/last viewed timestamps on resolution", async () => {
