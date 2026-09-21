@@ -16,6 +16,7 @@ import {
   getConfigurationById,
   getShareLinkStatus,
   recalculateQuoteEstimate as apiRecalculateQuoteEstimate,
+  recordJobOutcome as apiRecordJobOutcome,
   revokeShareLink,
   updateQuoteAnalysis as apiUpdateQuoteAnalysis,
   updateQuoteCustomer as apiUpdateQuoteCustomer,
@@ -23,6 +24,8 @@ import {
   type AnalyzePropertyInput,
   type AnalyzePropertyResult,
   type CreateQuoteInput,
+  type JobOutcome,
+  type SaveJobOutcomeInput,
   type ShareLinkStatus,
 } from "@tallyvis/api";
 import { requireContext } from "./session";
@@ -144,4 +147,19 @@ export async function revokeQuoteShareLinkAction(quoteId: string): Promise<void>
   const { db, session } = await requireContext();
   revokeShareLink(db, session, quoteId);
   revalidatePath(`/dashboard/quotes/${quoteId}`);
+}
+
+/**
+ * Records (or updates) a quote's real-world job outcome (Phase 13 — see
+ * docs/decisions/0015-job-outcome-tracking.md). Ownership is re-checked
+ * server-side by `recordJobOutcome` itself, exactly like every other
+ * mutation in this file — this never touches the quote's own historical
+ * `analysis`/`estimate`/`pricingConfigId`.
+ */
+export async function recordJobOutcomeAction(quoteId: string, input: SaveJobOutcomeInput): Promise<JobOutcome> {
+  const { db, session } = await requireContext();
+  const outcome = apiRecordJobOutcome(db, session, quoteId, input);
+  revalidatePath(`/dashboard/quotes/${quoteId}`);
+  revalidatePath("/dashboard/job-outcomes");
+  return outcome;
 }

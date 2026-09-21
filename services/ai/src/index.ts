@@ -10,6 +10,11 @@ import { logAnalysisEvent } from "./logging";
 export type { ObservedValue, RawPropertyObservation } from "./types";
 export { validateRawPropertyObservation, safeParseJson, type ValidationResult } from "./validateObservation";
 export { reconcileObservation } from "./reconcile";
+export {
+  compareObservationToCharacteristics,
+  wasObservationCorrected,
+  type ObservationComparisonRow,
+} from "./compareObservation";
 export { AiProviderError, type AiProvider, type AiErrorCategory, type AiProviderResult } from "./providers/types";
 export { mockProvider } from "./providers/mock";
 export { createAnthropicProvider, type AnthropicProviderConfig } from "./providers/anthropic";

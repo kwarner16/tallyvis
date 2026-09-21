@@ -11,6 +11,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import type { PropertyAnalysisResult } from "@tallyvis/types";
+import type { RawPropertyObservation } from "@tallyvis/api";
 import { windowCleaningEstimatorConfig } from "./industry-config";
 import {
   EMPTY_CUSTOMER_INPUT,
@@ -40,6 +41,15 @@ export interface PhotoRejection {
 interface EstimatorContextValue {
   input: CustomerInput;
   analysis: PropertyAnalysisResult | null;
+  /**
+   * The AI's raw per-field observation behind `analysis`, when one exists —
+   * `null` both before any analysis has run and when `analysis` was set by
+   * the manual fallback (Phase 13 — see
+   * docs/decisions/0015-job-outcome-tracking.md). Preserved only so it can
+   * be saved alongside the resulting quote for later comparison; the
+   * public wizard still has no UI that displays it, unchanged from Phase 12.
+   */
+  aiObservation: RawPropertyObservation | null;
   analysisError: string | null;
   /** Set once this session's result has been saved as a Quote, to guard against creating duplicates if the result page re-renders. */
   quoteId: string | null;
@@ -49,7 +59,7 @@ interface EstimatorContextValue {
   setNotes: (notes: string) => void;
   addPhotos: (files: File[]) => PhotoRejection[];
   removePhoto: (id: string) => void;
-  setAnalysis: (result: PropertyAnalysisResult | null) => void;
+  setAnalysis: (result: PropertyAnalysisResult | null, observation?: RawPropertyObservation | null) => void;
   setAnalysisError: (message: string | null) => void;
   setQuoteId: (id: string) => void;
   reset: () => void;
@@ -59,10 +69,17 @@ const EstimatorContext = createContext<EstimatorContextValue | null>(null);
 
 export function EstimatorProvider({ children }: { children: ReactNode }) {
   const [input, setInput] = useState<CustomerInput>(EMPTY_CUSTOMER_INPUT);
-  const [analysis, setAnalysis] = useState<PropertyAnalysisResult | null>(null);
+  const [analysis, setAnalysisState] = useState<PropertyAnalysisResult | null>(null);
+  const [aiObservation, setAiObservation] = useState<RawPropertyObservation | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [quoteId, setQuoteId] = useState<string | null>(null);
   const hydrated = useRef(false);
+
+  /** `observation` defaults to `null` (not "leave whatever was there") — every caller sets both explicitly, so a stale AI observation can never survive a manual re-entry or a fresh analysis. */
+  const setAnalysis = useCallback((result: PropertyAnalysisResult | null, observation: RawPropertyObservation | null = null) => {
+    setAnalysisState(result);
+    setAiObservation(observation);
+  }, []);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -159,7 +176,8 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       prev.photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
       return EMPTY_CUSTOMER_INPUT;
     });
-    setAnalysis(null);
+    setAnalysisState(null);
+    setAiObservation(null);
     setAnalysisError(null);
     setQuoteId(null);
     try {
@@ -173,6 +191,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
     () => ({
       input,
       analysis,
+      aiObservation,
       analysisError,
       quoteId,
       updateProperty,
@@ -189,6 +208,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
     [
       input,
       analysis,
+      aiObservation,
       analysisError,
       quoteId,
       updateProperty,
@@ -197,6 +217,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       setNotes,
       addPhotos,
       removePhoto,
+      setAnalysis,
       reset,
     ],
   );

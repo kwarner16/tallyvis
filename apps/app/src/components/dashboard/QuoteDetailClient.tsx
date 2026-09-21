@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { CustomerInput, PricingConfiguration, Quote, QuoteStatus, WindowCleaningCharacteristics } from "@tallyvis/types";
+import type { JobOutcome, ObservationComparisonRow } from "@tallyvis/api";
 import {
   recalculateQuoteEstimateAction,
   updateQuoteAnalysisAction,
@@ -19,14 +20,22 @@ import { CustomerEditor } from "@/components/dashboard/CustomerEditor";
 import { QuoteVisual } from "@/components/dashboard/QuoteVisual";
 import { QuoteActions } from "@/components/dashboard/QuoteActions";
 import { ShareQuotePanel } from "@/components/dashboard/ShareQuotePanel";
+import { JobOutcomePanel } from "@/components/dashboard/JobOutcomePanel";
 
 export interface QuoteDetailClientProps {
   initialQuote: Quote;
   initialPricingConfiguration: PricingConfiguration | undefined;
+  initialJobOutcome: JobOutcome | undefined;
+  observationComparison: ObservationComparisonRow[] | undefined;
 }
 
 /** Data is loaded server-side (see the page.tsx wrapping this) and passed in as props; every mutation below goes through a Server Action, which re-derives the business from the session — this component never decides ownership. */
-export function QuoteDetailClient({ initialQuote, initialPricingConfiguration }: QuoteDetailClientProps) {
+export function QuoteDetailClient({
+  initialQuote,
+  initialPricingConfiguration,
+  initialJobOutcome,
+  observationComparison,
+}: QuoteDetailClientProps) {
   const [quote, setQuote] = useState(initialQuote);
   const [pricingConfiguration, setPricingConfiguration] = useState(initialPricingConfiguration);
   const [isEditing, setIsEditing] = useState(false);
@@ -290,6 +299,14 @@ export function QuoteDetailClient({ initialQuote, initialPricingConfiguration }:
               onRecalculate={handleRecalculate}
             />
           </div>
+
+          <JobOutcomePanel
+            quoteId={quote.id}
+            estimateTotal={quote.estimate.total}
+            estimatedLaborHours={characteristics.estimatedLaborHours}
+            initialOutcome={initialJobOutcome}
+            observationComparison={observationComparison}
+          />
         </div>
       </div>
     </div>

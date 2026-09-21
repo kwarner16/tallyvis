@@ -48,8 +48,21 @@ export {
   recalculateQuoteEstimate,
   updateQuoteCustomer,
   updateQuoteStatus,
+  getQuoteAiObservation,
   type CreateQuoteInput,
 } from "./services/quotes";
+
+export {
+  recordJobOutcome,
+  getJobOutcome,
+  getQuoteObservationComparison,
+  listQuotesWithOutcomes,
+  type JobOutcome,
+  type JobOutcomeStatus,
+  type SaveJobOutcomeInput,
+  type QuoteWithOutcomeSummary,
+  type ObservationComparisonRow,
+} from "./services/jobOutcomes";
 
 export {
   getShareLinkStatus,

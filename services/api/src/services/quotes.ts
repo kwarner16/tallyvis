@@ -10,6 +10,7 @@ import type {
 } from "@tallyvis/types";
 import { canTransitionQuoteStatus } from "@tallyvis/types";
 import { calculateEstimate, reconcilePricingInput } from "@tallyvis/pricing";
+import type { RawPropertyObservation } from "@tallyvis/ai";
 import type { AuthSession } from "../auth/session";
 import * as quotesRepo from "../repositories/quotes";
 import * as customersService from "./customers";
@@ -30,6 +31,15 @@ export interface CreateQuoteInput {
    * but only the recomputation below is ever persisted.
    */
   analysis: PropertyAnalysisResult;
+  /**
+   * Phase 13 (see docs/decisions/0015-job-outcome-tracking.md) — the AI's
+   * raw per-field observation, when analysis actually used one, preserved
+   * alongside the quote so it can later be compared against whatever
+   * `analysis.characteristics` a human ultimately confirmed. Omit when the
+   * quote was entered without AI (manual entry, or the public estimator's
+   * AI-failure fallback) — never fabricated after the fact.
+   */
+  aiObservation?: RawPropertyObservation;
 }
 
 export function listQuotes(db: DatabaseSync, session: AuthSession): Quote[] {
@@ -44,6 +54,16 @@ function getQuoteOrThrow(db: DatabaseSync, session: AuthSession, id: string): Qu
   const quote = getQuote(db, session, id);
   if (!quote) throw new Error(`Quote "${id}" not found.`);
   return quote;
+}
+
+/** The AI's raw observation this quote was saved with, if any — see `CreateQuoteInput.aiObservation`'s comment. `undefined` for a manually-entered quote, never fabricated. */
+export function getQuoteAiObservation(
+  db: DatabaseSync,
+  session: AuthSession,
+  quoteId: string,
+): RawPropertyObservation | undefined {
+  getQuoteOrThrow(db, session, quoteId);
+  return quotesRepo.getQuoteAiObservation(db, session.businessId, quoteId);
 }
 
 /**
@@ -105,6 +125,7 @@ function persistPricedQuote(
     analysis: input.analysis,
     estimate,
     status: "new",
+    aiObservation: input.aiObservation,
   });
 }
 

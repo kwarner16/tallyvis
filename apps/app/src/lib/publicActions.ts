@@ -1,6 +1,6 @@
 "use server";
 
-import type { Business, PricingConfiguration, PropertyAnalysisResult, Quote } from "@tallyvis/types";
+import type { Business, PricingConfiguration, Quote } from "@tallyvis/types";
 import {
   acceptQuoteByToken,
   AiProviderError,
@@ -13,6 +13,7 @@ import {
   getQuoteByShareToken,
   requestQuoteChangesByToken,
   type AnalyzePropertyInput,
+  type AnalyzePropertyResult,
   type CreateQuoteInput,
   type PublicQuoteView,
 } from "@tallyvis/api";
@@ -53,15 +54,20 @@ export async function getPublicActiveConfigurationAction(): Promise<PricingConfi
  * from the browser; that only worked because the Phase 4 mock needs no
  * secret. This is the one and only reachable path from an unauthenticated
  * caller to AI analysis — `/quote/[token]`'s public actions have no
- * equivalent, by design. Returns only the reconciled
- * `PropertyAnalysisResult`, not the raw per-field observation — the
- * public wizard has no business-side review step for it.
+ * equivalent, by design.
+ *
+ * Returns the full `AnalyzePropertyResult` (reconciled `analysis` *and*
+ * the raw per-field `observation`) as of Phase 13 — the public wizard
+ * still has no review UI that displays the observation (unchanged from
+ * Phase 12's reasoning), but it's now preserved in `EstimatorContext` and
+ * saved alongside the resulting quote if the customer completes the
+ * request, so it can later be compared against whatever ends up confirmed.
+ * See docs/decisions/0015-job-outcome-tracking.md.
  */
-export async function analyzePublicPropertyAction(input: AnalyzePropertyInput): Promise<PropertyAnalysisResult> {
+export async function analyzePublicPropertyAction(input: AnalyzePropertyInput): Promise<AnalyzePropertyResult> {
   const businessId = await requirePublicBusinessId();
   try {
-    const result = await analyzePropertyPublic(getDb(), businessId, input);
-    return result.analysis;
+    return await analyzePropertyPublic(getDb(), businessId, input);
   } catch (err) {
     // See analyzePropertyAction's twin in quoteActions.ts — a Server Action
     // can only hand back a plain Error's `message`, so the category's

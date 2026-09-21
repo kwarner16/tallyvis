@@ -75,7 +75,7 @@ export default function AnalyzingStepPage() {
       .then(([result]) => {
         if (cancelled) return;
         clearInterval(stageTimer);
-        setAnalysis(result);
+        setAnalysis(result.analysis, result.observation);
         router.push("/estimate/result");
       })
       .catch((err: unknown) => {
@@ -110,7 +110,7 @@ export default function AnalyzingStepPage() {
           <h1 className="text-xl font-semibold text-ink">Analysis failed</h1>
           <p className="mt-2 max-w-xs text-sm text-ink-soft">{analysisError}</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap justify-center gap-3">
           <button
             type="button"
             onClick={() => setRetryToken((t) => t + 1)}
@@ -122,6 +122,15 @@ export default function AnalyzingStepPage() {
             Back to photos
           </Link>
         </div>
+        {/*
+          Phase 13 (see docs/decisions/0015-job-outcome-tracking.md) — an
+          AI failure must never be a dead end for the customer. This is the
+          real manual-entry path Phase 12's "continue manually" language
+          promised but the public estimator didn't yet have.
+        */}
+        <Link href="/estimate/manual" className="text-sm font-medium text-accent-strong hover:text-accent">
+          Continue without AI — enter details manually
+        </Link>
       </div>
     );
   }

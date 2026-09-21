@@ -16,7 +16,7 @@ import {
 import { CONTACT_URL } from "@/lib/urls";
 
 export default function ResultStepPage() {
-  const { analysis, input, quoteId, setQuoteId, reset } = useEstimator();
+  const { analysis, aiObservation, input, quoteId, setQuoteId, reset } = useEstimator();
   const router = useRouter();
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [requested, setRequested] = useState(false);
@@ -68,6 +68,7 @@ export default function ResultStepPage() {
       notes: input.notes,
       photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
       analysis,
+      aiObservation: aiObservation ?? undefined,
     }).then(({ id }) => setQuoteId(id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis]);

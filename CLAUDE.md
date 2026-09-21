@@ -99,8 +99,8 @@ simplification pending real multi-business public routing — see
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 12 (Real-world AI validation & estimator
-refinement) — complete.**
+reason. Current phase: **Phase 13 (Real-world job outcome & data
+collection foundation) — complete.**
 
 1. Foundation
 2. Marketing website foundation
@@ -170,8 +170,24 @@ refinement) — complete.**
     `docs/decisions/0014-ai-real-world-refinement.md` for exactly what
     was and wasn't verified, and why the prompt changes are labeled
     proactive rather than testing-driven.
-13. Data flywheel — using the real usage data Phase 9's persistence now
-    captures to improve AI/pricing defaults over time
+13. Real-world job outcome & data collection foundation — a `job_outcomes`
+    table (one row per quote, every field but identity/tenancy/timestamps
+    optional) for recording what actually happened on a completed job,
+    entirely additive and never mutating a quote's historical
+    `analysis`/`estimate`/`pricingConfigId`; `quotes.ai_observation_json`
+    now preserves the AI's raw per-field observation separately from the
+    human-confirmed characteristics it produced (previously discarded
+    after the review step — see ADR 0014's "transient" note), compared
+    field-by-field via `services/ai`'s new `compareObservationToCharacteristics`;
+    a "Record actual job" panel on the existing quote detail page and a
+    minimal `/dashboard/job-outcomes` list (not a BI dashboard); and the
+    Phase 12-flagged gap closed — the public estimator's AI-failure state
+    now links to a real `/estimate/manual` fallback (reusing
+    `JobCharacteristicsFields`, no new form built) so an AI failure can
+    never block a customer from completing a quote. `packages/pricing` is
+    untouched. See `docs/decisions/0015-job-outcome-tracking.md`. Using
+    this collected data to actually improve AI/pricing defaults remains
+    future work — this phase only builds the capability to collect it.
 14. Billing (Phase 9 already shipped real authentication)
 15. Integrations and additional verticals
 

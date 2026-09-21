@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { buttonVariants } from "@tallyvis/ui";
-import { getConfigurationById, getQuote } from "@tallyvis/api";
+import { getConfigurationById, getJobOutcome, getQuote, getQuoteObservationComparison } from "@tallyvis/api";
 import { requireContext } from "@/lib/session";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { QuoteDetailClient } from "@/components/dashboard/QuoteDetailClient";
@@ -29,6 +29,15 @@ export default async function QuoteDetailPage({
   }
 
   const pricingConfiguration = getConfigurationById(db, session, quote.pricingConfigId);
+  const jobOutcome = getJobOutcome(db, session, id);
+  const observationComparison = getQuoteObservationComparison(db, session, id);
 
-  return <QuoteDetailClient initialQuote={quote} initialPricingConfiguration={pricingConfiguration} />;
+  return (
+    <QuoteDetailClient
+      initialQuote={quote}
+      initialPricingConfiguration={pricingConfiguration}
+      initialJobOutcome={jobOutcome}
+      observationComparison={observationComparison}
+    />
+  );
 }

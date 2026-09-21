@@ -7,6 +7,7 @@ import type {
   QuoteStatus,
   ServicePreferences,
 } from "@tallyvis/types";
+import type { RawPropertyObservation } from "@tallyvis/ai";
 import { makeId } from "../db/ids";
 
 /**
@@ -46,6 +47,8 @@ interface QuoteRow {
   declined_at: string | null;
   changes_requested_at: string | null;
   customer_request_note: string | null;
+  /** Phase 13 — see 0003_job_outcomes.sql. Nullable: only set when AI analysis actually produced the observation this quote was saved with. */
+  ai_observation_json: string | null;
 }
 
 const SELECT_QUOTE_WITH_CUSTOMER = `
@@ -111,6 +114,14 @@ export interface CreateQuoteRecordInput {
   status: QuoteStatus;
   /** Override for seeding realistic-looking historical demo data only — production callers always get "now". */
   createdAt?: string;
+  /**
+   * Phase 13 (see docs/decisions/0015-job-outcome-tracking.md) — the AI's
+   * raw per-field observation, preserved separately from `analysis`
+   * (the human-confirmed final characteristics) so the two can later be
+   * compared. Omitted (not merely `undefined`) whenever AI analysis wasn't
+   * used to produce this quote — never fabricated after the fact.
+   */
+  aiObservation?: RawPropertyObservation;
 }
 
 /** Every query below is scoped by `businessId` in the WHERE clause itself — not just checked afterward — so a wrong/forged id can never resolve to another tenant's row. */
@@ -123,8 +134,8 @@ export function createQuoteRecord(db: DatabaseSync, businessId: string, input: C
        id, business_id, customer_id, pricing_config_id,
        property_type, property_stories, property_address,
        service_preferences_json, notes, photos_json, analysis_json, estimate_json,
-       status, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       status, created_at, updated_at, ai_observation_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     businessId,
@@ -141,11 +152,50 @@ export function createQuoteRecord(db: DatabaseSync, businessId: string, input: C
     input.status,
     now,
     now,
+    input.aiObservation ? JSON.stringify(input.aiObservation) : null,
   );
 
   const created = getQuoteById(db, businessId, id);
   if (!created) throw new Error("Failed to read back the quote that was just created.");
   return created;
+}
+
+/**
+ * The AI's raw per-field observation this quote was saved with, if any —
+ * kept separate from `Quote` itself (rather than a field on it) since
+ * `packages/types`' `Quote` must not depend on `@tallyvis/ai`'s
+ * `RawPropertyObservation` type (see CLAUDE.md's module boundary rules:
+ * `packages/types` depends on nothing). Never overwritten after quote
+ * creation — there is deliberately no corresponding update function, so a
+ * later human correction (`updateQuoteAnalysisAndEstimate`) can never
+ * alter what the AI originally observed.
+ */
+export function getQuoteAiObservation(
+  db: DatabaseSync,
+  businessId: string,
+  id: string,
+): RawPropertyObservation | undefined {
+  const row = db
+    .prepare(`SELECT ai_observation_json FROM quotes WHERE id = ? AND business_id = ?`)
+    .get(id, businessId) as { ai_observation_json: string | null } | undefined;
+  if (!row?.ai_observation_json) return undefined;
+  return JSON.parse(row.ai_observation_json) as RawPropertyObservation;
+}
+
+/**
+ * Every AI observation this business's quotes were saved with, keyed by
+ * quote id — used to annotate a whole list of quotes (e.g. the job-outcomes
+ * view) without an N+1 query per row. Quotes with no AI observation are
+ * simply absent from the map, not present with an empty value.
+ */
+export function listAiObservationsByQuoteId(
+  db: DatabaseSync,
+  businessId: string,
+): Map<string, RawPropertyObservation> {
+  const rows = db
+    .prepare(`SELECT id, ai_observation_json FROM quotes WHERE business_id = ? AND ai_observation_json IS NOT NULL`)
+    .all(businessId) as unknown as { id: string; ai_observation_json: string }[];
+  return new Map(rows.map((row) => [row.id, JSON.parse(row.ai_observation_json) as RawPropertyObservation]));
 }
 
 export function getQuoteById(db: DatabaseSync, businessId: string, id: string): Quote | undefined {

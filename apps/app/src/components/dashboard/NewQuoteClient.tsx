@@ -19,6 +19,7 @@ import { analyzePropertyAction, createQuoteAction } from "@/lib/quoteActions";
 import { windowCleaningEstimatorConfig } from "@/lib/estimator/industry-config";
 import { fileToDataUrl } from "@/lib/imageEncoding";
 import { AI_UNAVAILABLE_CONTINUE_MANUALLY } from "@/lib/aiErrorMessages";
+import { defaultWindowCleaningCharacteristics } from "@/lib/defaultCharacteristics";
 import { OptionButton } from "@/components/OptionButton";
 import { JobCharacteristicsFields } from "@/components/dashboard/JobCharacteristicsFields";
 import { AiObservationSummary } from "@/components/dashboard/AiObservationSummary";
@@ -53,23 +54,6 @@ function emptyCustomer(): CustomerInput {
   return { name: "", email: "", phone: "" };
 }
 
-function defaultCharacteristics(): WindowCleaningCharacteristics {
-  return {
-    vertical: "window-cleaning",
-    windowCount: 20,
-    windowType: "double-hung",
-    paneCount: 0,
-    stories: 1,
-    screens: 0,
-    tracks: 0,
-    accessibility: "easy",
-    condition: "good",
-    hardWaterStaining: false,
-    estimatedLaborHours: 2,
-    interiorCleaning: false,
-  };
-}
-
 function defaultServicePreferences(): ServicePreferences {
   return { interiorCleaning: false, screens: false, tracks: false, hardWaterTreatment: "unsure" };
 }
@@ -102,7 +86,7 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
   const [stories, setStories] = useState<(typeof STORY_OPTIONS)[number] | null>(null);
   const [address, setAddress] = useState("");
   const [characteristics, setCharacteristics] = useState<WindowCleaningCharacteristics>(
-    defaultCharacteristics(),
+    defaultWindowCleaningCharacteristics(),
   );
   const [servicePreferences, setServicePreferences] = useState<ServicePreferences>(
     defaultServicePreferences(),
@@ -175,6 +159,15 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
           // uncertainty never reaches the saved quote un-reviewed.
           metadata: { confidence: "high" },
         },
+        // Preserved alongside the quote for later comparison against
+        // whatever's actually confirmed above (Phase 13 — see
+        // docs/decisions/0015-job-outcome-tracking.md) — `undefined` when
+        // AI was never used for this quote, never fabricated after the
+        // fact. Reflects the most recent analysis result regardless of
+        // whether "Apply to form" was clicked: even a suggestion the
+        // business looked at and typed over is a genuine AI-observed vs.
+        // human-confirmed data point.
+        aiObservation: observation ?? undefined,
       });
       router.push(`/dashboard/quotes/${quote.id}`);
     } catch (err) {
