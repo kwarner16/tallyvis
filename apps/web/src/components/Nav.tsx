@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buttonVariants } from "@tallyvis/ui";
-import { ESTIMATOR_URL } from "@/lib/urls";
+import { ESTIMATOR_URL, LOGIN_URL, SIGNUP_URL } from "@/lib/urls";
 
 const NAV_LINKS = [
   { label: "Product", href: "/#see-what-tallyvis-sees" },
@@ -37,7 +37,7 @@ export function Nav() {
           Tallyvis
         </Link>
 
-        <nav aria-label="Primary" className="hidden items-center gap-8 md:flex">
+        <nav aria-label="Primary" className="hidden items-center gap-8 lg:flex">
           {NAV_LINKS.map((link) => (
             <Link
               key={link.href}
@@ -49,7 +49,16 @@ export function Nav() {
           ))}
         </nav>
 
-        <div className="hidden md:block">
+        <div className="hidden items-center gap-4 lg:flex">
+          <a
+            href={LOGIN_URL}
+            className="text-sm font-medium text-ink-soft transition-colors hover:text-ink"
+          >
+            Log in
+          </a>
+          <a href={SIGNUP_URL} className={buttonVariants({ variant: "outline" })}>
+            Sign up
+          </a>
           <a href={ESTIMATOR_URL} className={buttonVariants({ variant: "primary" })}>
             Try the Estimator
           </a>
@@ -57,7 +66,7 @@ export function Nav() {
 
         <button
           type="button"
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-ink md:hidden"
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-ink lg:hidden"
           aria-expanded={open}
           aria-controls="mobile-nav"
           aria-label={open ? "Close menu" : "Open menu"}
@@ -81,7 +90,7 @@ export function Nav() {
       </div>
 
       {open ? (
-        <div id="mobile-nav" className="border-t border-line bg-paper px-6 pb-6 pt-2 md:hidden">
+        <div id="mobile-nav" className="border-t border-line bg-paper px-6 pb-6 pt-2 lg:hidden">
           <nav aria-label="Mobile" className="flex flex-col gap-1">
             {NAV_LINKS.map((link) => (
               <Link
@@ -93,14 +102,30 @@ export function Nav() {
                 {link.label}
               </Link>
             ))}
+            <a
+              href={LOGIN_URL}
+              onClick={() => setOpen(false)}
+              className="rounded-lg px-2 py-3 text-base font-medium text-ink-soft transition-colors hover:bg-paper-alt hover:text-ink"
+            >
+              Log in
+            </a>
           </nav>
-          <a
-            href={ESTIMATOR_URL}
-            onClick={() => setOpen(false)}
-            className={buttonVariants({ variant: "primary", className: "mt-4 w-full" })}
-          >
-            Try the Estimator
-          </a>
+          <div className="mt-4 flex flex-col gap-3">
+            <a
+              href={SIGNUP_URL}
+              onClick={() => setOpen(false)}
+              className={buttonVariants({ variant: "outline", className: "w-full" })}
+            >
+              Sign up
+            </a>
+            <a
+              href={ESTIMATOR_URL}
+              onClick={() => setOpen(false)}
+              className={buttonVariants({ variant: "primary", className: "w-full" })}
+            >
+              Try the Estimator
+            </a>
+          </div>
         </div>
       ) : null}
     </header>
