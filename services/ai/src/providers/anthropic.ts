@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { PropertyImage, PropertyMetadata } from "@tallyvis/types";
-import type { AiProvider } from "./types";
+import { AiProviderError, type AiProvider, type AiProviderResult } from "./types";
 
 /**
  * The real computer-vision provider — Anthropic's Claude, via the
@@ -59,7 +59,6 @@ const REPORT_TOOL: Anthropic.Tool = {
     type: "object",
     properties: {
       vertical: { type: "string", enum: ["window-cleaning"] },
-      propertyType: OBSERVED_VALUE_SCHEMA,
       stories: OBSERVED_VALUE_SCHEMA,
       windowCount: OBSERVED_VALUE_SCHEMA,
       windowType: OBSERVED_VALUE_SCHEMA,
@@ -73,7 +72,6 @@ const REPORT_TOOL: Anthropic.Tool = {
     },
     required: [
       "vertical",
-      "propertyType",
       "stories",
       "windowCount",
       "windowType",
@@ -88,12 +86,42 @@ const REPORT_TOOL: Anthropic.Tool = {
   },
 };
 
-const SYSTEM_PROMPT =
-  "You are analyzing photos of a residential property's exterior for a window-cleaning company. " +
-  "Report what you can actually see using the report_property_observation tool. Never invent a " +
-  "specific count or value you cannot support from the photos — use \"uncertain\" when you can " +
-  "estimate but aren't sure, and \"unknown\" when a photo simply doesn't show enough to say " +
-  "anything. You are not setting a price; you are only describing what is visible.";
+/**
+ * Phase 12 revision (docs/decisions/0014-ai-real-world-refinement.md):
+ * the Phase 11 prompt asked for "uncertain vs. unknown" but never defined
+ * what "difficult" access actually means, leaving the single field with
+ * the largest price impact (`accessibility` drives `difficultyMultipliers`
+ * — see packages/pricing/src/windowCleaning.ts) the least specified. This
+ * version gives concrete criteria and explicitly asks that anything
+ * affecting access (gates, height, obstructions) also be named in
+ * `warnings`, not just folded into a bare "difficult" rating. Not a
+ * response to a specific observed failure — no live model calls have been
+ * made in this environment (no API key configured here) — this is a
+ * clarity improvement from re-reading the original prompt critically, and
+ * is labeled as such rather than claimed as a fix for a confirmed bug.
+ */
+const SYSTEM_PROMPT = [
+  "You are analyzing photos of a residential property's exterior for a window-cleaning company.",
+  "Report what you can actually see using the report_property_observation tool.",
+  "",
+  "Never invent a specific count or value you cannot support from the photos:",
+  "- Use \"uncertain\" when you can make a reasonable estimate but are not confident in the exact value.",
+  "- Use \"unknown\" when the photos simply do not show enough to say anything at all about that field.",
+  "- Only use \"observed\" when you can actually see and count/determine the value directly.",
+  "",
+  "Accessibility guidance (this is the single most price-sensitive field, so be specific):",
+  "- \"easy\": ground-level windows with clear, unobstructed approach.",
+  "- \"moderate\": second-story windows reachable by a standard extension ladder, or ground-level",
+  "  windows with minor obstructions (bushes, a narrow side yard).",
+  "- \"difficult\": third-story-or-higher windows, windows requiring specialized equipment, locked/",
+  "  gated access, steep or unstable ground, dense landscaping blocking approach, or anything else",
+  "  that would meaningfully slow the crew down.",
+  "If a specific obstruction or access issue drove your accessibility rating, name it in \"warnings\"",
+  "as well (e.g. \"Locked side gate blocks access to the rear windows\") — don't let it disappear",
+  "into a bare difficulty label the business can't act on.",
+  "",
+  "You are not setting a price; you are only describing what is visible.",
+].join("\n");
 
 /** Parses a `data:image/...;base64,...` URI into the parts Claude's vision input needs. Returns `undefined` for anything else (a bare http(s) URL, a blob: URL, malformed data) — the caller decides how to handle that. */
 function parseDataUrl(url: string): { mediaType: string; data: string } | undefined {
@@ -132,32 +160,35 @@ function buildUserContent(images: PropertyImage[], metadata: PropertyMetadata): 
 }
 
 /**
- * Maps SDK-level failures to a small set of clear, non-leaking error
- * messages — never a raw provider error string (which could echo request
- * details) and never the API key.
+ * Maps SDK-level failures to a small set of clear, non-leaking, categorized
+ * errors — never a raw provider error string (which could echo request
+ * details) and never the API key. The category (Phase 12 — see
+ * docs/decisions/0014-ai-real-world-refinement.md) drives both dev logging
+ * and which of the distinct failure messages section 13 of the brief asks
+ * for actually reaches the UI.
  */
-function describeFailure(err: unknown): string {
+function describeFailure(err: unknown): AiProviderError {
   if (err instanceof Anthropic.AuthenticationError) {
-    return "The AI provider rejected the configured credentials.";
+    return new AiProviderError("The AI provider rejected the configured credentials.", "authentication");
   }
   if (err instanceof Anthropic.RateLimitError) {
-    return "The AI provider is rate-limiting requests right now.";
+    return new AiProviderError("The AI provider is rate-limiting requests right now. Please try again shortly.", "rate-limit");
   }
   if (err instanceof Anthropic.APIConnectionTimeoutError) {
-    return "The AI provider did not respond in time.";
+    return new AiProviderError("The AI provider did not respond in time.", "timeout");
   }
   if (err instanceof Anthropic.APIConnectionError) {
-    return "Could not reach the AI provider.";
+    return new AiProviderError("Could not reach the AI provider.", "connection");
   }
   if (err instanceof Anthropic.APIError) {
-    return `The AI provider returned an error (status ${err.status ?? "unknown"}).`;
+    return new AiProviderError(`The AI provider returned an error (status ${err.status ?? "unknown"}).`, "provider-error");
   }
-  return "The AI provider request failed.";
+  return new AiProviderError("The AI provider request failed.", "provider-error");
 }
 
 export function createAnthropicProvider(config: AnthropicProviderConfig): AiProvider {
   if (!config.apiKey) {
-    throw new Error("AI_PROVIDER_API_KEY is not configured.");
+    throw new AiProviderError("AI analysis is not configured for this environment.", "not-configured");
   }
 
   const client = new Anthropic({
@@ -167,7 +198,7 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): AiProv
   });
   const model = config.model ?? DEFAULT_MODEL;
 
-  async function analyzeProperty(images: PropertyImage[], metadata: PropertyMetadata): Promise<unknown> {
+  async function analyzeProperty(images: PropertyImage[], metadata: PropertyMetadata): Promise<AiProviderResult> {
     let response: Anthropic.Message;
     try {
       response = await client.messages.create({
@@ -179,25 +210,31 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): AiProv
         messages: [{ role: "user", content: buildUserContent(images, metadata) }],
       });
     } catch (err) {
-      throw new Error(describeFailure(err));
+      throw describeFailure(err);
     }
 
+    const meta = {
+      model: response.model,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+
     if (response.stop_reason === "refusal") {
-      throw new Error("The AI declined to analyze these photos.");
+      throw new AiProviderError("The AI declined to analyze these photos.", "refusal");
     }
 
     const toolUse = response.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === TOOL_NAME,
     );
     if (!toolUse) {
-      throw new Error("The AI did not return a structured result.");
+      throw new AiProviderError("The AI did not return a structured result.", "malformed-response");
     }
 
     // `toolUse.input` is already JSON-parsed by the SDK for a non-streaming
     // response — still `unknown` from this file's point of view, and still
     // subject to `validateRawPropertyObservation` by the caller before
     // anything trusts its shape.
-    return toolUse.input;
+    return { raw: toolUse.input, meta };
   }
 
   return { name: "anthropic", analyzeProperty };

@@ -12,7 +12,6 @@ import { safeParseJson, validateRawPropertyObservation } from "../validateObserv
 function validObservation() {
   return {
     vertical: "window-cleaning",
-    propertyType: { status: "observed", value: "single-family", confidence: "high" },
     stories: { status: "observed", value: 2, confidence: "high" },
     windowCount: { status: "observed", value: 24, confidence: "medium" },
     windowType: { status: "observed", value: "double-hung", confidence: "medium" },
@@ -39,7 +38,6 @@ describe("validateRawPropertyObservation — positive cases", () => {
   it("accepts every field as unknown — the AI is allowed to know nothing", () => {
     const allUnknown = {
       vertical: "window-cleaning",
-      propertyType: { status: "unknown" },
       stories: { status: "unknown" },
       windowCount: { status: "unknown" },
       windowType: { status: "unknown" },

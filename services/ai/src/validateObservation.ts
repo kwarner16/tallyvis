@@ -1,10 +1,4 @@
-import type {
-  AccessibilityLevel,
-  ConditionLevel,
-  ConfidenceLevel,
-  PropertyType,
-  WindowType,
-} from "@tallyvis/types";
+import type { AccessibilityLevel, ConditionLevel, ConfidenceLevel, WindowType } from "@tallyvis/types";
 import type { ObservedValue, RawPropertyObservation } from "./types";
 
 /**
@@ -22,7 +16,6 @@ export type ValidationResult =
   | { ok: false; errors: string[] };
 
 const CONFIDENCE_LEVELS: readonly ConfidenceLevel[] = ["high", "medium", "low"];
-const PROPERTY_TYPES: readonly PropertyType[] = ["single-family", "townhouse", "other"];
 const WINDOW_TYPES: readonly WindowType[] = [
   "single-hung",
   "double-hung",
@@ -135,14 +128,6 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     errors.push(`"vertical" must be "window-cleaning" — got ${JSON.stringify(input.vertical)}.`);
   }
 
-  const propertyType = validateObservedValue<PropertyType>(
-    input.propertyType,
-    "propertyType",
-    (v): v is PropertyType => isOneOf(v, PROPERTY_TYPES),
-    `property type (one of ${PROPERTY_TYPES.join(", ")})`,
-    errors,
-  );
-
   const stories = validateObservedValue<number>(
     input.stories,
     "stories",
@@ -224,7 +209,6 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
 
   if (
     errors.length > 0 ||
-    !propertyType ||
     !stories ||
     !windowCount ||
     !windowType ||
@@ -242,7 +226,6 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     ok: true,
     value: {
       vertical: "window-cleaning",
-      propertyType,
       stories,
       windowCount,
       windowType,

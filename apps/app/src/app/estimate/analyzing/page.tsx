@@ -78,10 +78,16 @@ export default function AnalyzingStepPage() {
         setAnalysis(result);
         router.push("/estimate/result");
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (cancelled) return;
         clearInterval(stageTimer);
-        setAnalysisError("Something went wrong while analyzing your photos.");
+        // The Server Action already resolves the failure's category to a
+        // specific, safe message (Phase 12 — see
+        // docs/decisions/0014-ai-real-world-refinement.md); fall back to a
+        // generic one only if something unexpected reached here.
+        setAnalysisError(
+          err instanceof Error ? err.message : "Something went wrong while analyzing your photos.",
+        );
       });
 
     return () => {

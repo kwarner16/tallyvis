@@ -18,6 +18,7 @@ import { buttonVariants } from "@tallyvis/ui";
 import { analyzePropertyAction, createQuoteAction } from "@/lib/quoteActions";
 import { windowCleaningEstimatorConfig } from "@/lib/estimator/industry-config";
 import { fileToDataUrl } from "@/lib/imageEncoding";
+import { AI_UNAVAILABLE_CONTINUE_MANUALLY } from "@/lib/aiErrorMessages";
 import { OptionButton } from "@/components/OptionButton";
 import { JobCharacteristicsFields } from "@/components/dashboard/JobCharacteristicsFields";
 import { AiObservationSummary } from "@/components/dashboard/AiObservationSummary";
@@ -114,6 +115,18 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [observation, setObservation] = useState<RawPropertyObservation | null>(null);
+  /**
+   * What the AI suggested but the business hasn't applied yet — kept
+   * separate from `characteristics`/`stories` so a fresh "Analyze with AI"
+   * run never silently overwrites a value the business already typed or
+   * corrected (Phase 12, docs/decisions/0014-ai-real-world-refinement.md:
+   * human correction is authoritative). Applying is always an explicit
+   * click, both the first time and on every re-run.
+   */
+  const [pendingSuggestion, setPendingSuggestion] = useState<{
+    characteristics: WindowCleaningCharacteristics;
+    stories: (typeof STORY_OPTIONS)[number];
+  } | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const propertyComplete = propertyType !== null && stories !== null;
@@ -202,13 +215,28 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
         property: { stories: stories ?? undefined, address: address.trim() || undefined },
       });
       setObservation(newObservation);
-      setCharacteristics(analysis.characteristics);
-      setStories(analysis.characteristics.stories as (typeof STORY_OPTIONS)[number]);
+      // Never applied automatically — see `pendingSuggestion`'s comment.
+      setPendingSuggestion({
+        characteristics: analysis.characteristics,
+        stories: analysis.characteristics.stories as (typeof STORY_OPTIONS)[number],
+      });
     } catch (err) {
-      setAnalyzeError(err instanceof Error ? err.message : "Could not analyze these photos.");
+      const message = err instanceof Error ? err.message : "Could not analyze these photos.";
+      setAnalyzeError(`${message} ${AI_UNAVAILABLE_CONTINUE_MANUALLY}`);
     } finally {
       setAnalyzing(false);
     }
+  }
+
+  function handleApplySuggestion() {
+    if (!pendingSuggestion) return;
+    setCharacteristics(pendingSuggestion.characteristics);
+    setStories(pendingSuggestion.stories);
+    setPendingSuggestion(null);
+  }
+
+  function handleDiscardSuggestion() {
+    setPendingSuggestion(null);
   }
 
   return (
@@ -382,7 +410,36 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
               <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{analyzeError}</p>
             ) : null}
 
-            {observation ? <AiObservationSummary observation={observation} /> : null}
+            {observation ? (
+              <div className="flex flex-col gap-3">
+                <AiObservationSummary observation={observation} />
+                {pendingSuggestion ? (
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-accent bg-accent-soft/60 px-4 py-3">
+                    <p className="text-sm text-accent-strong">
+                      This suggestion hasn&rsquo;t been applied to the form below yet.
+                    </p>
+                    <div className="ml-auto flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleDiscardSuggestion}
+                        className={buttonVariants({ variant: "outline" })}
+                      >
+                        Keep current values
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleApplySuggestion}
+                        className={buttonVariants({ variant: "primary" })}
+                      >
+                        Apply to form
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-ink-faint">Applied to the form below.</p>
+                )}
+              </div>
+            ) : null}
           </section>
 
           <section className="flex flex-col gap-4 rounded-2xl border border-line bg-paper p-5">

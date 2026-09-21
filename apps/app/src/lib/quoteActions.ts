@@ -9,6 +9,7 @@ import type {
   WindowCleaningCharacteristics,
 } from "@tallyvis/types";
 import {
+  AiProviderError,
   analyzePropertyForBusiness,
   createQuote as apiCreateQuote,
   generateShareLink,
@@ -26,6 +27,7 @@ import {
 } from "@tallyvis/api";
 import { requireContext } from "./session";
 import { buildQuoteShareUrl } from "./urls";
+import { describeAiErrorCategory } from "./aiErrorMessages";
 
 /**
  * Thin server-side wrappers: every one of these re-derives the business
@@ -58,7 +60,15 @@ export async function createQuoteAction(input: CreateQuoteInput): Promise<Quote>
  */
 export async function analyzePropertyAction(input: AnalyzePropertyInput): Promise<AnalyzePropertyResult> {
   const { db, session } = await requireContext();
-  return analyzePropertyForBusiness(db, session, input);
+  try {
+    return await analyzePropertyForBusiness(db, session, input);
+  } catch (err) {
+    // A Server Action can only hand a plain Error's `message` back across
+    // the server/client boundary — the category is resolved to its
+    // user-facing text here so `NewQuoteClient` can display it (Phase 12).
+    if (err instanceof AiProviderError) throw new Error(describeAiErrorCategory(err.category));
+    throw err;
+  }
 }
 
 export async function updateQuoteAnalysisAction(

@@ -16,7 +16,6 @@ const metadata = { vertical: "window-cleaning" as const };
 function fullyObserved(overrides: Partial<RawPropertyObservation> = {}): RawPropertyObservation {
   return {
     vertical: "window-cleaning",
-    propertyType: { status: "observed", value: "single-family", confidence: "high" },
     stories: { status: "observed", value: 2, confidence: "high" },
     windowCount: { status: "observed", value: 24, confidence: "high" },
     windowType: { status: "observed", value: "casement", confidence: "high" },

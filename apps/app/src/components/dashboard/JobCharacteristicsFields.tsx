@@ -1,6 +1,12 @@
-import type { AccessibilityLevel, WindowCleaningCharacteristics, WindowType } from "@tallyvis/types";
+import type {
+  AccessibilityLevel,
+  ConditionLevel,
+  WindowCleaningCharacteristics,
+  WindowType,
+} from "@tallyvis/types";
 
 const ACCESSIBILITY_OPTIONS: AccessibilityLevel[] = ["easy", "moderate", "difficult"];
+const CONDITION_OPTIONS: ConditionLevel[] = ["good", "fair", "poor"];
 const WINDOW_TYPE_OPTIONS: WindowType[] = [
   "single-hung",
   "double-hung",
@@ -100,6 +106,21 @@ export function JobCharacteristicsFields({
           className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
         >
           {ACCESSIBILITY_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {option[0]!.toUpperCase() + option.slice(1)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-ink-soft">Condition</span>
+        <select
+          value={value.condition}
+          onChange={(e) => onChange({ ...value, condition: e.target.value as ConditionLevel })}
+          className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+        >
+          {CONDITION_OPTIONS.map((option) => (
             <option key={option} value={option}>
               {option[0]!.toUpperCase() + option.slice(1)}
             </option>

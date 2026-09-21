@@ -73,6 +73,8 @@ export type { RawPropertyObservation, ObservedValue } from "@tallyvis/ai";
 export {
   analyzePropertyForBusiness,
   analyzePropertyPublic,
+  AiProviderError,
   type AnalyzePropertyInput,
   type AnalyzePropertyResult,
+  type AiErrorCategory,
 } from "./services/aiAnalysis";

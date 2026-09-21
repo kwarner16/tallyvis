@@ -3,6 +3,7 @@
 import type { Business, PricingConfiguration, PropertyAnalysisResult, Quote } from "@tallyvis/types";
 import {
   acceptQuoteByToken,
+  AiProviderError,
   analyzePropertyPublic,
   createQuotePublic,
   declineQuoteByToken,
@@ -15,6 +16,7 @@ import {
   type CreateQuoteInput,
   type PublicQuoteView,
 } from "@tallyvis/api";
+import { describeAiErrorCategory } from "./aiErrorMessages";
 
 /**
  * Unauthenticated actions for the public `/estimate/*` customer wizard —
@@ -57,8 +59,16 @@ export async function getPublicActiveConfigurationAction(): Promise<PricingConfi
  */
 export async function analyzePublicPropertyAction(input: AnalyzePropertyInput): Promise<PropertyAnalysisResult> {
   const businessId = await requirePublicBusinessId();
-  const result = await analyzePropertyPublic(getDb(), businessId, input);
-  return result.analysis;
+  try {
+    const result = await analyzePropertyPublic(getDb(), businessId, input);
+    return result.analysis;
+  } catch (err) {
+    // See analyzePropertyAction's twin in quoteActions.ts — a Server Action
+    // can only hand back a plain Error's `message`, so the category's
+    // user-facing text is resolved here (Phase 12).
+    if (err instanceof AiProviderError) throw new Error(describeAiErrorCategory(err.category));
+    throw err;
+  }
 }
 
 /**

@@ -2,7 +2,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDb } from "../db/client";
 import { signUp } from "../services/auth";
 import { getDefaultPublicBusiness } from "../services/business";
-import { analyzePropertyForBusiness, analyzePropertyPublic } from "../services/aiAnalysis";
+import { AiProviderError, analyzePropertyForBusiness, analyzePropertyPublic } from "../services/aiAnalysis";
+
+/** Resolves the rejection and asserts it's an `AiProviderError` tagged with `category` — see `services/ai/src/__tests__/anthropic.test.ts`'s twin. */
+async function expectCategory(promise: Promise<unknown>, category: string): Promise<void> {
+  await promise.then(
+    () => expect.unreachable("expected the promise to reject"),
+    (err: unknown) => {
+      expect(err).toBeInstanceOf(AiProviderError);
+      expect((err as AiProviderError).category).toBe(category);
+    },
+  );
+}
 
 /**
  * Phase 11 — AI analysis orchestration. See
@@ -68,20 +79,16 @@ describe("analyzePropertyForBusiness — authenticated path", () => {
     );
   });
 
-  it("rejects more than the maximum number of photos", async () => {
+  it("rejects more than the maximum number of photos, tagged with the \"too-many-images\" category", async () => {
     const { db, session } = await setUpBusiness();
     const tooMany = Array.from({ length: 9 }, (_, i) => dataUrlImage(`photo-${i}`));
-    await expect(analyzePropertyForBusiness(db, session, { images: tooMany, property: {} })).rejects.toThrow(
-      /no more than/i,
-    );
+    await expectCategory(analyzePropertyForBusiness(db, session, { images: tooMany, property: {} }), "too-many-images");
   });
 
-  it("rejects a non-image data URI", async () => {
+  it("rejects a non-image data URI, tagged with the \"invalid-image\" category", async () => {
     const { db, session } = await setUpBusiness();
     const badImage = { url: "data:text/plain;base64,aGVsbG8=" };
-    await expect(analyzePropertyForBusiness(db, session, { images: [badImage], property: {} })).rejects.toThrow(
-      /valid image/i,
-    );
+    await expectCategory(analyzePropertyForBusiness(db, session, { images: [badImage], property: {} }), "invalid-image");
   });
 
   it("rejects a bare (non-data-URI) URL — a stale blob: URL cannot be analyzed server-side", async () => {
@@ -92,12 +99,10 @@ describe("analyzePropertyForBusiness — authenticated path", () => {
     );
   });
 
-  it("rejects an oversized image", async () => {
+  it("rejects an oversized image, tagged with the \"image-too-large\" category", async () => {
     const { db, session } = await setUpBusiness();
     const huge = { url: `data:image/jpeg;base64,${"A".repeat(15 * 1024 * 1024)}` }; // ~11MB decoded
-    await expect(analyzePropertyForBusiness(db, session, { images: [huge], property: {} })).rejects.toThrow(
-      /smaller than/i,
-    );
+    await expectCategory(analyzePropertyForBusiness(db, session, { images: [huge], property: {} }), "image-too-large");
   });
 });
 

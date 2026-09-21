@@ -18,15 +18,19 @@ const threeImages = [{ url: "data:image/jpeg;base64,AAAA" }, { url: "data:image/
 
 describe("mock provider", () => {
   it("produces output that passes strict schema validation", async () => {
-    const raw = await mockProvider.analyzeProperty(threeImages, metadata);
+    const { raw } = await mockProvider.analyzeProperty(threeImages, metadata);
     const result = validateRawPropertyObservation(raw);
     expect(result.ok).toBe(true);
   });
 
   it("honestly reports fields it has no real signal for as unknown, never a fabricated observation", async () => {
-    const raw = (await mockProvider.analyzeProperty(threeImages, metadata)) as Record<string, unknown>;
-    expect(raw.propertyType).toEqual({ status: "unknown" });
-    expect(raw.hardWaterStaining).toEqual({ status: "unknown" });
+    const { raw } = await mockProvider.analyzeProperty(threeImages, metadata);
+    expect((raw as Record<string, unknown>).hardWaterStaining).toEqual({ status: "unknown" });
+  });
+
+  it("reports non-sensitive metadata (model name) alongside its raw output", async () => {
+    const { meta } = await mockProvider.analyzeProperty(threeImages, metadata);
+    expect(meta?.model).toBeTruthy();
   });
 
   it("lowers confidence with fewer photos, exactly like the Phase 4 mock it replaces", async () => {
@@ -45,24 +49,27 @@ describe("runAnalysis — full pipeline via a fake provider", () => {
   });
 
   it("rejects malformed provider output before it can reach reconciliation", async () => {
-    const brokenProvider: AiProvider = { name: "broken", analyzeProperty: async () => ({ not: "a valid observation" }) };
+    const brokenProvider: AiProvider = {
+      name: "broken",
+      analyzeProperty: async () => ({ raw: { not: "a valid observation" } }),
+    };
     await expect(runAnalysis(brokenProvider, threeImages, metadata)).rejects.toThrow(/invalid result/i);
   });
 
   it("rejects a non-JSON-object provider response (e.g. a raw string)", async () => {
-    const stringProvider: AiProvider = { name: "string-returning", analyzeProperty: async () => "I saw a house." };
+    const stringProvider: AiProvider = { name: "string-returning", analyzeProperty: async () => ({ raw: "I saw a house." }) };
     await expect(runAnalysis(stringProvider, threeImages, metadata)).rejects.toThrow(/invalid result/i);
   });
 
   it("rejects an empty response", async () => {
-    const emptyProvider: AiProvider = { name: "empty", analyzeProperty: async () => undefined };
+    const emptyProvider: AiProvider = { name: "empty", analyzeProperty: async () => ({ raw: undefined }) };
     await expect(runAnalysis(emptyProvider, threeImages, metadata)).rejects.toThrow();
   });
 
   it("rejects a partial response missing required fields", async () => {
     const partialProvider: AiProvider = {
       name: "partial",
-      analyzeProperty: async () => ({ vertical: "window-cleaning", stories: { status: "unknown" } }),
+      analyzeProperty: async () => ({ raw: { vertical: "window-cleaning", stories: { status: "unknown" } } }),
     };
     await expect(runAnalysis(partialProvider, threeImages, metadata)).rejects.toThrow(/invalid result/i);
   });
@@ -102,7 +109,7 @@ describe("runAnalysis — full pipeline via a fake provider", () => {
       analyzeProperty: async () => {
         const good = await mockProvider.analyzeProperty(threeImages, metadata);
         // Even if a rogue/compromised provider tries to smuggle pricing fields in, validation strips anything not in the schema.
-        return { ...(good as object), totalPrice: 1875, hourlyRate: 50, total: 999 };
+        return { raw: { ...(good.raw as object), totalPrice: 1875, hourlyRate: 50, total: 999 } };
       },
     };
     const result = await runAnalysis(suspiciousProvider, threeImages, metadata);

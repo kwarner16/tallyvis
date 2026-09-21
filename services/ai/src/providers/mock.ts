@@ -1,5 +1,5 @@
 import type { ConfidenceLevel, PropertyImage, PropertyMetadata } from "@tallyvis/types";
-import type { AiProvider } from "./types";
+import type { AiProvider, AiProviderResult } from "./types";
 
 /**
  * ============================== MOCK PROVIDER ==============================
@@ -15,8 +15,8 @@ import type { AiProvider } from "./types";
  * / `reconcileObservation` pipeline a real provider's output does — the
  * mock is a genuine implementation of `AiProvider`, not a special case the
  * rest of the package treats differently. Fields the mock has no real
- * signal for (`propertyType`, `hardWaterStaining`) are honestly reported
- * as `"unknown"` rather than a fabricated guess — see
+ * signal for (`hardWaterStaining`) are honestly reported as `"unknown"`
+ * rather than a fabricated guess — see
  * docs/decisions/0013-ai-analysis-foundation.md for why that matters.
  * ==============================================================================
  */
@@ -25,7 +25,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-async function analyzeProperty(images: PropertyImage[], metadata: PropertyMetadata): Promise<unknown> {
+async function analyzeProperty(images: PropertyImage[], metadata: PropertyMetadata): Promise<AiProviderResult> {
   // Simulate processing latency so callers that show a progress sequence
   // have something real to wait on rather than an instant resolve.
   await new Promise((resolve) => setTimeout(resolve, 350));
@@ -51,18 +51,20 @@ async function analyzeProperty(images: PropertyImage[], metadata: PropertyMetada
   const condition = photoCount >= 4 ? "fair" : "good";
 
   return {
-    vertical: "window-cleaning",
-    propertyType: { status: "unknown" }, // the mock has no visual signal at all for this
-    stories: { status: "observed", value: stories, confidence },
-    windowCount: { status: "observed", value: windowCount, confidence },
-    windowType: { status: "observed", value: "double-hung", confidence },
-    screens: { status: "observed", value: screens, confidence },
-    tracks: { status: "observed", value: screens, confidence },
-    accessibility: { status: "observed", value: accessibility, confidence },
-    condition: { status: "observed", value: condition, confidence },
-    hardWaterStaining: { status: "unknown" }, // ditto — never fabricated as a false "observation"
-    overallConfidence: confidence,
-    warnings,
+    raw: {
+      vertical: "window-cleaning",
+      stories: { status: "observed", value: stories, confidence },
+      windowCount: { status: "observed", value: windowCount, confidence },
+      windowType: { status: "observed", value: "double-hung", confidence },
+      screens: { status: "observed", value: screens, confidence },
+      tracks: { status: "observed", value: screens, confidence },
+      accessibility: { status: "observed", value: accessibility, confidence },
+      condition: { status: "observed", value: condition, confidence },
+      hardWaterStaining: { status: "unknown" }, // no real signal — never fabricated as a false "observation"
+      overallConfidence: confidence,
+      warnings,
+    },
+    meta: { model: "mock-heuristic-v1" },
   };
 }
 

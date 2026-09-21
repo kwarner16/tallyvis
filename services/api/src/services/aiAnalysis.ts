@@ -1,10 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import type { PropertyImage, PropertyMetadata } from "@tallyvis/types";
-import { analyzePropertyDetailed, type AnalyzePropertyResult } from "@tallyvis/ai";
+import { AiProviderError, analyzePropertyDetailed, type AnalyzePropertyResult } from "@tallyvis/ai";
 import type { AuthSession } from "../auth/session";
 
 export type { AnalyzePropertyResult };
+export { AiProviderError, type AiErrorCategory } from "@tallyvis/ai";
 
 /**
  * Server-side AI analysis orchestration (Phase 11 — see
@@ -39,21 +40,26 @@ function approxDecodedBytes(base64: string): number {
   return Math.floor((base64.length * 3) / 4) - padding;
 }
 
-/** The authoritative input check — a client's own limits (form validation, `maxPhotos`) are UX only. */
+/**
+ * The authoritative input check — a client's own limits (form validation,
+ * `maxPhotos`) are UX only. Throws a categorized `AiProviderError` (Phase
+ * 12) rather than a bare `Error` so the UI can give the business a message
+ * specific to what actually went wrong, not just a generic failure.
+ */
 function validateAnalyzeInput(input: AnalyzePropertyInput): void {
   if (!Array.isArray(input.images) || input.images.length === 0) {
-    throw new Error("At least one photo is required to analyze a property.");
+    throw new AiProviderError("At least one photo is required to analyze a property.", "invalid-image");
   }
   if (input.images.length > MAX_IMAGES) {
-    throw new Error(`No more than ${MAX_IMAGES} photos can be analyzed at once.`);
+    throw new AiProviderError(`No more than ${MAX_IMAGES} photos can be analyzed at once.`, "too-many-images");
   }
   for (const image of input.images) {
     const match = /^data:image\/[a-zA-Z0-9.+-]+;base64,([\s\S]+)$/.exec(image.url);
     if (!match || !match[1]) {
-      throw new Error("Each photo must be a valid image.");
+      throw new AiProviderError("Each photo must be a valid image.", "invalid-image");
     }
     if (approxDecodedBytes(match[1]) > MAX_IMAGE_BYTES) {
-      throw new Error("Each photo must be smaller than 10 MB.");
+      throw new AiProviderError("Each photo must be smaller than 10 MB.", "image-too-large");
     }
   }
 }

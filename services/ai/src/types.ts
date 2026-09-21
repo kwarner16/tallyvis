@@ -1,10 +1,4 @@
-import type {
-  AccessibilityLevel,
-  ConditionLevel,
-  ConfidenceLevel,
-  PropertyType,
-  WindowType,
-} from "@tallyvis/types";
+import type { AccessibilityLevel, ConditionLevel, ConfidenceLevel, WindowType } from "@tallyvis/types";
 
 /**
  * Phase 11 — AI estimation intelligence & property analysis foundation. See
@@ -42,10 +36,18 @@ export type ObservedValue<T> =
  * (and the review UI) never has to remember two different names for the
  * same concept; `overallConfidence`/`warnings` are the analysis-level
  * counterparts to `PropertyAnalysisResult`'s `AnalysisMetadata`.
+ *
+ * Phase 11 originally also asked the model to observe `propertyType`.
+ * Phase 12's review (docs/decisions/0014-ai-real-world-refinement.md)
+ * found it was never actually read anywhere — `reconcileObservation`
+ * doesn't produce a `propertyType` (that belongs to `Property`, collected
+ * directly from a human, not inferred from a photo), and the review UI
+ * never displayed it. It's removed rather than left as a schema field the
+ * model dutifully fills in for nothing — exactly the "added because
+ * computer vision can detect it" mistake this phase's brief warns against.
  */
 export interface RawPropertyObservation {
   vertical: "window-cleaning";
-  propertyType: ObservedValue<PropertyType>;
   stories: ObservedValue<number>;
   windowCount: ObservedValue<number>;
   windowType: ObservedValue<WindowType>;

@@ -99,8 +99,8 @@ simplification pending real multi-business public routing — see
 ## Phase roadmap
 
 Build incrementally — do not jump ahead without a strong architectural
-reason. Current phase: **Phase 11 (AI estimation intelligence & property
-analysis foundation) — complete.**
+reason. Current phase: **Phase 12 (Real-world AI validation & estimator
+refinement) — complete.**
 
 1. Foundation
 2. Marketing website foundation
@@ -151,10 +151,29 @@ analysis foundation) — complete.**
     `docs/decisions/0013-ai-analysis-foundation.md`. A more elaborate
     review/confidence system (e.g. automatic flagging or a review queue
     for low-confidence quotes) remains future work.
-12. Data flywheel — using the real usage data Phase 9's persistence now
+12. Real-world AI validation & estimator refinement — validation and
+    refinement of Phase 11's pipeline, not a new architecture: removed
+    the unused `propertyType` field from `RawPropertyObservation`;
+    evaluated and deliberately deferred adding `paneCount` to the AI
+    schema; closed a human-review gap by adding an editable `condition`
+    field to `JobCharacteristicsFields`; fixed `NewQuoteClient` silently
+    overwriting a business's manual correction on re-analysis (applying
+    an AI suggestion is now always an explicit "Apply to form" action);
+    made per-field uncertainty visually distinct (not just differently
+    worded) in `AiObservationSummary`; gave AI failures categorized,
+    specific error messages instead of one generic string; added
+    dev-only structured logging for every analysis attempt (provider,
+    model, latency, success/failure, error category — never photos,
+    prompts, or credentials); added a small synthetic (mocked, not real
+    photo) test-scenario suite. No real Anthropic credentials existed in
+    this environment, so no live model call was made — see
+    `docs/decisions/0014-ai-real-world-refinement.md` for exactly what
+    was and wasn't verified, and why the prompt changes are labeled
+    proactive rather than testing-driven.
+13. Data flywheel — using the real usage data Phase 9's persistence now
     captures to improve AI/pricing defaults over time
-13. Billing (Phase 9 already shipped real authentication)
-14. Integrations and additional verticals
+14. Billing (Phase 9 already shipped real authentication)
+15. Integrations and additional verticals
 
 ## Product ownership
 

@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import type { RequestListener, Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAnthropicProvider } from "../providers/anthropic";
+import { AiProviderError } from "../providers/types";
 import { validateRawPropertyObservation } from "../validateObservation";
 
 /**
@@ -52,7 +53,6 @@ function validToolResponse(overrides: Record<string, unknown> = {}) {
         name: "report_property_observation",
         input: {
           vertical: "window-cleaning",
-          propertyType: { status: "observed", value: "single-family", confidence: "high" },
           stories: { status: "observed", value: 2, confidence: "high" },
           windowCount: { status: "observed", value: 24, confidence: "medium" },
           windowType: { status: "observed", value: "double-hung", confidence: "medium" },
@@ -71,8 +71,18 @@ function validToolResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe("createAnthropicProvider — configuration", () => {
-  it("throws immediately if no API key is configured — never attempts a network call", async () => {
-    expect(() => createAnthropicProvider({ apiKey: "" })).toThrow(/AI_PROVIDER_API_KEY/);
+  it("throws immediately if no API key is configured — never attempts a network call", () => {
+    expect(() => createAnthropicProvider({ apiKey: "" })).toThrow(/not configured/i);
+  });
+
+  it("tags the configuration error with the \"not-configured\" category", () => {
+    try {
+      createAnthropicProvider({ apiKey: "" });
+      expect.unreachable("createAnthropicProvider should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(AiProviderError);
+      expect((err as AiProviderError).category).toBe("not-configured");
+    }
   });
 });
 
@@ -84,9 +94,22 @@ describe("createAnthropicProvider — successful response", () => {
     });
     const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
 
-    const raw = await provider.analyzeProperty(images, metadata);
+    const { raw } = await provider.analyzeProperty(images, metadata);
     const validated = validateRawPropertyObservation(raw);
     expect(validated.ok).toBe(true);
+  });
+
+  it("reports non-sensitive metadata — model name and token usage — from the response", async () => {
+    const baseURL = await listen((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(validToolResponse()));
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+
+    const { meta } = await provider.analyzeProperty(images, metadata);
+    expect(meta?.model).toBe("claude-sonnet-5");
+    expect(meta?.inputTokens).toBe(100);
+    expect(meta?.outputTokens).toBe(50);
   });
 
   it("sends the API key and never sends it in a way a response could echo back", async () => {
@@ -98,7 +121,7 @@ describe("createAnthropicProvider — successful response", () => {
     });
     const provider = createAnthropicProvider({ apiKey: "secret-test-key-12345", baseURL });
 
-    const raw = await provider.analyzeProperty(images, metadata);
+    const { raw } = await provider.analyzeProperty(images, metadata);
     expect(receivedApiKeyHeader).toBe("secret-test-key-12345");
     expect(JSON.stringify(raw)).not.toContain("secret-test-key-12345");
   });
@@ -124,6 +147,17 @@ describe("createAnthropicProvider — successful response", () => {
   });
 });
 
+/** Resolves the rejection and asserts it's an `AiProviderError` tagged with `category` — the signal Phase 12's dev logging and UI error messages both key off of (docs/decisions/0014-ai-real-world-refinement.md). */
+async function expectCategory(promise: Promise<unknown>, category: string): Promise<void> {
+  await promise.then(
+    () => expect.unreachable("expected the promise to reject"),
+    (err: unknown) => {
+      expect(err).toBeInstanceOf(AiProviderError);
+      expect((err as AiProviderError).category).toBe(category);
+    },
+  );
+}
+
 describe("createAnthropicProvider — provider failure modes", () => {
   it("throws a clean error on a 401 (invalid credentials) — never a raw provider error string", async () => {
     const baseURL = await listen((req, res) => {
@@ -133,6 +167,7 @@ describe("createAnthropicProvider — provider failure modes", () => {
     const provider = createAnthropicProvider({ apiKey: "bad-key", baseURL });
 
     await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/credentials/i);
+    await expectCategory(provider.analyzeProperty(images, metadata), "authentication");
   });
 
   it("throws a clean error on a 429 (rate limited)", async () => {
@@ -143,6 +178,7 @@ describe("createAnthropicProvider — provider failure modes", () => {
     const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
 
     await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/rate-limiting/i);
+    await expectCategory(provider.analyzeProperty(images, metadata), "rate-limit");
   });
 
   it("throws a clean error on a 500 (provider outage)", async () => {
@@ -153,6 +189,7 @@ describe("createAnthropicProvider — provider failure modes", () => {
     const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
 
     await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/error/i);
+    await expectCategory(provider.analyzeProperty(images, metadata), "provider-error");
   });
 
   it("times out rather than hanging forever when the provider never responds", async () => {
@@ -161,7 +198,7 @@ describe("createAnthropicProvider — provider failure modes", () => {
     });
     const provider = createAnthropicProvider({ apiKey: "test-key", baseURL, timeoutMs: 200 });
 
-    await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow();
+    await expectCategory(provider.analyzeProperty(images, metadata), "timeout");
   }, 10_000);
 
   it("throws a clean error when the model refuses instead of analyzing", async () => {
@@ -172,6 +209,7 @@ describe("createAnthropicProvider — provider failure modes", () => {
     const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
 
     await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/declined/i);
+    await expectCategory(provider.analyzeProperty(images, metadata), "refusal");
   });
 
   it("throws a clean error when the response has no tool_use block at all (a malformed/unexpected model response)", async () => {
@@ -186,6 +224,7 @@ describe("createAnthropicProvider — provider failure modes", () => {
     const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
 
     await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/did not return a structured result/i);
+    await expectCategory(provider.analyzeProperty(images, metadata), "malformed-response");
   });
 
   it("passes through a tool input that fails schema validation — the caller's validator catches it, not a crash here", async () => {
@@ -208,7 +247,7 @@ describe("createAnthropicProvider — provider failure modes", () => {
     });
     const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
 
-    const raw = await provider.analyzeProperty(images, metadata);
+    const { raw } = await provider.analyzeProperty(images, metadata);
     expect(validateRawPropertyObservation(raw).ok).toBe(false);
   });
 
