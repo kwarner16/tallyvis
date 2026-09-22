@@ -40,25 +40,24 @@ function encodeFormBody(params: Record<string, string>): string {
     .join("&");
 }
 
-async function postForm(
+async function stripeRequest(
   baseUrl: string,
   secretKey: string,
+  method: "POST" | "DELETE",
   path: string,
-  body: Record<string, string>,
+  body?: Record<string, string>,
   idempotencyKey?: string,
 ): Promise<Record<string, unknown>> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${secretKey}`,
-    "Content-Type": "application/x-www-form-urlencoded",
-  };
+  const headers: Record<string, string> = { Authorization: `Bearer ${secretKey}` };
+  if (body) headers["Content-Type"] = "application/x-www-form-urlencoded";
   if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 
   let response: Response;
   try {
     response = await fetch(`${baseUrl}${path}`, {
-      method: "POST",
+      method,
       headers,
-      body: encodeFormBody(body),
+      body: body ? encodeFormBody(body) : undefined,
     });
   } catch {
     throw new BillingProviderError("Could not reach the billing provider.", "provider-error");
@@ -76,6 +75,16 @@ async function postForm(
   }
 
   return (await response.json()) as Record<string, unknown>;
+}
+
+async function postForm(
+  baseUrl: string,
+  secretKey: string,
+  path: string,
+  body: Record<string, string>,
+  idempotencyKey?: string,
+): Promise<Record<string, unknown>> {
+  return stripeRequest(baseUrl, secretKey, "POST", path, body, idempotencyKey);
 }
 
 export function createStripeProvider(config: StripeProviderConfig): BillingProvider {
@@ -142,5 +151,14 @@ export function createStripeProvider(config: StripeProviderConfig): BillingProvi
     return { url: session.url };
   }
 
-  return { name: "stripe", createCheckoutSession, createPortalSession };
+  async function cancelSubscriptionImmediately(providerSubscriptionId: string): Promise<void> {
+    await stripeRequest(
+      baseUrl,
+      config.secretKey,
+      "DELETE",
+      `/v1/subscriptions/${encodeURIComponent(providerSubscriptionId)}`,
+    );
+  }
+
+  return { name: "stripe", createCheckoutSession, createPortalSession, cancelSubscriptionImmediately };
 }

@@ -54,6 +54,12 @@ export async function createPortalSession(input: CreatePortalSessionInput): Prom
   return provider.createPortalSession(input);
 }
 
+/** Cancels a Stripe subscription immediately (never "at period end") — see `services/accountDeletion.ts` for why account deletion requires this rather than a scheduled cancellation. */
+export async function cancelSubscriptionImmediately(providerSubscriptionId: string): Promise<void> {
+  const provider = resolveBillingProvider();
+  return provider.cancelSubscriptionImmediately(providerSubscriptionId);
+}
+
 /** Surfaced to the dashboard so it can show "Billing not configured" honestly rather than a button that would fail when clicked. */
 export function isBillingConfigured(): boolean {
   return Boolean(process.env.STRIPE_SECRET_KEY);

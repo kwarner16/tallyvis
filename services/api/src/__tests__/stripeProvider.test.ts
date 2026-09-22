@@ -207,6 +207,38 @@ describe("createStripeProvider — Customer Portal session", () => {
   });
 });
 
+describe("createStripeProvider — cancelSubscriptionImmediately (account deletion)", () => {
+  it("sends a DELETE to /v1/subscriptions/{id}, never a scheduled cancel_at_period_end update", async () => {
+    let method: string | undefined;
+    let receivedPath: string | undefined;
+    const baseUrl = await listen((req, res) => {
+      method = req.method;
+      receivedPath = req.url;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ id: "sub_to_delete", status: "canceled" }));
+    });
+
+    const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
+    await provider.cancelSubscriptionImmediately("sub_to_delete");
+
+    expect(method).toBe("DELETE");
+    expect(receivedPath).toBe("/v1/subscriptions/sub_to_delete");
+  });
+
+  it("propagates a provider error rather than swallowing a failed cancellation (account deletion must not proceed on a failure)", async () => {
+    const baseUrl = await listen((req, res) => {
+      res.statusCode = 400;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ error: { message: "No such subscription." } }));
+    });
+
+    const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
+    await expect(provider.cancelSubscriptionImmediately("sub_nonexistent")).rejects.toMatchObject({
+      category: "invalid-request",
+    });
+  });
+});
+
 describe("createStripeProvider — error handling", () => {
   it("maps a 401/403 to a safe, non-leaking 'provider-error' — never surfaces Stripe's raw auth failure body", async () => {
     const baseUrl = await listen((req, res) => {

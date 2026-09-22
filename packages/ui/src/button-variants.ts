@@ -1,6 +1,6 @@
 import { cn } from "./cn";
 
-export type ButtonVariant = "primary" | "secondary" | "outline" | "outline-dark";
+export type ButtonVariant = "primary" | "secondary" | "outline" | "outline-dark" | "destructive";
 
 export interface ButtonVariantOptions {
   variant?: ButtonVariant;
@@ -17,6 +17,8 @@ const variants: Record<ButtonVariant, string> = {
   secondary: "bg-ink text-paper hover:bg-charcoal-900",
   outline: "border border-line bg-transparent text-ink hover:border-ink",
   "outline-dark": "border border-charcoal-line bg-transparent text-paper hover:border-paper/60",
+  /** For irreversible/destructive actions (e.g. account deletion) — deliberately distinct from "primary" so a business owner never confuses the two at a glance. */
+  destructive: "bg-red-600 text-paper hover:bg-red-700",
 };
 
 /**

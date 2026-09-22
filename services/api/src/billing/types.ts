@@ -68,4 +68,13 @@ export interface BillingProvider {
   readonly name: string;
   createCheckoutSession(input: CreateCheckoutSessionInput): Promise<CheckoutSessionResult>;
   createPortalSession(input: CreatePortalSessionInput): Promise<PortalSessionResult>;
+  /**
+   * Cancels a subscription IMMEDIATELY (never merely "at period end") — the
+   * account-deletion semantics: once local data is about to be deleted,
+   * there is no "keep billing until the end of the period" option, since
+   * there will be no Tallyvis account left to grant access to. Never
+   * deletes the underlying Stripe Customer — see `services/accountDeletion.ts`
+   * for why financial/accounting records intentionally remain in Stripe.
+   */
+  cancelSubscriptionImmediately(providerSubscriptionId: string): Promise<void>;
 }

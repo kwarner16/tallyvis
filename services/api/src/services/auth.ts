@@ -3,7 +3,8 @@ import { windowCleaningDefaultPricingRules } from "@tallyvis/config";
 import { createSession, revokeSession, validateSession, type AuthSession } from "../auth/session";
 import { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH_FOR_TIMING_SAFETY } from "../auth/password";
 import { createBusiness } from "../repositories/businesses";
-import { createUser, getUserWithPasswordHashByEmail } from "../repositories/users";
+import { createUser, getUserById, getUserWithPasswordHashByEmail, userHasPassword } from "../repositories/users";
+import { listIdentitiesForUser } from "../repositories/authIdentities";
 import { createInitialPricingConfiguration } from "../repositories/pricingConfigurations";
 
 const EMAIL_PATTERN = /\S+@\S+\.\S+/;
@@ -111,4 +112,27 @@ export function logOut(db: DatabaseSync, token: string | undefined): void {
 /** The one function every protected server action/page must call before touching business data. Returns `undefined` for a missing/invalid/expired session — never throws, so callers decide how to handle "not signed in" (usually: redirect). */
 export function resolveSession(db: DatabaseSync, token: string | undefined): AuthSession | undefined {
   return validateSession(db, token);
+}
+
+export interface CurrentUserInfo {
+  id: string;
+  email: string;
+  createdAt: string;
+  /** Display-only — never used for any auth decision. A Google-only account (no password credential) has this false. */
+  hasPassword: boolean;
+  /** e.g. ["google"] — for Settings' "Signed in with Google" indicator. Empty for a password-only account. */
+  linkedProviders: string[];
+}
+
+/** For the Settings "Account" section — who am I signed in as, and how. */
+export function getCurrentUser(db: DatabaseSync, session: AuthSession): CurrentUserInfo {
+  const user = getUserById(db, session.userId);
+  if (!user) throw new Error(`User "${session.userId}" not found.`);
+  return {
+    id: user.id,
+    email: user.email,
+    createdAt: user.createdAt,
+    hasPassword: userHasPassword(db, session.userId),
+    linkedProviders: listIdentitiesForUser(db, session.userId).map((identity) => identity.provider),
+  };
 }

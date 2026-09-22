@@ -13,9 +13,11 @@ export {
   logIn,
   logOut,
   resolveSession,
+  getCurrentUser,
   type SignUpInput,
   type LogInInput,
   type AuthResult,
+  type CurrentUserInfo,
 } from "./services/auth";
 
 export {
@@ -124,3 +126,5 @@ export { BillingProviderError, type BillingErrorCategory } from "./billing";
 
 export { handleStripeWebhook, WebhookVerificationError } from "./services/billingWebhooks";
 export { isWebhookConfigured } from "./billing";
+
+export { deleteAccount, AccountDeletionError } from "./services/accountDeletion";
