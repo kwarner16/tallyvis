@@ -84,6 +84,20 @@ describe("createStripeProvider — subscription checkout (mode: subscription)", 
     expect(received?.has("line_items[0][price_data][unit_amount]")).toBe(false);
   });
 
+  it("explicitly disables Managed Payments (regression: some Stripe accounts enable it by default, which requires a product tax_code and otherwise rejects the session — discovered via a real test-mode Checkout Session creation, not by inspection)", async () => {
+    let received: URLSearchParams | undefined;
+    const baseUrl = await listen(async (req, res) => {
+      received = await readFormBody(req);
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ id: "cs_test_123", url: "https://checkout.stripe.example/cs_test_123" }));
+    });
+
+    const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
+    await provider.createCheckoutSession(sampleSubscriptionInput());
+
+    expect(received?.get("managed_payments[enabled]")).toBe("false");
+  });
+
   it("reuses an existing Stripe Customer (passes `customer`, not `customer_email`) when one is already on file", async () => {
     let received: URLSearchParams | undefined;
     const baseUrl = await listen(async (req, res) => {
@@ -134,6 +148,7 @@ describe("createStripeProvider — one-time installation checkout (mode: payment
     expect(result.id).toBe("cs_test_pay_123");
     expect(received?.get("mode")).toBe("payment");
     expect(received?.get("line_items[0][price]")).toBe("price_test_installation");
+    expect(received?.get("managed_payments[enabled]")).toBe("false");
     expect(received?.get("metadata[billingChargeId]")).toBe("charge_abc123");
     expect(received?.has("subscription_data[trial_period_days]")).toBe(false);
   });

@@ -84,6 +84,17 @@ export function createStripeProvider(config: StripeProviderConfig): BillingProvi
       cancel_url: input.cancelUrl,
       "line_items[0][quantity]": "1",
       "line_items[0][price]": input.priceId,
+      // Stripe's Managed Payments (merchant-of-record) can be enabled by
+      // default at the ACCOUNT level regardless of what any individual
+      // Checkout Session requests — when it is, Stripe requires every
+      // Price's Product to carry a tax_code and rejects the session
+      // otherwise. The stripe_implementation_planner recommendation for
+      // Tallyvis's shape was plain hosted Checkout WITHOUT Managed
+      // Payments (see docs/decisions/0018-stripe-v1-hardening.md), so this
+      // is set explicitly rather than left to the account's default —
+      // discovered by an actual failed test-mode Checkout Session
+      // creation, not by inspection.
+      "managed_payments[enabled]": "false",
     };
 
     // Stripe's Checkout Sessions API rejects passing both `customer` and
