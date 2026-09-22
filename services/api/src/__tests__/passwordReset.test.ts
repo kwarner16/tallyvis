@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestDb } from "../db/client";
 import { signUp, logIn } from "../services/auth";
 import { requestPasswordReset, resetPassword } from "../services/passwordReset";
@@ -49,6 +49,35 @@ describe("requestPasswordReset", () => {
 
     await expect(requestPasswordReset(db, "nobody@nowhere.example", capture.buildResetUrl)).resolves.toBeUndefined();
     expect(capture.get()).toBe(""); // never generates or sends anything for an unknown account
+  });
+});
+
+describe("requestPasswordReset — enumeration/reliability hardening", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does NOT reject for a real account even when the email provider itself fails (regression: this used to await the send and propagate its rejection, producing a visibly different outcome — error vs. silent success — than a nonexistent email, a much bigger enumeration signal than timing)", async () => {
+    const { db, email } = await setUp("provider-fails@sparkle.example");
+    const notifications = await import("../notifications");
+    vi.spyOn(notifications, "sendEmail").mockRejectedValue(new Error("provider is down"));
+
+    const capture = captureToken();
+    await expect(requestPasswordReset(db, email, capture.buildResetUrl)).resolves.toBeUndefined();
+    // The token was still issued — a real reset link works even if this particular delivery attempt fails.
+    expect(capture.get().length).toBeGreaterThan(20);
+  });
+
+  it("resolves without ever invoking buildResetUrl for a nonexistent email, same as before this change — the equivalent-work fix only adds local, discarded work, it never issues or exposes a usable token for an account that doesn't exist", async () => {
+    const db = createTestDb();
+    let called = false;
+
+    await requestPasswordReset(db, "still-nobody@nowhere.example", () => {
+      called = true;
+      return "unused";
+    });
+
+    expect(called).toBe(false);
   });
 });
 

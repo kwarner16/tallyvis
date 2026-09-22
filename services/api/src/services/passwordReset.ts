@@ -58,6 +58,40 @@ function isThrottled(email: string): boolean {
  * real account — never reveals account existence. `buildResetUrl` turns a
  * raw token into the full, absolute link a caller (apps/app) knows how to
  * construct; this function never guesses at a URL scheme itself.
+ *
+ * Two enumeration angles, both closed here rather than just documented:
+ *
+ * 1. TIMING — the found-account path used to `await` the real email send
+ *    (a genuine network round-trip, dominant and highly variable once a
+ *    real provider like Resend is configured) before returning, while the
+ *    not-found path returned near-instantly. Fixed by never awaiting the
+ *    send at all: it's fired and left to resolve/reject on its own, with
+ *    failures only logged server-side (`.catch` below), never propagated.
+ *    The not-found path also now does the same shape of local,
+ *    CPU/DB-bound work (generate + hash a token) as the found path,
+ *    rather than returning immediately — so the two paths' RESPONSE
+ *    TIMES are dominated by the same fast, roughly-equal local operations
+ *    on both branches, not by whether a network call happened to be
+ *    awaited. This is response-timing normalization via "don't make the
+ *    caller wait on the slow part," not an arbitrary sleep — there is no
+ *    fixed delay to calibrate or drift out of date as a real provider's
+ *    actual latency changes over time.
+ * 2. BEHAVIOR ON FAILURE — before this fix, an actual send failure (e.g.
+ *    Resend misconfigured, rate-limited, or down) made `sendEmail` reject,
+ *    which propagated all the way to the caller — meaning a real account
+ *    with a broken email provider produced a visibly different (error)
+ *    outcome than a nonexistent email's silent success. That was a much
+ *    bigger enumeration signal than timing ever was, and also a plain
+ *    reliability bug: the user-facing response was always going to be the
+ *    same generic message regardless of delivery outcome, so there was
+ *    never a legitimate reason to let a transient provider blip fail the
+ *    request. Fixed by the same not-awaited fire-and-log change above.
+ *
+ * Residual limitation, stated rather than hidden: this normalizes the two
+ * paths' OWN response time, but says nothing about correlating separately
+ * observable side effects (e.g. an attacker who also has read access to
+ * server logs, or who can observe outbound network connections from this
+ * process) — out of scope for a response-timing fix.
  */
 export async function requestPasswordReset(
   db: DatabaseSync,
@@ -69,24 +103,82 @@ export async function requestPasswordReset(
   lastRequestAt.set(normalized, Date.now());
 
   const record = getUserWithPasswordHashByEmail(db, normalized);
-  if (!record) return; // Same silent outcome as "no such account" — no enumeration signal either way.
+
+  // Equivalent-shape local work on the "no such account" path — generate
+  // and hash a real token exactly like the found-account path does, then
+  // discard it. This is cheap either way (local CPU only, no DB write, no
+  // network) but keeps the two branches' work shape the same rather than
+  // one being a bare early return.
+  const rawToken = generateRawToken();
+  const tokenHash = hashToken(rawToken);
+  if (!record) return; // Same silent outcome as a real account — no enumeration signal either way.
 
   invalidateActiveTokensForUser(db, record.user.id);
-
-  const rawToken = generateRawToken();
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
-  insertPasswordResetToken(db, record.user.id, hashToken(rawToken), expiresAt);
+  insertPasswordResetToken(db, record.user.id, tokenHash, expiresAt);
 
   const resetUrl = buildResetUrl(rawToken);
-  await sendEmail(
+  // Deliberately NOT awaited — see this function's own comment above.
+  void sendEmail(
     {
       to: normalized,
       subject: "Reset your Tallyvis password",
-      text: `We received a request to reset your Tallyvis password. This link expires in 1 hour and can only be used once:\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email — your password hasn't changed.`,
-      html: `<p>We received a request to reset your Tallyvis password. This link expires in 1 hour and can only be used once:</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you didn't request this, you can safely ignore this email — your password hasn't changed.</p>`,
+      text: `Tallyvis\n\nWe received a request to reset your password. Use the link below within the next hour — it can only be used once:\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email. Your password hasn't been changed, and no one can access your account without clicking this exact link.`,
+      html: buildPasswordResetHtml(resetUrl),
     },
     "password-reset",
-  );
+  ).catch((err) => {
+    console.error("requestPasswordReset: background email send failed:", err);
+  });
+}
+
+/**
+ * Part 14 of docs/decisions/0019: a real, polished transactional email —
+ * plain inline-styled HTML (no external stylesheet/image loads, standard
+ * practice for email clients that strip or block both), Tallyvis-branded,
+ * a single clear CTA button, the expiration window, a plain-language
+ * explanation of why this is safe, and the standard "didn't request
+ * this?" reassurance. `resetUrl` is the only user-relevant secret-bearing
+ * value here (the raw token embedded in it) — it appears exactly once,
+ * only as the CTA's `href` and the plain-text fallback link, never
+ * anywhere else in the message.
+ */
+function buildPasswordResetHtml(resetUrl: string): string {
+  return `<!doctype html>
+<html>
+<body style="margin:0;padding:0;background-color:#f5f5f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f5f5f4;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:16px;overflow:hidden;max-width:480px;width:100%;">
+        <tr><td style="padding:32px 32px 0 32px;">
+          <p style="margin:0;font-size:18px;font-weight:700;color:#18181b;">Tallyvis</p>
+        </td></tr>
+        <tr><td style="padding:24px 32px 0 32px;">
+          <p style="margin:0 0 16px 0;font-size:15px;line-height:1.5;color:#3f3f46;">
+            We received a request to reset your Tallyvis password. Click the button below to choose a
+            new one — this link expires in <strong>1 hour</strong> and can only be used <strong>once</strong>.
+          </p>
+        </td></tr>
+        <tr><td style="padding:8px 32px 0 32px;" align="left">
+          <a href="${resetUrl}" style="display:inline-block;background-color:#2563eb;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:12px 24px;border-radius:8px;">Reset your password</a>
+        </td></tr>
+        <tr><td style="padding:20px 32px 0 32px;">
+          <p style="margin:0;font-size:13px;line-height:1.5;color:#71717a;">
+            If the button doesn't work, copy and paste this link into your browser:<br/>
+            <a href="${resetUrl}" style="color:#2563eb;word-break:break-all;">${resetUrl}</a>
+          </p>
+        </td></tr>
+        <tr><td style="padding:24px 32px 32px 32px;">
+          <p style="margin:0;font-size:13px;line-height:1.5;color:#a1a1aa;">
+            Didn&rsquo;t request this? You can safely ignore this email — your password hasn&rsquo;t been
+            changed, and no one can access your account without clicking this exact, one-time link.
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
 }
 
 /**
