@@ -1,5 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 interface ShareTokenRow {
   id: string;
@@ -40,12 +40,13 @@ export interface InsertShareTokenInput {
 
 /** The raw token itself never reaches this file — only its hash. Every query below is scoped by `businessId`, except `resolveActiveShareToken`, where the hash itself is the authorization. */
 
-export function insertShareToken(db: DatabaseSync, input: InsertShareTokenInput): ShareTokenRecord {
+export async function insertShareToken(db: Queryable, input: InsertShareTokenInput): Promise<ShareTokenRecord> {
   const id = makeId("quote-share");
-  db.prepare(
+  await db.query(
     `INSERT INTO quote_share_tokens (id, quote_id, business_id, token_hash, created_at, expires_at, revoked_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL)`,
-  ).run(id, input.quoteId, input.businessId, input.tokenHash, input.createdAt, input.expiresAt);
+     VALUES ($1, $2, $3, $4, $5, $6, NULL)`,
+    [id, input.quoteId, input.businessId, input.tokenHash, input.createdAt, input.expiresAt],
+  );
   return {
     id,
     quoteId: input.quoteId,
@@ -56,31 +57,30 @@ export function insertShareToken(db: DatabaseSync, input: InsertShareTokenInput)
 }
 
 /** Business-side status check — a business can only see share links for quotes it owns. */
-export function getActiveShareToken(
-  db: DatabaseSync,
+export async function getActiveShareToken(
+  db: Queryable,
   businessId: string,
   quoteId: string,
-): ShareTokenRecord | undefined {
-  const row = db
-    .prepare(
-      `SELECT * FROM quote_share_tokens
-       WHERE quote_id = ? AND business_id = ? AND revoked_at IS NULL
-       ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(quoteId, businessId) as ShareTokenRow | undefined;
+): Promise<ShareTokenRecord | undefined> {
+  const result = await db.query<ShareTokenRow>(
+    `SELECT * FROM quote_share_tokens
+     WHERE quote_id = $1 AND business_id = $2 AND revoked_at IS NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [quoteId, businessId],
+  );
+  const row = result.rows[0];
   return row ? toRecord(row) : undefined;
 }
 
 /** Returns true if a row was actually revoked — false if the business had no active link for this quote (never silently a no-op that looks like success). */
-export function revokeActiveShareToken(db: DatabaseSync, businessId: string, quoteId: string): boolean {
+export async function revokeActiveShareToken(db: Queryable, businessId: string, quoteId: string): Promise<boolean> {
   const now = new Date().toISOString();
-  const result = db
-    .prepare(
-      `UPDATE quote_share_tokens SET revoked_at = ?
-       WHERE quote_id = ? AND business_id = ? AND revoked_at IS NULL`,
-    )
-    .run(now, quoteId, businessId);
-  return result.changes > 0;
+  const result = await db.query(
+    `UPDATE quote_share_tokens SET revoked_at = $1
+     WHERE quote_id = $2 AND business_id = $3 AND revoked_at IS NULL`,
+    [now, quoteId, businessId],
+  );
+  return result.rowCount > 0;
 }
 
 /**
@@ -90,16 +90,16 @@ export function revokeActiveShareToken(db: DatabaseSync, businessId: string, quo
  * is the entire credential here, the public equivalent of
  * `auth/session.ts`'s `validateSession`.
  */
-export function resolveActiveShareToken(
-  db: DatabaseSync,
+export async function resolveActiveShareToken(
+  db: Queryable,
   tokenHash: string,
-): { quoteId: string; businessId: string } | undefined {
-  const row = db
-    .prepare(
-      `SELECT quote_id, business_id, expires_at FROM quote_share_tokens
-       WHERE token_hash = ? AND revoked_at IS NULL`,
-    )
-    .get(tokenHash) as { quote_id: string; business_id: string; expires_at: string } | undefined;
+): Promise<{ quoteId: string; businessId: string } | undefined> {
+  const result = await db.query<{ quote_id: string; business_id: string; expires_at: string }>(
+    `SELECT quote_id, business_id, expires_at FROM quote_share_tokens
+     WHERE token_hash = $1 AND revoked_at IS NULL`,
+    [tokenHash],
+  );
+  const row = result.rows[0];
   if (!row) return undefined;
   if (new Date(row.expires_at).getTime() < Date.now()) return undefined;
   return { quoteId: row.quote_id, businessId: row.business_id };

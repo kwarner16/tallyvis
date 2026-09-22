@@ -1,8 +1,8 @@
-import type { DatabaseSync } from "node:sqlite";
 import { randomBytes, createHash } from "node:crypto";
 import type { Quote, QuoteStatus } from "@tallyvis/types";
 import { canTransitionQuoteStatus } from "@tallyvis/types";
 import type { AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import { getBusinessById } from "../repositories/businesses";
 import * as quotesRepo from "../repositories/quotes";
 import * as shareTokensRepo from "../repositories/quoteShareTokens";
@@ -34,8 +34,8 @@ function hashToken(token: string): string {
 }
 
 /** A business can only generate/inspect/revoke a share link for a quote it owns — scoped by `session.businessId`, never a client-supplied id. Throws (not "not found" vs. "not yours" — same as every other quote lookup in this package) rather than distinguishing the two to another business. */
-function requireOwnedQuote(db: DatabaseSync, session: AuthSession, quoteId: string): Quote {
-  const quote = quotesRepo.getQuoteById(db, session.businessId, quoteId);
+async function requireOwnedQuote(db: Queryable, session: AuthSession, quoteId: string): Promise<Quote> {
+  const quote = await quotesRepo.getQuoteById(db, session.businessId, quoteId);
   if (!quote) throw new Error(`Quote "${quoteId}" not found.`);
   return quote;
 }
@@ -58,9 +58,9 @@ export interface ShareLinkResult {
  * since it isn't stored anywhere to read back. The dashboard uses this to
  * decide whether to show "Generate a link" or "Regenerate / Revoke".
  */
-export function getShareLinkStatus(db: DatabaseSync, session: AuthSession, quoteId: string): ShareLinkStatus {
-  requireOwnedQuote(db, session, quoteId);
-  const active = shareTokensRepo.getActiveShareToken(db, session.businessId, quoteId);
+export async function getShareLinkStatus(db: Queryable, session: AuthSession, quoteId: string): Promise<ShareLinkStatus> {
+  await requireOwnedQuote(db, session, quoteId);
+  const active = await shareTokensRepo.getActiveShareToken(db, session.businessId, quoteId);
   if (!active) return { active: false };
   return { active: true, createdAt: active.createdAt, expiresAt: active.expiresAt };
 }
@@ -73,36 +73,31 @@ export function getShareLinkStatus(db: DatabaseSync, session: AuthSession, quote
  * token; the caller (the dashboard) must show/copy it now, since the
  * database will only ever hold its hash from this point on.
  */
-export function generateShareLink(db: DatabaseSync, session: AuthSession, quoteId: string): ShareLinkResult {
-  requireOwnedQuote(db, session, quoteId);
+export async function generateShareLink(db: Queryable, session: AuthSession, quoteId: string): Promise<ShareLinkResult> {
+  await requireOwnedQuote(db, session, quoteId);
 
   const token = generateRawToken();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SHARE_TOKEN_TTL_MS);
 
-  db.exec("BEGIN");
-  try {
-    shareTokensRepo.revokeActiveShareToken(db, session.businessId, quoteId);
-    shareTokensRepo.insertShareToken(db, {
+  await db.transaction(async (tx) => {
+    await shareTokensRepo.revokeActiveShareToken(tx, session.businessId, quoteId);
+    await shareTokensRepo.insertShareToken(tx, {
       quoteId,
       businessId: session.businessId,
       tokenHash: hashToken(token),
       createdAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
     });
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
+  });
 
   return { token, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString() };
 }
 
 /** Revokes this quote's active share link, if it has one — the link stops working immediately (the next resolution attempt finds no non-revoked row). A no-op, not an error, if there was nothing active to revoke. */
-export function revokeShareLink(db: DatabaseSync, session: AuthSession, quoteId: string): void {
-  requireOwnedQuote(db, session, quoteId);
-  shareTokensRepo.revokeActiveShareToken(db, session.businessId, quoteId);
+export async function revokeShareLink(db: Queryable, session: AuthSession, quoteId: string): Promise<void> {
+  await requireOwnedQuote(db, session, quoteId);
+  await shareTokensRepo.revokeActiveShareToken(db, session.businessId, quoteId);
 }
 
 /**
@@ -135,18 +130,18 @@ export interface PublicQuoteView {
  * row. Also records that the quote was viewed, so the business can tell
  * whether its customer has looked at it.
  */
-export function getQuoteByShareToken(db: DatabaseSync, rawToken: string): PublicQuoteView | undefined {
-  const resolved = shareTokensRepo.resolveActiveShareToken(db, hashToken(rawToken));
+export async function getQuoteByShareToken(db: Queryable, rawToken: string): Promise<PublicQuoteView | undefined> {
+  const resolved = await shareTokensRepo.resolveActiveShareToken(db, hashToken(rawToken));
   if (!resolved) return undefined;
 
-  const business = getBusinessById(db, resolved.businessId);
+  const business = await getBusinessById(db, resolved.businessId);
   if (!business) return undefined;
 
-  quotesRepo.recordQuoteViewed(db, resolved.businessId, resolved.quoteId);
-  const quote = quotesRepo.getQuoteById(db, resolved.businessId, resolved.quoteId);
+  await quotesRepo.recordQuoteViewed(db, resolved.businessId, resolved.quoteId);
+  const quote = await quotesRepo.getQuoteById(db, resolved.businessId, resolved.quoteId);
   if (!quote) return undefined;
 
-  const active = shareTokensRepo.getActiveShareToken(db, resolved.businessId, resolved.quoteId);
+  const active = await shareTokensRepo.getActiveShareToken(db, resolved.businessId, resolved.quoteId);
   return {
     quote,
     business: { name: business.name, phone: business.phone, logoUrl: business.logoUrl, brandColor: business.brandColor },
@@ -155,24 +150,24 @@ export function getQuoteByShareToken(db: DatabaseSync, rawToken: string): Public
 }
 
 /** Resolves a token to its quote, or throws a single generic message that deliberately doesn't distinguish "unknown token" from "revoked" from "expired" from "quote gone" — any of those should look identical to whoever's holding an invalid link. */
-function requireTokenQuote(db: DatabaseSync, rawToken: string): { quoteId: string; businessId: string; quote: Quote } {
-  const resolved = shareTokensRepo.resolveActiveShareToken(db, hashToken(rawToken));
+async function requireTokenQuote(db: Queryable, rawToken: string): Promise<{ quoteId: string; businessId: string; quote: Quote }> {
+  const resolved = await shareTokensRepo.resolveActiveShareToken(db, hashToken(rawToken));
   if (!resolved) throw new Error("This quote link is invalid or has expired.");
-  const quote = quotesRepo.getQuoteById(db, resolved.businessId, resolved.quoteId);
+  const quote = await quotesRepo.getQuoteById(db, resolved.businessId, resolved.quoteId);
   if (!quote) throw new Error("This quote link is invalid or has expired.");
   return { quoteId: resolved.quoteId, businessId: resolved.businessId, quote };
 }
 
-function respondToQuote(
-  db: DatabaseSync,
+async function respondToQuote(
+  db: Queryable,
   rawToken: string,
   target: Extract<QuoteStatus, "accepted" | "declined">,
-): Quote {
-  const { quoteId, businessId, quote } = requireTokenQuote(db, rawToken);
+): Promise<Quote> {
+  const { quoteId, businessId, quote } = await requireTokenQuote(db, rawToken);
   if (!canTransitionQuoteStatus(quote.status, target)) {
     throw new Error(`This quote can no longer be ${target === "accepted" ? "accepted" : "declined"}.`);
   }
-  const updated = quotesRepo.updateQuoteStatus(db, businessId, quoteId, target);
+  const updated = await quotesRepo.updateQuoteStatus(db, businessId, quoteId, target);
   if (!updated) throw new Error("This quote link is invalid or has expired.");
   return updated;
 }
@@ -184,12 +179,12 @@ function respondToQuote(
  * `sent`, the same rule `services/quotes.ts`'s session-scoped
  * `updateQuoteStatus` already enforces via `canTransitionQuoteStatus`.
  */
-export function acceptQuoteByToken(db: DatabaseSync, rawToken: string): Quote {
+export async function acceptQuoteByToken(db: Queryable, rawToken: string): Promise<Quote> {
   return respondToQuote(db, rawToken, "accepted");
 }
 
 /** Customer action: decline. See `acceptQuoteByToken` — same token-only authorization, same shared transition rule. */
-export function declineQuoteByToken(db: DatabaseSync, rawToken: string): Quote {
+export async function declineQuoteByToken(db: Queryable, rawToken: string): Promise<Quote> {
   return respondToQuote(db, rawToken, "declined");
 }
 
@@ -202,8 +197,8 @@ const MAX_REQUEST_NOTE_LENGTH = 2000;
  * a decision already made shouldn't be reopened by a stray message landing
  * after the fact.
  */
-export function requestQuoteChangesByToken(db: DatabaseSync, rawToken: string, note: string): Quote {
-  const { quoteId, businessId, quote } = requireTokenQuote(db, rawToken);
+export async function requestQuoteChangesByToken(db: Queryable, rawToken: string, note: string): Promise<Quote> {
+  const { quoteId, businessId, quote } = await requireTokenQuote(db, rawToken);
   if (quote.status === "accepted" || quote.status === "declined") {
     throw new Error("This quote has already been finalized and can no longer be changed.");
   }
@@ -212,7 +207,7 @@ export function requestQuoteChangesByToken(db: DatabaseSync, rawToken: string, n
     throw new Error("Please describe what you'd like changed.");
   }
 
-  const updated = quotesRepo.recordQuoteChangeRequest(
+  const updated = await quotesRepo.recordQuoteChangeRequest(
     db,
     businessId,
     quoteId,

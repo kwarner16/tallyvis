@@ -12,7 +12,7 @@
 import type { PropertyAnalysisResult, WindowCleaningCharacteristics } from "@tallyvis/types";
 import { calculateEstimate, reconcilePricingInput } from "@tallyvis/pricing";
 import { demoBusiness, windowCleaningDefaultPricingRules } from "@tallyvis/config";
-import { getDb } from "./client";
+import { getDb } from "./pg/client";
 import { hashPassword } from "../auth/password";
 import { createBusiness } from "../repositories/businesses";
 import { createUser, getUserWithPasswordHashByEmail } from "../repositories/users";
@@ -174,23 +174,23 @@ const SEED_QUOTES: SeedQuoteInput[] = [
 async function main() {
   const db = getDb();
 
-  if (getUserWithPasswordHashByEmail(db, DEV_OWNER_EMAIL)) {
+  if (await getUserWithPasswordHashByEmail(db, DEV_OWNER_EMAIL)) {
     console.log(`Seed data already present (${DEV_OWNER_EMAIL}) — skipping.`);
     return;
   }
 
-  const business = createBusiness(db, {
+  const business = await createBusiness(db, {
     name: demoBusiness.name,
     email: DEV_OWNER_EMAIL,
     phone: "(555) 010-0110",
     serviceArea: "Greater Springfield area",
   });
-  const configuration = createInitialPricingConfiguration(db, business.id, windowCleaningDefaultPricingRules);
+  const configuration = await createInitialPricingConfiguration(db, business.id, windowCleaningDefaultPricingRules);
   const passwordHash = await hashPassword(DEV_OWNER_PASSWORD);
-  createUser(db, business.id, DEV_OWNER_EMAIL, passwordHash);
+  await createUser(db, business.id, DEV_OWNER_EMAIL, passwordHash);
 
   for (const input of SEED_QUOTES) {
-    const customer = createCustomer(db, business.id, {
+    const customer = await createCustomer(db, business.id, {
       name: input.customerName,
       email: input.email,
       phone: input.phone,
@@ -209,7 +209,7 @@ async function main() {
     const estimate = calculateEstimate(pricingInput, configuration, input.confidence);
     const createdAt = hoursAgo(input.createdHoursAgo);
 
-    createQuoteRecord(db, business.id, {
+    await createQuoteRecord(db, business.id, {
       customerId: customer.id,
       pricingConfigId: configuration.id,
       property: {

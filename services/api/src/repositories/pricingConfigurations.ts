@@ -1,6 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { PricingConfiguration, PricingRules } from "@tallyvis/types";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 interface PricingConfigurationRow {
   id: string;
@@ -25,43 +25,46 @@ function toPricingConfiguration(row: PricingConfigurationRow): PricingConfigurat
 }
 
 /** The active configuration is the highest version this business has saved — same rule the Phase 6/7 mock store used. */
-export function getActivePricingConfiguration(
-  db: DatabaseSync,
+export async function getActivePricingConfiguration(
+  db: Queryable,
   businessId: string,
-): PricingConfiguration | undefined {
-  const row = db
-    .prepare(
-      `SELECT * FROM pricing_configurations WHERE business_id = ? ORDER BY version DESC LIMIT 1`,
-    )
-    .get(businessId) as PricingConfigurationRow | undefined;
+): Promise<PricingConfiguration | undefined> {
+  const result = await db.query<PricingConfigurationRow>(
+    `SELECT * FROM pricing_configurations WHERE business_id = $1 ORDER BY version DESC LIMIT 1`,
+    [businessId],
+  );
+  const row = result.rows[0];
   return row ? toPricingConfiguration(row) : undefined;
 }
 
 /** Looks up a specific (possibly historical) version by id — how a quote's pinned `pricingConfigId` is resolved back to the rate card that priced it. */
-export function getPricingConfigurationById(
-  db: DatabaseSync,
+export async function getPricingConfigurationById(
+  db: Queryable,
   businessId: string,
   id: string,
-): PricingConfiguration | undefined {
-  const row = db
-    .prepare(`SELECT * FROM pricing_configurations WHERE id = ? AND business_id = ?`)
-    .get(id, businessId) as PricingConfigurationRow | undefined;
+): Promise<PricingConfiguration | undefined> {
+  const result = await db.query<PricingConfigurationRow>(
+    `SELECT * FROM pricing_configurations WHERE id = $1 AND business_id = $2`,
+    [id, businessId],
+  );
+  const row = result.rows[0];
   return row ? toPricingConfiguration(row) : undefined;
 }
 
 /** Seeds the very first pricing configuration (version 1) for a newly created business — never called again after that; every later save goes through `createNextPricingConfigurationVersion`. */
-export function createInitialPricingConfiguration(
-  db: DatabaseSync,
+export async function createInitialPricingConfiguration(
+  db: Queryable,
   businessId: string,
   rules: PricingRules,
   currency = "USD",
-): PricingConfiguration {
+): Promise<PricingConfiguration> {
   const id = makeId("pricing-config");
   const effectiveAt = new Date().toISOString();
-  db.prepare(
+  await db.query(
     `INSERT INTO pricing_configurations (id, business_id, industry, currency, version, effective_at, rules_json)
-     VALUES (?, ?, ?, ?, 1, ?, ?)`,
-  ).run(id, businessId, rules.vertical, currency, effectiveAt, JSON.stringify(rules));
+     VALUES ($1, $2, $3, $4, 1, $5, $6)`,
+    [id, businessId, rules.vertical, currency, effectiveAt, JSON.stringify(rules)],
+  );
   return { id, businessId, industry: rules.vertical, currency, version: 1, effectiveAt, rules };
 }
 
@@ -71,21 +74,22 @@ export function createInitialPricingConfiguration(
  * priced under an earlier version keep referencing it by id; this never
  * touches an existing row.
  */
-export function createNextPricingConfigurationVersion(
-  db: DatabaseSync,
+export async function createNextPricingConfigurationVersion(
+  db: Queryable,
   businessId: string,
   rules: PricingRules,
-): PricingConfiguration {
-  const current = getActivePricingConfiguration(db, businessId);
+): Promise<PricingConfiguration> {
+  const current = await getActivePricingConfiguration(db, businessId);
   if (!current) throw new Error(`Business "${businessId}" has no pricing configuration to version from.`);
 
   const id = makeId("pricing-config");
   const version = current.version + 1;
   const effectiveAt = new Date().toISOString();
-  db.prepare(
+  await db.query(
     `INSERT INTO pricing_configurations (id, business_id, industry, currency, version, effective_at, rules_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, businessId, rules.vertical, current.currency, version, effectiveAt, JSON.stringify(rules));
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, businessId, rules.vertical, current.currency, version, effectiveAt, JSON.stringify(rules)],
+  );
 
   return { id, businessId, industry: rules.vertical, currency: current.currency, version, effectiveAt, rules };
 }

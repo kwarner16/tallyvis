@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { getDefaultPublicBusiness } from "../services/business";
 import { AiProviderError, analyzePropertyForBusiness, analyzePropertyPublic } from "../services/aiAnalysis";
+
+const getDb = useTestDb();
 
 /** Resolves the rejection and asserts it's an `AiProviderError` tagged with `category` — see `services/ai/src/__tests__/anthropic.test.ts`'s twin. */
 async function expectCategory(promise: Promise<unknown>, category: string): Promise<void> {
@@ -44,7 +46,7 @@ function dataUrlImage(seed: string): { url: string } {
 const threeImages = [dataUrlImage("a"), dataUrlImage("b"), dataUrlImage("c")];
 
 async function setUpBusiness() {
-  const db = createTestDb();
+  const db = getDb();
   const { session } = await signUp(db, {
     businessName: "Sparkle Windows",
     ownerEmail: "owner@sparkle.example",
@@ -109,7 +111,7 @@ describe("analyzePropertyForBusiness — authenticated path", () => {
 describe("analyzePropertyPublic — unauthenticated estimator path", () => {
   it("resolves against the businessId the caller passes in (mirroring createQuotePublic's pattern) — never invents its own", async () => {
     const { db, session } = await setUpBusiness();
-    const publicBusiness = getDefaultPublicBusiness(db)!;
+    const publicBusiness = (await getDefaultPublicBusiness(db))!;
     expect(publicBusiness.id).toBe(session.businessId);
 
     const result = await analyzePropertyPublic(db, publicBusiness.id, { images: threeImages, property: { stories: 1 } });

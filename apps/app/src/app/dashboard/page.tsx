@@ -19,10 +19,10 @@ const ACTIVE_STATUSES: Quote["status"][] = [
 
 export default async function DashboardHomePage() {
   const { db, session } = await requireContext();
-  const quotes = listQuotes(db, session);
-  const business = getCurrentBusiness(db, session);
-  const subscription = getSubscription(db, session);
-  const pricingConfiguration = getActiveConfiguration(db, session);
+  const quotes = await listQuotes(db, session);
+  const business = await getCurrentBusiness(db, session);
+  const subscription = await getSubscription(db, session);
+  const pricingConfiguration = await getActiveConfiguration(db, session);
 
   const checklistItems = [
     { key: "plan", label: "Choose a plan", href: "/dashboard/onboarding", done: subscription !== undefined },

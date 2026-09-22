@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import type {
   Estimate,
   Property,
@@ -9,6 +8,7 @@ import type {
 } from "@tallyvis/types";
 import type { RawPropertyObservation } from "@tallyvis/ai";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 /**
  * Every quote row is hydrated with a JOIN to its customer, so the returned
@@ -40,16 +40,16 @@ interface QuoteRow {
   customer_address: string | null;
   customer_created_at: string;
   customer_updated_at: string;
-  /** Customer interaction/response tracking — see 0002_quote_sharing.sql. Nullable: set only as the corresponding event actually happens. */
+  /** Customer interaction/response tracking. Nullable: set only as the corresponding event actually happens. */
   first_viewed_at: string | null;
   last_viewed_at: string | null;
   accepted_at: string | null;
   declined_at: string | null;
   changes_requested_at: string | null;
   customer_request_note: string | null;
-  /** Phase 13 — see 0003_job_outcomes.sql. Nullable: only set when AI analysis actually produced the observation this quote was saved with. */
+  /** Nullable: only set when AI analysis actually produced the observation this quote was saved with. */
   ai_observation_json: string | null;
-  /** Phase 14 — see 0004_accounts_billing_embed.sql. The most recent "send quote by email" attempt only, not a history. */
+  /** The most recent "send quote by email" attempt only, not a history. */
   email_sent_at: string | null;
   email_delivery_status: string | null;
   email_provider_message_id: string | null;
@@ -128,47 +128,48 @@ export interface CreateQuoteRecordInput {
   /** Override for seeding realistic-looking historical demo data only — production callers always get "now". */
   createdAt?: string;
   /**
-   * Phase 13 (see docs/decisions/0015-job-outcome-tracking.md) — the AI's
-   * raw per-field observation, preserved separately from `analysis`
-   * (the human-confirmed final characteristics) so the two can later be
-   * compared. Omitted (not merely `undefined`) whenever AI analysis wasn't
-   * used to produce this quote — never fabricated after the fact.
+   * The AI's raw per-field observation, preserved separately from
+   * `analysis` (the human-confirmed final characteristics) so the two can
+   * later be compared. Omitted (not merely `undefined`) whenever AI
+   * analysis wasn't used to produce this quote — never fabricated after
+   * the fact.
    */
   aiObservation?: RawPropertyObservation;
 }
 
 /** Every query below is scoped by `businessId` in the WHERE clause itself — not just checked afterward — so a wrong/forged id can never resolve to another tenant's row. */
 
-export function createQuoteRecord(db: DatabaseSync, businessId: string, input: CreateQuoteRecordInput): Quote {
+export async function createQuoteRecord(db: Queryable, businessId: string, input: CreateQuoteRecordInput): Promise<Quote> {
   const id = makeId("quote");
   const now = input.createdAt ?? new Date().toISOString();
-  db.prepare(
+  await db.query(
     `INSERT INTO quotes (
        id, business_id, customer_id, pricing_config_id,
        property_type, property_stories, property_address,
        service_preferences_json, notes, photos_json, analysis_json, estimate_json,
        status, created_at, updated_at, ai_observation_json
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    businessId,
-    input.customerId,
-    input.pricingConfigId,
-    input.property.propertyType,
-    input.property.stories,
-    input.property.address ?? null,
-    JSON.stringify(input.servicePreferences),
-    input.notes,
-    JSON.stringify(input.photos),
-    JSON.stringify(input.analysis),
-    JSON.stringify(input.estimate),
-    input.status,
-    now,
-    now,
-    input.aiObservation ? JSON.stringify(input.aiObservation) : null,
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+    [
+      id,
+      businessId,
+      input.customerId,
+      input.pricingConfigId,
+      input.property.propertyType,
+      input.property.stories,
+      input.property.address ?? null,
+      JSON.stringify(input.servicePreferences),
+      input.notes,
+      JSON.stringify(input.photos),
+      JSON.stringify(input.analysis),
+      JSON.stringify(input.estimate),
+      input.status,
+      now,
+      now,
+      input.aiObservation ? JSON.stringify(input.aiObservation) : null,
+    ],
   );
 
-  const created = getQuoteById(db, businessId, id);
+  const created = await getQuoteById(db, businessId, id);
   if (!created) throw new Error("Failed to read back the quote that was just created.");
   return created;
 }
@@ -183,14 +184,16 @@ export function createQuoteRecord(db: DatabaseSync, businessId: string, input: C
  * later human correction (`updateQuoteAnalysisAndEstimate`) can never
  * alter what the AI originally observed.
  */
-export function getQuoteAiObservation(
-  db: DatabaseSync,
+export async function getQuoteAiObservation(
+  db: Queryable,
   businessId: string,
   id: string,
-): RawPropertyObservation | undefined {
-  const row = db
-    .prepare(`SELECT ai_observation_json FROM quotes WHERE id = ? AND business_id = ?`)
-    .get(id, businessId) as { ai_observation_json: string | null } | undefined;
+): Promise<RawPropertyObservation | undefined> {
+  const result = await db.query<{ ai_observation_json: string | null }>(
+    `SELECT ai_observation_json FROM quotes WHERE id = $1 AND business_id = $2`,
+    [id, businessId],
+  );
+  const row = result.rows[0];
   if (!row?.ai_observation_json) return undefined;
   return JSON.parse(row.ai_observation_json) as RawPropertyObservation;
 }
@@ -201,61 +204,67 @@ export function getQuoteAiObservation(
  * view) without an N+1 query per row. Quotes with no AI observation are
  * simply absent from the map, not present with an empty value.
  */
-export function listAiObservationsByQuoteId(
-  db: DatabaseSync,
+export async function listAiObservationsByQuoteId(
+  db: Queryable,
   businessId: string,
-): Map<string, RawPropertyObservation> {
-  const rows = db
-    .prepare(`SELECT id, ai_observation_json FROM quotes WHERE business_id = ? AND ai_observation_json IS NOT NULL`)
-    .all(businessId) as unknown as { id: string; ai_observation_json: string }[];
-  return new Map(rows.map((row) => [row.id, JSON.parse(row.ai_observation_json) as RawPropertyObservation]));
+): Promise<Map<string, RawPropertyObservation>> {
+  const result = await db.query<{ id: string; ai_observation_json: string }>(
+    `SELECT id, ai_observation_json FROM quotes WHERE business_id = $1 AND ai_observation_json IS NOT NULL`,
+    [businessId],
+  );
+  return new Map(result.rows.map((row) => [row.id, JSON.parse(row.ai_observation_json) as RawPropertyObservation]));
 }
 
-export function getQuoteById(db: DatabaseSync, businessId: string, id: string): Quote | undefined {
-  const row = db
-    .prepare(`${SELECT_QUOTE_WITH_CUSTOMER} WHERE q.id = ? AND q.business_id = ?`)
-    .get(id, businessId) as QuoteRow | undefined;
+export async function getQuoteById(db: Queryable, businessId: string, id: string): Promise<Quote | undefined> {
+  const result = await db.query<QuoteRow>(`${SELECT_QUOTE_WITH_CUSTOMER} WHERE q.id = $1 AND q.business_id = $2`, [
+    id,
+    businessId,
+  ]);
+  const row = result.rows[0];
   return row ? toQuote(row) : undefined;
 }
 
-export function listQuotes(db: DatabaseSync, businessId: string): Quote[] {
-  const rows = db
-    .prepare(`${SELECT_QUOTE_WITH_CUSTOMER} WHERE q.business_id = ? ORDER BY q.created_at DESC`)
-    .all(businessId) as unknown as QuoteRow[];
-  return rows.map(toQuote);
+export async function listQuotes(db: Queryable, businessId: string): Promise<Quote[]> {
+  const result = await db.query<QuoteRow>(
+    `${SELECT_QUOTE_WITH_CUSTOMER} WHERE q.business_id = $1 ORDER BY q.created_at DESC`,
+    [businessId],
+  );
+  return result.rows.map(toQuote);
 }
 
 /** Updates the job characteristics and the freshly-computed estimate together — callers decide which pricing configuration priced it and whether `pricingConfigId` changes. */
-export function updateQuoteAnalysisAndEstimate(
-  db: DatabaseSync,
+export async function updateQuoteAnalysisAndEstimate(
+  db: Queryable,
   businessId: string,
   id: string,
   analysis: PropertyAnalysisResult,
   estimate: Estimate,
   pricingConfigId: string,
-): Quote | undefined {
+): Promise<Quote | undefined> {
   const now = new Date().toISOString();
-  const result = db
-    .prepare(
-      `UPDATE quotes SET analysis_json = ?, estimate_json = ?, pricing_config_id = ?, updated_at = ?
-       WHERE id = ? AND business_id = ?`,
-    )
-    .run(JSON.stringify(analysis), JSON.stringify(estimate), pricingConfigId, now, id, businessId);
-  if (result.changes === 0) return undefined;
+  const result = await db.query(
+    `UPDATE quotes SET analysis_json = $1, estimate_json = $2, pricing_config_id = $3, updated_at = $4
+     WHERE id = $5 AND business_id = $6`,
+    [JSON.stringify(analysis), JSON.stringify(estimate), pricingConfigId, now, id, businessId],
+  );
+  if (result.rowCount === 0) return undefined;
   return getQuoteById(db, businessId, id);
 }
 
-export function updateQuoteCustomerId(
-  db: DatabaseSync,
+export async function updateQuoteCustomerId(
+  db: Queryable,
   businessId: string,
   id: string,
   customerId: string,
-): Quote | undefined {
+): Promise<Quote | undefined> {
   const now = new Date().toISOString();
-  const result = db
-    .prepare(`UPDATE quotes SET customer_id = ?, updated_at = ? WHERE id = ? AND business_id = ?`)
-    .run(customerId, now, id, businessId);
-  if (result.changes === 0) return undefined;
+  const result = await db.query(`UPDATE quotes SET customer_id = $1, updated_at = $2 WHERE id = $3 AND business_id = $4`, [
+    customerId,
+    now,
+    id,
+    businessId,
+  ]);
+  if (result.rowCount === 0) return undefined;
   return getQuoteById(db, businessId, id);
 }
 
@@ -266,71 +275,54 @@ export function updateQuoteCustomerId(
  * never overwritten, so it stays the moment of the real event even if this
  * function is ever called again for an unrelated status change.
  */
-export function updateQuoteStatus(
-  db: DatabaseSync,
-  businessId: string,
-  id: string,
-  status: QuoteStatus,
-): Quote | undefined {
+export async function updateQuoteStatus(db: Queryable, businessId: string, id: string, status: QuoteStatus): Promise<Quote | undefined> {
   const now = new Date().toISOString();
-  const result = db
-    .prepare(
-      `UPDATE quotes SET
-         status = ?,
-         updated_at = ?,
-         accepted_at = COALESCE(?, accepted_at),
-         declined_at = COALESCE(?, declined_at)
-       WHERE id = ? AND business_id = ?`,
-    )
-    .run(
-      status,
-      now,
-      status === "accepted" ? now : null,
-      status === "declined" ? now : null,
-      id,
-      businessId,
-    );
-  if (result.changes === 0) return undefined;
+  const result = await db.query(
+    `UPDATE quotes SET
+       status = $1,
+       updated_at = $2,
+       accepted_at = COALESCE($3, accepted_at),
+       declined_at = COALESCE($4, declined_at)
+     WHERE id = $5 AND business_id = $6`,
+    [status, now, status === "accepted" ? now : null, status === "declined" ? now : null, id, businessId],
+  );
+  if (result.rowCount === 0) return undefined;
   return getQuoteById(db, businessId, id);
 }
 
 /** Records that the quote was viewed — `first_viewed_at` is set only once (via `COALESCE`), `last_viewed_at` every time. Called on every successful share-token resolution, so a business can tell whether its customer has looked at the quote at all. */
-export function recordQuoteViewed(db: DatabaseSync, businessId: string, id: string): void {
+export async function recordQuoteViewed(db: Queryable, businessId: string, id: string): Promise<void> {
   const now = new Date().toISOString();
-  db.prepare(
-    `UPDATE quotes SET first_viewed_at = COALESCE(first_viewed_at, ?), last_viewed_at = ?
-     WHERE id = ? AND business_id = ?`,
-  ).run(now, now, id, businessId);
+  await db.query(
+    `UPDATE quotes SET first_viewed_at = COALESCE(first_viewed_at, $1), last_viewed_at = $1
+     WHERE id = $2 AND business_id = $3`,
+    [now, id, businessId],
+  );
 }
 
 /** The customer's free-text "request changes" note — this always reflects the most recent request, not a history of every one; see docs/decisions/0012-secure-quote-sharing.md for why a single note fits this phase rather than a separate messages table. */
-export function recordQuoteChangeRequest(
-  db: DatabaseSync,
-  businessId: string,
-  id: string,
-  note: string,
-): Quote | undefined {
+export async function recordQuoteChangeRequest(db: Queryable, businessId: string, id: string, note: string): Promise<Quote | undefined> {
   const now = new Date().toISOString();
-  const result = db
-    .prepare(
-      `UPDATE quotes SET changes_requested_at = ?, customer_request_note = ?, updated_at = ?
-       WHERE id = ? AND business_id = ?`,
-    )
-    .run(now, note, now, id, businessId);
-  if (result.changes === 0) return undefined;
+  const result = await db.query(
+    `UPDATE quotes SET changes_requested_at = $1, customer_request_note = $2, updated_at = $3
+     WHERE id = $4 AND business_id = $5`,
+    [now, note, now, id, businessId],
+  );
+  if (result.rowCount === 0) return undefined;
   return getQuoteById(db, businessId, id);
 }
 
-/** Records the most recent "send quote by email" attempt — a single slot, not a history, the same pattern as `recordQuoteChangeRequest`; see 0004_accounts_billing_embed.sql. Doesn't bump `updated_at` — sending an email isn't a change to the quote's own content, the same reasoning `recordQuoteViewed` already applies to view tracking. */
-export function recordQuoteEmailAttempt(
-  db: DatabaseSync,
+/** Records the most recent "send quote by email" attempt — a single slot, not a history, the same pattern as `recordQuoteChangeRequest`. Doesn't bump `updated_at` — sending an email isn't a change to the quote's own content, the same reasoning `recordQuoteViewed` already applies to view tracking. */
+export async function recordQuoteEmailAttempt(
+  db: Queryable,
   businessId: string,
   id: string,
   status: "sent" | "failed",
   providerMessageId: string | undefined,
-): void {
-  db.prepare(
-    `UPDATE quotes SET email_sent_at = ?, email_delivery_status = ?, email_provider_message_id = ?
-     WHERE id = ? AND business_id = ?`,
-  ).run(new Date().toISOString(), status, providerMessageId ?? null, id, businessId);
+): Promise<void> {
+  await db.query(
+    `UPDATE quotes SET email_sent_at = $1, email_delivery_status = $2, email_provider_message_id = $3
+     WHERE id = $4 AND business_id = $5`,
+    [new Date().toISOString(), status, providerMessageId ?? null, id, businessId],
+  );
 }

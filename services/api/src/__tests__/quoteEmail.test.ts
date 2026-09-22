@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { createQuote, getQuote } from "../services/quotes";
 import { getQuoteByShareToken } from "../services/quoteSharing";
 import { sendQuoteEmail } from "../services/quoteEmail";
-import type { AuthSession } from "../auth/session";
+
+const getDb = useTestDb();
 
 /**
  * Phase 14 — customer quote email (see
@@ -40,8 +41,8 @@ const sampleInput = () => ({
   },
 });
 
-async function setUp(): Promise<{ db: ReturnType<typeof createTestDb>; session: AuthSession }> {
-  const db = createTestDb();
+async function setUp() {
+  const db = getDb();
   const { session } = await signUp(db, {
     businessName: "Sparkle Windows",
     ownerEmail: "owner@sparkle.example",
@@ -58,7 +59,7 @@ afterEach(() => {
 describe("sendQuoteEmail", () => {
   it("sends via a secure, resolvable quote-share link (the same mechanism the dashboard's share panel uses) and records delivery metadata", async () => {
     const { db, session } = await setUp();
-    const quote = createQuote(db, session, sampleInput());
+    const quote = await createQuote(db, session, sampleInput());
     let linkedToken = "";
 
     const result = await sendQuoteEmail(db, session, quote.id, (token) => {
@@ -70,18 +71,18 @@ describe("sendQuoteEmail", () => {
     expect(linkedToken.length).toBeGreaterThan(20);
 
     // The link in the email is a real, working share link.
-    const publicView = getQuoteByShareToken(db, linkedToken);
+    const publicView = await getQuoteByShareToken(db, linkedToken);
     expect(publicView?.quote.id).toBe(quote.id);
 
     // Delivery metadata recorded on the quote.
-    const reloaded = getQuote(db, session, quote.id)!;
+    const reloaded = (await getQuote(db, session, quote.id))!;
     expect(reloaded.emailDeliveryStatus).toBe("sent");
     expect(reloaded.emailSentAt).toBeTruthy();
   });
 
   it("does not include internal notes, line-item pricing breakdown, or the pricing configuration in the email content", async () => {
     const { db, session } = await setUp();
-    const quote = createQuote(db, session, sampleInput());
+    const quote = await createQuote(db, session, sampleInput());
 
     const capturedMessages: { subject: string; text: string; html: string }[] = [];
     const notifications = await import("../notifications");
@@ -106,20 +107,20 @@ describe("sendQuoteEmail", () => {
 
   it("propagates a provider failure rather than silently claiming success, and records the failure", async () => {
     const { db, session } = await setUp();
-    const quote = createQuote(db, session, sampleInput());
+    const quote = await createQuote(db, session, sampleInput());
     process.env.EMAIL_PROVIDER = "resend"; // configured provider name, but RESEND_API_KEY is deliberately unset
 
     await expect(
       sendQuoteEmail(db, session, quote.id, (token) => `https://example.com/quote/${token}`),
     ).rejects.toThrow(/not configured/i);
 
-    const reloaded = getQuote(db, session, quote.id)!;
+    const reloaded = (await getQuote(db, session, quote.id))!;
     expect(reloaded.emailDeliveryStatus).toBe("failed");
   });
 
   it("HTML-escapes the customer name and business name in the email body (regression: raw interpolation let a name containing markup inject into the HTML email)", async () => {
     const { db, session } = await setUp();
-    const quote = createQuote(db, session, {
+    const quote = await createQuote(db, session, {
       ...sampleInput(),
       customer: { name: 'Jordan <img src=x onerror="alert(1)"> Rivera', email: "jordan@example.com" },
     });
@@ -146,8 +147,8 @@ describe("sendQuoteEmail", () => {
     // service surface — simulated here by clearing it directly at the
     // repository/database level, the only way this state could occur.
     const { db, session } = await setUp();
-    const quote = createQuote(db, session, sampleInput());
-    db.prepare(`UPDATE customers SET email = '' WHERE id = ?`).run(quote.customerId);
+    const quote = await createQuote(db, session, sampleInput());
+    await db.query(`UPDATE customers SET email = '' WHERE id = $1`, [quote.customerId]);
 
     await expect(
       sendQuoteEmail(db, session, quote.id, (token) => `https://example.com/quote/${token}`),

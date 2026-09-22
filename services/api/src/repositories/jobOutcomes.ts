@@ -1,12 +1,12 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { AccessibilityLevel } from "@tallyvis/types";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 /**
  * Phase 13 — real-world job outcome & data collection foundation. See
  * docs/decisions/0015-job-outcome-tracking.md. One row per quote
- * (`quote_id` is unique — see 0003_job_outcomes.sql), recorded well after
- * the quote itself was priced and never mutating it.
+ * (`quote_id` is unique — see db/pg/migrations/0003_job_outcomes.sql),
+ * recorded well after the quote itself was priced and never mutating it.
  */
 
 export type JobOutcomeStatus = "in_progress" | "completed";
@@ -80,20 +80,22 @@ export interface SaveJobOutcomeInput {
   notes: string;
 }
 
-export function getJobOutcomeByQuoteId(
-  db: DatabaseSync,
+export async function getJobOutcomeByQuoteId(
+  db: Queryable,
   businessId: string,
   quoteId: string,
-): JobOutcome | undefined {
-  const row = db
-    .prepare(`SELECT * FROM job_outcomes WHERE quote_id = ? AND business_id = ?`)
-    .get(quoteId, businessId) as JobOutcomeRow | undefined;
+): Promise<JobOutcome | undefined> {
+  const result = await db.query<JobOutcomeRow>(
+    `SELECT * FROM job_outcomes WHERE quote_id = $1 AND business_id = $2`,
+    [quoteId, businessId],
+  );
+  const row = result.rows[0];
   return row ? toOutcome(row) : undefined;
 }
 
-export function listJobOutcomesForBusiness(db: DatabaseSync, businessId: string): JobOutcome[] {
-  const rows = db.prepare(`SELECT * FROM job_outcomes WHERE business_id = ?`).all(businessId) as unknown as JobOutcomeRow[];
-  return rows.map(toOutcome);
+export async function listJobOutcomesForBusiness(db: Queryable, businessId: string): Promise<JobOutcome[]> {
+  const result = await db.query<JobOutcomeRow>(`SELECT * FROM job_outcomes WHERE business_id = $1`, [businessId]);
+  return result.rows.map(toOutcome);
 }
 
 /**
@@ -105,64 +107,66 @@ export function listJobOutcomesForBusiness(db: DatabaseSync, businessId: string)
  * like every other mutation in this package — a forged/foreign `quoteId`
  * can never update another business's row.
  */
-export function saveJobOutcome(
-  db: DatabaseSync,
+export async function saveJobOutcome(
+  db: Queryable,
   businessId: string,
   quoteId: string,
   input: SaveJobOutcomeInput,
-): JobOutcome {
+): Promise<JobOutcome> {
   const now = new Date().toISOString();
-  const existing = getJobOutcomeByQuoteId(db, businessId, quoteId);
+  const existing = await getJobOutcomeByQuoteId(db, businessId, quoteId);
 
   if (existing) {
-    db.prepare(
+    await db.query(
       `UPDATE job_outcomes SET
-         status = ?, actual_started_at = ?, actual_completed_at = ?, actual_labor_minutes = ?,
-         actual_window_count = ?, actual_screen_count = ?, actual_story_count = ?,
-         actual_price = ?, actual_difficulty = ?, notes = ?, updated_at = ?
-       WHERE quote_id = ? AND business_id = ?`,
-    ).run(
-      input.status,
-      input.actualStartedAt ?? null,
-      input.actualCompletedAt ?? null,
-      input.actualLaborMinutes ?? null,
-      input.actualWindowCount ?? null,
-      input.actualScreenCount ?? null,
-      input.actualStoryCount ?? null,
-      input.actualPrice ?? null,
-      input.actualDifficulty ?? null,
-      input.notes,
-      now,
-      quoteId,
-      businessId,
+         status = $1, actual_started_at = $2, actual_completed_at = $3, actual_labor_minutes = $4,
+         actual_window_count = $5, actual_screen_count = $6, actual_story_count = $7,
+         actual_price = $8, actual_difficulty = $9, notes = $10, updated_at = $11
+       WHERE quote_id = $12 AND business_id = $13`,
+      [
+        input.status,
+        input.actualStartedAt ?? null,
+        input.actualCompletedAt ?? null,
+        input.actualLaborMinutes ?? null,
+        input.actualWindowCount ?? null,
+        input.actualScreenCount ?? null,
+        input.actualStoryCount ?? null,
+        input.actualPrice ?? null,
+        input.actualDifficulty ?? null,
+        input.notes,
+        now,
+        quoteId,
+        businessId,
+      ],
     );
   } else {
-    db.prepare(
+    await db.query(
       `INSERT INTO job_outcomes (
          id, quote_id, business_id, status, actual_started_at, actual_completed_at, actual_labor_minutes,
          actual_window_count, actual_screen_count, actual_story_count, actual_price, actual_difficulty,
          notes, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      makeId("job-outcome"),
-      quoteId,
-      businessId,
-      input.status,
-      input.actualStartedAt ?? null,
-      input.actualCompletedAt ?? null,
-      input.actualLaborMinutes ?? null,
-      input.actualWindowCount ?? null,
-      input.actualScreenCount ?? null,
-      input.actualStoryCount ?? null,
-      input.actualPrice ?? null,
-      input.actualDifficulty ?? null,
-      input.notes,
-      now,
-      now,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+      [
+        makeId("job-outcome"),
+        quoteId,
+        businessId,
+        input.status,
+        input.actualStartedAt ?? null,
+        input.actualCompletedAt ?? null,
+        input.actualLaborMinutes ?? null,
+        input.actualWindowCount ?? null,
+        input.actualScreenCount ?? null,
+        input.actualStoryCount ?? null,
+        input.actualPrice ?? null,
+        input.actualDifficulty ?? null,
+        input.notes,
+        now,
+        now,
+      ],
     );
   }
 
-  const saved = getJobOutcomeByQuoteId(db, businessId, quoteId);
+  const saved = await getJobOutcomeByQuoteId(db, businessId, quoteId);
   if (!saved) throw new Error("Failed to read back the job outcome that was just saved.");
   return saved;
 }

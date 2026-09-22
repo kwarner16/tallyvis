@@ -1,7 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
 import { randomBytes, createHash } from "node:crypto";
 import { hashPassword } from "../auth/password";
 import { revokeAllSessionsForUser } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import { getUserWithPasswordHashByEmail, getUserById, updatePasswordHash } from "../repositories/users";
 import {
   getPasswordResetTokenByHash,
@@ -94,7 +94,7 @@ function isThrottled(email: string): boolean {
  * process) — out of scope for a response-timing fix.
  */
 export async function requestPasswordReset(
-  db: DatabaseSync,
+  db: Queryable,
   email: string,
   buildResetUrl: (rawToken: string) => string,
 ): Promise<void> {
@@ -102,20 +102,30 @@ export async function requestPasswordReset(
   if (isThrottled(normalized)) return;
   lastRequestAt.set(normalized, Date.now());
 
-  const record = getUserWithPasswordHashByEmail(db, normalized);
+  const record = await getUserWithPasswordHashByEmail(db, normalized);
 
-  // Equivalent-shape local work on the "no such account" path — generate
-  // and hash a real token exactly like the found-account path does, then
-  // discard it. This is cheap either way (local CPU only, no DB write, no
-  // network) but keeps the two branches' work shape the same rather than
-  // one being a bare early return.
+  // Equivalent-shape work on the "no such account" path — generate and
+  // hash a real token exactly like the found-account path does, then
+  // discard it. Under SQLite this alone was enough (the found-account
+  // path's only extra work beyond this was two synchronous, effectively
+  // free local writes); under network Postgres, `invalidateActiveTokensForUser`/
+  // `insertPasswordResetToken` below are real round trips, so two
+  // harmless no-op queries are issued here too — same round-trip COUNT,
+  // just never actually touching a row — so the two branches' response
+  // TIMES stay close, not just their CPU work. See this function's own
+  // module-level comment for why this property is deliberately preserved
+  // rather than left to silently regress once the DB call is no longer free.
   const rawToken = generateRawToken();
   const tokenHash = hashToken(rawToken);
-  if (!record) return; // Same silent outcome as a real account — no enumeration signal either way.
+  if (!record) {
+    await db.query("SELECT 1");
+    await db.query("SELECT 1");
+    return; // Same silent outcome as a real account — no enumeration signal either way.
+  }
 
-  invalidateActiveTokensForUser(db, record.user.id);
+  await invalidateActiveTokensForUser(db, record.user.id);
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
-  insertPasswordResetToken(db, record.user.id, tokenHash, expiresAt);
+  await insertPasswordResetToken(db, record.user.id, tokenHash, expiresAt);
 
   const resetUrl = buildResetUrl(rawToken);
   // Deliberately NOT awaited — see this function's own comment above.
@@ -191,31 +201,26 @@ function buildPasswordResetHtml(resetUrl: string): string {
  * only whoever just completed the reset stays authenticated, via a fresh
  * login.
  */
-export async function resetPassword(db: DatabaseSync, rawToken: string, newPassword: string): Promise<void> {
+export async function resetPassword(db: Queryable, rawToken: string, newPassword: string): Promise<void> {
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
     throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
   }
 
-  const record = getPasswordResetTokenByHash(db, hashToken(rawToken));
+  const record = await getPasswordResetTokenByHash(db, hashToken(rawToken));
   if (!record || record.usedAt || new Date(record.expiresAt).getTime() < Date.now()) {
     throw new Error("This password reset link is invalid or has expired.");
   }
 
-  const user = getUserById(db, record.userId);
+  const user = await getUserById(db, record.userId);
   if (!user) {
     throw new Error("This password reset link is invalid or has expired.");
   }
 
   const passwordHash = await hashPassword(newPassword);
 
-  db.exec("BEGIN");
-  try {
-    updatePasswordHash(db, user.id, passwordHash);
-    markPasswordResetTokenUsed(db, record.id);
-    revokeAllSessionsForUser(db, user.id);
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
+  await db.transaction(async (tx) => {
+    await updatePasswordHash(tx, user.id, passwordHash);
+    await markPasswordResetTokenUsed(tx, record.id);
+    await revokeAllSessionsForUser(tx, user.id);
+  });
 }

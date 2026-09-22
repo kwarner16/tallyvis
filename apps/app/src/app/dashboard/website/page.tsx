@@ -5,7 +5,7 @@ import { APP_URL } from "@/lib/urls";
 
 export default async function WebsitePage() {
   const { db, session } = await requireContext();
-  const business = getCurrentBusiness(db, session);
+  const business = await getCurrentBusiness(db, session);
 
   return <WebsiteInstallClient business={business} appOrigin={APP_URL} />;
 }

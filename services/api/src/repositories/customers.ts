@@ -1,6 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { Customer, CustomerInput } from "@tallyvis/types";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 interface CustomerRow {
   id: string;
@@ -28,13 +28,14 @@ function toCustomer(row: CustomerRow): Customer {
 
 /** Every query below is scoped by `businessId` — the multi-tenant boundary — never by `id` alone. */
 
-export function createCustomer(db: DatabaseSync, businessId: string, input: CustomerInput): Customer {
+export async function createCustomer(db: Queryable, businessId: string, input: CustomerInput): Promise<Customer> {
   const id = makeId("customer");
   const now = new Date().toISOString();
-  db.prepare(
+  await db.query(
     `INSERT INTO customers (id, business_id, name, email, phone, address, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
-  ).run(id, businessId, input.name, input.email, input.phone ?? null, now, now);
+     VALUES ($1, $2, $3, $4, $5, NULL, $6, $6)`,
+    [id, businessId, input.name, input.email, input.phone ?? null, now],
+  );
   return toCustomer({
     id,
     business_id: businessId,
@@ -48,47 +49,51 @@ export function createCustomer(db: DatabaseSync, businessId: string, input: Cust
 }
 
 /** Finds an existing customer for this business by email (case-insensitive), so quoting the same person twice doesn't fork into two customer records. */
-export function findCustomerByEmail(
-  db: DatabaseSync,
+export async function findCustomerByEmail(
+  db: Queryable,
   businessId: string,
   email: string,
-): Customer | undefined {
-  const row = db
-    .prepare(`SELECT * FROM customers WHERE business_id = ? AND lower(email) = lower(?)`)
-    .get(businessId, email) as CustomerRow | undefined;
+): Promise<Customer | undefined> {
+  const result = await db.query<CustomerRow>(
+    `SELECT * FROM customers WHERE business_id = $1 AND lower(email) = lower($2)`,
+    [businessId, email],
+  );
+  const row = result.rows[0];
   return row ? toCustomer(row) : undefined;
 }
 
-export function getCustomerById(
-  db: DatabaseSync,
+export async function getCustomerById(
+  db: Queryable,
   businessId: string,
   id: string,
-): Customer | undefined {
-  const row = db
-    .prepare(`SELECT * FROM customers WHERE id = ? AND business_id = ?`)
-    .get(id, businessId) as CustomerRow | undefined;
+): Promise<Customer | undefined> {
+  const result = await db.query<CustomerRow>(
+    `SELECT * FROM customers WHERE id = $1 AND business_id = $2`,
+    [id, businessId],
+  );
+  const row = result.rows[0];
   return row ? toCustomer(row) : undefined;
 }
 
-export function listCustomers(db: DatabaseSync, businessId: string): Customer[] {
-  const rows = db
-    .prepare(`SELECT * FROM customers WHERE business_id = ? ORDER BY created_at DESC`)
-    .all(businessId) as unknown as CustomerRow[];
-  return rows.map(toCustomer);
+export async function listCustomers(db: Queryable, businessId: string): Promise<Customer[]> {
+  const result = await db.query<CustomerRow>(
+    `SELECT * FROM customers WHERE business_id = $1 ORDER BY created_at DESC`,
+    [businessId],
+  );
+  return result.rows.map(toCustomer);
 }
 
-export function updateCustomer(
-  db: DatabaseSync,
+export async function updateCustomer(
+  db: Queryable,
   businessId: string,
   id: string,
   input: CustomerInput,
-): Customer | undefined {
+): Promise<Customer | undefined> {
   const now = new Date().toISOString();
-  const result = db
-    .prepare(
-      `UPDATE customers SET name = ?, email = ?, phone = ?, updated_at = ? WHERE id = ? AND business_id = ?`,
-    )
-    .run(input.name, input.email, input.phone ?? null, now, id, businessId);
-  if (result.changes === 0) return undefined;
+  const result = await db.query(
+    `UPDATE customers SET name = $1, email = $2, phone = $3, updated_at = $4 WHERE id = $5 AND business_id = $6`,
+    [input.name, input.email, input.phone ?? null, now, id, businessId],
+  );
+  if (result.rowCount === 0) return undefined;
   return getCustomerById(db, businessId, id);
 }

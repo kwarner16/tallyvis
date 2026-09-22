@@ -1,7 +1,8 @@
-import type { DatabaseSync } from "node:sqlite";
 import { windowCleaningDefaultPricingRules } from "@tallyvis/config";
 import { createSession, revokeSession, validateSession, type AuthSession } from "../auth/session";
 import { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH_FOR_TIMING_SAFETY } from "../auth/password";
+import type { Queryable } from "../db/pg/client";
+import { isUniqueViolation } from "../db/pg/client";
 import { createBusiness } from "../repositories/businesses";
 import { createUser, getUserById, getUserWithPasswordHashByEmail, userHasPassword } from "../repositories/users";
 import { listIdentitiesForUser } from "../repositories/authIdentities";
@@ -45,34 +46,33 @@ function validateSignUpInput(input: SignUpInput): void {
  * a good error message, not the guarantee: hashing the password is an
  * `await`, so two concurrent signups for the same email can both get past
  * it. `users.email UNIQUE` is what actually holds, and the writes run
- * inside a transaction, so the loser of that race hits the constraint and
- * rolls back rather than leaving an orphaned business or pricing
- * configuration behind. Both outcomes surface as the same
+ * inside a transaction (`withTransaction`), so the loser of that race hits
+ * the constraint and rolls back rather than leaving an orphaned business or
+ * pricing configuration behind. Both outcomes surface as the same
  * "already exists" message. Any other unexpected error is logged
  * server-side and translated to a generic message — never a raw database
  * error — before reaching the caller.
  */
-export async function signUp(db: DatabaseSync, input: SignUpInput): Promise<AuthResult> {
+export async function signUp(db: Queryable, input: SignUpInput): Promise<AuthResult> {
   validateSignUpInput(input);
 
   const email = input.ownerEmail.trim().toLowerCase();
-  if (getUserWithPasswordHashByEmail(db, email)) {
+  if (await getUserWithPasswordHashByEmail(db, email)) {
     throw new Error("An account with this email already exists.");
   }
 
   const passwordHash = await hashPassword(input.password);
 
-  db.exec("BEGIN");
   try {
-    const business = createBusiness(db, { name: input.businessName.trim(), email });
-    createInitialPricingConfiguration(db, business.id, windowCleaningDefaultPricingRules);
-    const user = createUser(db, business.id, email, passwordHash);
-    const token = createSession(db, user.id, business.id);
-    db.exec("COMMIT");
-    return { session: { userId: user.id, businessId: business.id }, token };
+    return await db.transaction(async (tx) => {
+      const business = await createBusiness(tx, { name: input.businessName.trim(), email });
+      await createInitialPricingConfiguration(tx, business.id, windowCleaningDefaultPricingRules);
+      const user = await createUser(tx, business.id, email, passwordHash);
+      const token = await createSession(tx, user.id, business.id);
+      return { session: { userId: user.id, businessId: business.id }, token };
+    });
   } catch (err) {
-    db.exec("ROLLBACK");
-    if (err instanceof Error && err.message.includes("UNIQUE constraint failed")) {
+    if (isUniqueViolation(err)) {
       throw new Error("An account with this email already exists.");
     }
     console.error("signUp failed:", err);
@@ -96,21 +96,21 @@ export interface LogInInput {
  * attacker enumerate emails via response time even with an identical
  * error message.
  */
-export async function logIn(db: DatabaseSync, input: LogInInput): Promise<AuthResult> {
-  const record = getUserWithPasswordHashByEmail(db, input.email.trim().toLowerCase());
+export async function logIn(db: Queryable, input: LogInInput): Promise<AuthResult> {
+  const record = await getUserWithPasswordHashByEmail(db, input.email.trim().toLowerCase());
   const valid = await verifyPassword(input.password, record?.passwordHash ?? DUMMY_PASSWORD_HASH_FOR_TIMING_SAFETY);
   if (!record || !valid) throw new Error("Invalid email or password.");
 
-  const token = createSession(db, record.user.id, record.user.businessId);
+  const token = await createSession(db, record.user.id, record.user.businessId);
   return { session: { userId: record.user.id, businessId: record.user.businessId }, token };
 }
 
-export function logOut(db: DatabaseSync, token: string | undefined): void {
-  revokeSession(db, token);
+export async function logOut(db: Queryable, token: string | undefined): Promise<void> {
+  await revokeSession(db, token);
 }
 
 /** The one function every protected server action/page must call before touching business data. Returns `undefined` for a missing/invalid/expired session — never throws, so callers decide how to handle "not signed in" (usually: redirect). */
-export function resolveSession(db: DatabaseSync, token: string | undefined): AuthSession | undefined {
+export async function resolveSession(db: Queryable, token: string | undefined): Promise<AuthSession | undefined> {
   return validateSession(db, token);
 }
 
@@ -125,14 +125,18 @@ export interface CurrentUserInfo {
 }
 
 /** For the Settings "Account" section — who am I signed in as, and how. */
-export function getCurrentUser(db: DatabaseSync, session: AuthSession): CurrentUserInfo {
-  const user = getUserById(db, session.userId);
+export async function getCurrentUser(db: Queryable, session: AuthSession): Promise<CurrentUserInfo> {
+  const user = await getUserById(db, session.userId);
   if (!user) throw new Error(`User "${session.userId}" not found.`);
+  const [hasPassword, identities] = await Promise.all([
+    userHasPassword(db, session.userId),
+    listIdentitiesForUser(db, session.userId),
+  ]);
   return {
     id: user.id,
     email: user.email,
     createdAt: user.createdAt,
-    hasPassword: userHasPassword(db, session.userId),
-    linkedProviders: listIdentitiesForUser(db, session.userId).map((identity) => identity.provider),
+    hasPassword,
+    linkedProviders: identities.map((identity) => identity.provider),
   };
 }

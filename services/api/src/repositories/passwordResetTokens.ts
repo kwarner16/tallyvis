@@ -1,5 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 /**
  * Phase 14 — password recovery (see
@@ -39,40 +39,42 @@ function toRecord(row: ResetTokenRow): PasswordResetTokenRecord {
   };
 }
 
-export function insertPasswordResetToken(
-  db: DatabaseSync,
+export async function insertPasswordResetToken(
+  db: Queryable,
   userId: string,
   tokenHash: string,
   expiresAt: string,
-): PasswordResetTokenRecord {
+): Promise<PasswordResetTokenRecord> {
   const id = makeId("pwreset");
   const now = new Date().toISOString();
-  db.prepare(
+  await db.query(
     `INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at, expires_at, used_at)
-     VALUES (?, ?, ?, ?, ?, NULL)`,
-  ).run(id, userId, tokenHash, now, expiresAt);
+     VALUES ($1, $2, $3, $4, $5, NULL)`,
+    [id, userId, tokenHash, now, expiresAt],
+  );
   return { id, userId, createdAt: now, expiresAt };
 }
 
 /** Resolves a token's hash to its record regardless of expiry/used state — the caller decides what those mean; this is a lookup, not an authorization check. */
-export function getPasswordResetTokenByHash(
-  db: DatabaseSync,
+export async function getPasswordResetTokenByHash(
+  db: Queryable,
   tokenHash: string,
-): PasswordResetTokenRecord | undefined {
-  const row = db.prepare(`SELECT * FROM password_reset_tokens WHERE token_hash = ?`).get(tokenHash) as
-    | ResetTokenRow
-    | undefined;
+): Promise<PasswordResetTokenRecord | undefined> {
+  const result = await db.query<ResetTokenRow>(`SELECT * FROM password_reset_tokens WHERE token_hash = $1`, [
+    tokenHash,
+  ]);
+  const row = result.rows[0];
   return row ? toRecord(row) : undefined;
 }
 
-export function markPasswordResetTokenUsed(db: DatabaseSync, id: string): void {
-  db.prepare(`UPDATE password_reset_tokens SET used_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+export async function markPasswordResetTokenUsed(db: Queryable, id: string): Promise<void> {
+  await db.query(`UPDATE password_reset_tokens SET used_at = $1 WHERE id = $2`, [new Date().toISOString(), id]);
 }
 
 /** Invalidates every still-usable token for a user — called before issuing a new one, so at most one reset link is ever live at a time. */
-export function invalidateActiveTokensForUser(db: DatabaseSync, userId: string): void {
-  db.prepare(`UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL`).run(
+export async function invalidateActiveTokensForUser(db: Queryable, userId: string): Promise<void> {
+  await db.query(`UPDATE password_reset_tokens SET used_at = $1 WHERE user_id = $2 AND used_at IS NULL`, [
     new Date().toISOString(),
     userId,
-  );
+  ]);
 }

@@ -4,7 +4,7 @@ import { QuotesPageClient } from "@/components/dashboard/QuotesPageClient";
 
 export default async function QuotesPage() {
   const { db, session } = await requireContext();
-  const quotes = listQuotes(db, session);
+  const quotes = await listQuotes(db, session);
 
   return <QuotesPageClient quotes={quotes} />;
 }

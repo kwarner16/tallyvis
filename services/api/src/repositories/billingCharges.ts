@@ -1,5 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 /**
  * Phase 14 — one-time charges (e.g. the website installation fee),
@@ -49,42 +49,47 @@ function toCharge(row: BillingChargeRow): BillingCharge {
   };
 }
 
-export function getBillingChargeByKind(
-  db: DatabaseSync,
+export async function getBillingChargeByKind(
+  db: Queryable,
   businessId: string,
   kind: BillingChargeKind,
-): BillingCharge | undefined {
-  const row = db
-    .prepare(`SELECT * FROM billing_charges WHERE business_id = ? AND kind = ? ORDER BY created_at DESC LIMIT 1`)
-    .get(businessId, kind) as BillingChargeRow | undefined;
+): Promise<BillingCharge | undefined> {
+  const result = await db.query<BillingChargeRow>(
+    `SELECT * FROM billing_charges WHERE business_id = $1 AND kind = $2 ORDER BY created_at DESC LIMIT 1`,
+    [businessId, kind],
+  );
+  const row = result.rows[0];
   return row ? toCharge(row) : undefined;
 }
 
 /** Looked up by the Stripe webhook handler for a one-time (payment-mode) checkout, which knows the charge id round-tripped through Checkout metadata, not which business it belongs to until this resolves it. */
-export function getBillingChargeById(db: DatabaseSync, id: string): BillingCharge | undefined {
-  const row = db.prepare(`SELECT * FROM billing_charges WHERE id = ?`).get(id) as BillingChargeRow | undefined;
+export async function getBillingChargeById(db: Queryable, id: string): Promise<BillingCharge | undefined> {
+  const result = await db.query<BillingChargeRow>(`SELECT * FROM billing_charges WHERE id = $1`, [id]);
+  const row = result.rows[0];
   return row ? toCharge(row) : undefined;
 }
 
-export function listBillingCharges(db: DatabaseSync, businessId: string): BillingCharge[] {
-  const rows = db
-    .prepare(`SELECT * FROM billing_charges WHERE business_id = ? ORDER BY created_at DESC`)
-    .all(businessId) as unknown as BillingChargeRow[];
-  return rows.map(toCharge);
+export async function listBillingCharges(db: Queryable, businessId: string): Promise<BillingCharge[]> {
+  const result = await db.query<BillingChargeRow>(
+    `SELECT * FROM billing_charges WHERE business_id = $1 ORDER BY created_at DESC`,
+    [businessId],
+  );
+  return result.rows.map(toCharge);
 }
 
-export function createBillingCharge(
-  db: DatabaseSync,
+export async function createBillingCharge(
+  db: Queryable,
   businessId: string,
   input: { kind: BillingChargeKind; amountCents: number; currency: string; status?: BillingChargeStatus },
-): BillingCharge {
+): Promise<BillingCharge> {
   const id = makeId("charge");
   const now = new Date().toISOString();
   const status = input.status ?? "pending";
-  db.prepare(
+  await db.query(
     `INSERT INTO billing_charges (id, business_id, kind, status, amount_cents, currency, provider_charge_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
-  ).run(id, businessId, input.kind, status, input.amountCents, input.currency, now, now);
+     VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $7)`,
+    [id, businessId, input.kind, status, input.amountCents, input.currency, now],
+  );
   return {
     id,
     businessId,
@@ -97,16 +102,14 @@ export function createBillingCharge(
   };
 }
 
-export function markBillingChargeStatus(
-  db: DatabaseSync,
+export async function markBillingChargeStatus(
+  db: Queryable,
   id: string,
   status: BillingChargeStatus,
   providerChargeId?: string,
-): void {
-  db.prepare(`UPDATE billing_charges SET status = ?, provider_charge_id = COALESCE(?, provider_charge_id), updated_at = ? WHERE id = ?`).run(
-    status,
-    providerChargeId ?? null,
-    new Date().toISOString(),
-    id,
+): Promise<void> {
+  await db.query(
+    `UPDATE billing_charges SET status = $1, provider_charge_id = COALESCE($2, provider_charge_id), updated_at = $3 WHERE id = $4`,
+    [status, providerChargeId ?? null, new Date().toISOString(), id],
   );
 }

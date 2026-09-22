@@ -1,106 +1,152 @@
-import { readFileSync, readdirSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { runMigrations } from "../db/migrate";
-
-const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as typeof import("node:sqlite");
-const MIGRATIONS_DIR = path.join(__dirname, "..", "db", "migrations");
+import { runMigrations } from "../db/pg/migrate";
+import { createTestDb, dropTestDb } from "../db/pg/testDb";
 
 /**
- * Regression coverage for a real incident during this pass: migration
- * 0008 (relaxing `users.password_hash` to nullable, for Google-only
- * accounts) rebuilds the `users` table — SQLite has no
- * `ALTER TABLE ... ALTER COLUMN`. Every other test in this suite runs
- * migrations against a brand-new, empty `:memory:` database, where
- * `users`/`sessions` have zero rows by the time 0008 runs — that setup
- * could never have caught the actual bug: with `PRAGMA foreign_keys = ON`
- * (set by `db/client.ts` on every real connection) and at least one
- * existing `sessions` row referencing `users`, dropping the old `users`
- * table failed outright with "FOREIGN KEY constraint failed". Verified
- * for real against this repo's own populated dev database before this
- * test was written; this test is what makes that verification permanent
- * and automated rather than a one-off manual check.
+ * Postgres migration system coverage (Part 17 of
+ * docs/decisions/0021-postgres-migration.md's mission). The equivalent
+ * SQLite-era test here (`db/migrate.ts`'s regression coverage for the
+ * `users.password_hash`-nullable rebuild under `PRAGMA foreign_keys = ON`)
+ * no longer applies: that was SQLite's `ALTER TABLE ... ALTER COLUMN`
+ * limitation forcing a create/copy/drop/rename dance for an ALREADY
+ * historical migration — the Postgres schema
+ * (`db/pg/migrations/0001_core.sql`) defines `users.password_hash` as
+ * nullable directly, with no incremental rebuild to get wrong. What IS
+ * still worth covering for Postgres: idempotency, that every expected
+ * table/constraint actually exists, and the one genuine type upgrade
+ * (`cancel_at_period_end` as a real boolean) round-trips correctly.
  */
-describe("runMigrations — 0008 users-table rebuild against a POPULATED database", () => {
-  it("preserves every existing user and session (and their foreign-key relationship) through the password_hash-nullable rebuild", () => {
-    const db = new DatabaseSync(":memory:");
-    db.exec("PRAGMA foreign_keys = ON");
-
-    // Apply every migration up to (but not including) 0008 — simulating a
-    // real database that predates this schema change.
-    const files = readdirSync(MIGRATIONS_DIR)
-      .filter((f) => f.endsWith(".sql"))
-      .sort();
-    const preExistingFiles = files.filter((f) => f < "0008");
-    expect(preExistingFiles.length).toBeGreaterThan(0);
-    db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`);
-    for (const file of preExistingFiles) {
-      db.exec(readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8"));
-      // Mark it applied so the real `runMigrations` call below (which checks
-      // this same table) skips re-running it and only applies 0008+.
-      db.prepare("INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)").run(file, new Date().toISOString());
+describe("runMigrations (Postgres)", () => {
+  it("is idempotent — calling it twice against the same schema applies nothing the second time and does not throw", async () => {
+    const testDb = await createTestDb();
+    try {
+      await expect(runMigrations(testDb.pool)).resolves.not.toThrow();
+      const before = await testDb.db.query<{ name: string }>("SELECT name FROM schema_migrations ORDER BY name");
+      await expect(runMigrations(testDb.pool)).resolves.not.toThrow();
+      const after = await testDb.db.query<{ name: string }>("SELECT name FROM schema_migrations ORDER BY name");
+      expect(after.rows).toEqual(before.rows);
+    } finally {
+      await dropTestDb(testDb);
     }
-
-    // Seed real-looking pre-existing data: a business, a user with a real
-    // (NOT NULL, pre-Google-auth) password hash, and a session referencing
-    // that user — exactly the shape that broke without the migrate.ts fix.
-    db.exec(
-      `INSERT INTO businesses (id, name, email, phone, service_area, default_industry, created_at, public_embed_id)
-       VALUES ('biz_1', 'Sparkle Windows', 'owner@sparkle.example', '', '', 'window-cleaning', '2026-01-01T00:00:00.000Z', 'embed_1')`,
-    );
-    db.exec(
-      `INSERT INTO users (id, business_id, email, password_hash, created_at)
-       VALUES ('user_1', 'biz_1', 'owner@sparkle.example', 'a-real-bcrypt-hash', '2026-01-01T00:00:00.000Z')`,
-    );
-    db.exec(
-      `INSERT INTO sessions (token_hash, user_id, business_id, expires_at, created_at)
-       VALUES ('some_token_hash', 'user_1', 'biz_1', '2030-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
-    );
-
-    // Now run the FULL migration set (including 0008) via the real runner
-    // — this must not throw, and must not lose or orphan anything.
-    expect(() => runMigrations(db)).not.toThrow();
-
-    const user = db.prepare("SELECT * FROM users WHERE id = 'user_1'").get() as
-      | { id: string; email: string; password_hash: string | null }
-      | undefined;
-    expect(user).toBeTruthy();
-    expect(user!.email).toBe("owner@sparkle.example");
-    expect(user!.password_hash).toBe("a-real-bcrypt-hash");
-
-    const session = db.prepare("SELECT * FROM sessions WHERE token_hash = 'some_token_hash'").get() as
-      | { user_id: string }
-      | undefined;
-    expect(session?.user_id).toBe("user_1");
-
-    const violations = db.prepare("PRAGMA foreign_key_check").all();
-    expect(violations).toEqual([]);
-
-    db.close();
   });
 
-  it("the resulting schema genuinely allows a NULL password_hash (proving the column is nullable, not just that old rows survived)", () => {
-    const db = new DatabaseSync(":memory:");
-    db.exec("PRAGMA foreign_keys = ON");
-    runMigrations(db);
+  it("creates every expected table", async () => {
+    const testDb = await createTestDb();
+    try {
+      const result = await testDb.db.query<{ table_name: string }>(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() ORDER BY table_name`,
+      );
+      const tables = result.rows.map((r) => r.table_name);
+      expect(tables).toEqual(
+        [
+          "auth_identities",
+          "billing_charges",
+          "businesses",
+          "customers",
+          "job_outcomes",
+          "password_reset_tokens",
+          "pricing_configurations",
+          "quote_share_tokens",
+          "quotes",
+          "schema_migrations",
+          "sessions",
+          "subscriptions",
+          "users",
+        ].sort(),
+      );
+    } finally {
+      await dropTestDb(testDb);
+    }
+  });
 
-    db.exec(
-      `INSERT INTO businesses (id, name, email, phone, service_area, default_industry, created_at, public_embed_id)
-       VALUES ('biz_google', 'Google Only Co', 'owner@google-only.example', '', '', 'window-cleaning', '2026-01-01T00:00:00.000Z', 'embed_google')`,
-    );
-    expect(() =>
-      db
-        .prepare(
+  it("users.password_hash genuinely allows NULL (a Google-only account has no password credential)", async () => {
+    const testDb = await createTestDb();
+    try {
+      await testDb.db.query(
+        `INSERT INTO businesses (id, name, email, phone, service_area, default_industry, created_at, public_embed_id)
+         VALUES ('biz_google', 'Google Only Co', 'owner@google-only.example', '', '', 'window-cleaning', '2026-01-01T00:00:00.000Z', 'embed_google')`,
+      );
+      await expect(
+        testDb.db.query(
           `INSERT INTO users (id, business_id, email, password_hash, created_at) VALUES ('user_google', 'biz_google', 'owner@google-only.example', NULL, '2026-01-01T00:00:00.000Z')`,
-        )
-        .run(),
-    ).not.toThrow();
+        ),
+      ).resolves.not.toThrow();
 
-    const user = db.prepare("SELECT password_hash FROM users WHERE id = 'user_google'").get() as {
-      password_hash: string | null;
-    };
-    expect(user.password_hash).toBeNull();
+      const result = await testDb.db.query<{ password_hash: string | null }>(
+        `SELECT password_hash FROM users WHERE id = 'user_google'`,
+      );
+      expect(result.rows[0]?.password_hash).toBeNull();
+    } finally {
+      await dropTestDb(testDb);
+    }
+  });
 
-    db.close();
+  it("subscriptions.cancel_at_period_end is a real boolean, defaulting to false", async () => {
+    const testDb = await createTestDb();
+    try {
+      await testDb.db.query(
+        `INSERT INTO businesses (id, name, email, phone, service_area, default_industry, created_at, public_embed_id)
+         VALUES ('biz_bool', 'Bool Co', 'owner@bool.example', '', '', 'window-cleaning', '2026-01-01T00:00:00.000Z', 'embed_bool')`,
+      );
+      await testDb.db.query(
+        `INSERT INTO subscriptions (id, business_id, plan_id, status, created_at, updated_at)
+         VALUES ('sub_bool', 'biz_bool', 'starter', 'trialing', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      );
+      const result = await testDb.db.query<{ cancel_at_period_end: boolean }>(
+        `SELECT cancel_at_period_end FROM subscriptions WHERE id = 'sub_bool'`,
+      );
+      expect(result.rows[0]?.cancel_at_period_end).toBe(false);
+    } finally {
+      await dropTestDb(testDb);
+    }
+  });
+
+  it("quote_share_tokens allows at most one active (non-revoked) token per quote — the partial unique index", async () => {
+    const testDb = await createTestDb();
+    try {
+      await testDb.db.query(
+        `INSERT INTO businesses (id, name, email, phone, service_area, default_industry, created_at, public_embed_id)
+         VALUES ('biz_share', 'Share Co', 'owner@share.example', '', '', 'window-cleaning', '2026-01-01T00:00:00.000Z', 'embed_share')`,
+      );
+      await testDb.db.query(
+        `INSERT INTO users (id, business_id, email, password_hash, created_at)
+         VALUES ('user_share', 'biz_share', 'owner@share.example', 'hash', '2026-01-01T00:00:00.000Z')`,
+      );
+      await testDb.db.query(
+        `INSERT INTO customers (id, business_id, name, email, created_at, updated_at)
+         VALUES ('cust_share', 'biz_share', 'Cust', 'cust@example.com', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      );
+      await testDb.db.query(
+        `INSERT INTO pricing_configurations (id, business_id, industry, currency, version, effective_at, rules_json)
+         VALUES ('pc_share', 'biz_share', 'window-cleaning', 'USD', 1, '2026-01-01T00:00:00.000Z', '{}')`,
+      );
+      await testDb.db.query(
+        `INSERT INTO quotes (id, business_id, customer_id, pricing_config_id, property_type, property_stories, property_address, service_preferences_json, analysis_json, estimate_json, status, created_at, updated_at)
+         VALUES ('quote_share', 'biz_share', 'cust_share', 'pc_share', 'single-family', 1, '1 Test St', '{}', '{}', '{}', 'new', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      );
+
+      await testDb.db.query(
+        `INSERT INTO quote_share_tokens (id, quote_id, business_id, token_hash, created_at, expires_at, revoked_at)
+         VALUES ('token_1', 'quote_share', 'biz_share', 'hash_1', '2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z', NULL)`,
+      );
+
+      await expect(
+        testDb.db.query(
+          `INSERT INTO quote_share_tokens (id, quote_id, business_id, token_hash, created_at, expires_at, revoked_at)
+           VALUES ('token_2', 'quote_share', 'biz_share', 'hash_2', '2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z', NULL)`,
+        ),
+      ).rejects.toMatchObject({ code: "23505" });
+
+      // Revoking the first, THEN inserting a second active one, is allowed.
+      await testDb.db.query(`UPDATE quote_share_tokens SET revoked_at = '2026-01-02T00:00:00.000Z' WHERE id = 'token_1'`);
+      await expect(
+        testDb.db.query(
+          `INSERT INTO quote_share_tokens (id, quote_id, business_id, token_hash, created_at, expires_at, revoked_at)
+           VALUES ('token_3', 'quote_share', 'biz_share', 'hash_3', '2026-01-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z', NULL)`,
+        ),
+      ).resolves.not.toThrow();
+    } finally {
+      await dropTestDb(testDb);
+    }
   });
 });

@@ -38,7 +38,7 @@ import { describeAiErrorCategory } from "./aiErrorMessages";
  */
 
 async function requirePublicBusiness(embedId?: string): Promise<Business> {
-  const business = embedId ? resolveEmbedBusiness(getDb(), embedId) : getDefaultPublicBusiness(getDb());
+  const business = embedId ? await resolveEmbedBusiness(getDb(), embedId) : await getDefaultPublicBusiness(getDb());
   if (!business) {
     throw new Error(embedId ? "This estimator isn't set up correctly. Contact the business directly." : "No business is configured yet.");
   }
@@ -61,7 +61,7 @@ async function requirePublicBusinessId(embedId?: string): Promise<string> {
  * every page load, not merely present in a server-side object.
  */
 export async function getPublicBusinessAction(embedId?: string): Promise<PublicBusinessSummary> {
-  const summary = resolvePublicBusinessSummary(getDb(), embedId);
+  const summary = await resolvePublicBusinessSummary(getDb(), embedId);
   if (!summary) {
     throw new Error(embedId ? "This estimator isn't set up correctly. Contact the business directly." : "No business is configured yet.");
   }
@@ -70,12 +70,12 @@ export async function getPublicBusinessAction(embedId?: string): Promise<PublicB
 
 export async function getPublicActiveConfigurationAction(embedId?: string): Promise<PricingConfiguration> {
   const businessId = await requirePublicBusinessId(embedId);
-  return getActiveConfigurationForBusiness(getDb(), businessId);
+  return await getActiveConfigurationForBusiness(getDb(), businessId);
 }
 
 /** Used by `/embed/[embedId]`'s landing page to verify the id is real BEFORE redirecting into the wizard, so an invalid/typo'd embed snippet fails fast with a clear message instead of silently breaking several steps later. */
 export async function verifyEmbedIdAction(embedId: string): Promise<boolean> {
-  return Boolean(resolveEmbedBusiness(getDb(), embedId));
+  return Boolean(await resolveEmbedBusiness(getDb(), embedId));
 }
 
 /**
@@ -134,7 +134,7 @@ export async function isUsingMockAiProviderAction(): Promise<boolean> {
  */
 export async function createPublicQuoteAction(input: CreateQuoteInput, embedId?: string): Promise<{ id: string }> {
   const businessId = await requirePublicBusinessId(embedId);
-  const quote = createQuotePublic(getDb(), businessId, input);
+  const quote = await createQuotePublic(getDb(), businessId, input);
   return { id: quote.id };
 }
 
@@ -146,21 +146,21 @@ export async function createPublicQuoteAction(input: CreateQuoteInput, embedId?:
  * parameter here for a caller to substitute — only the token.
  */
 export async function getPublicQuoteByTokenAction(token: string): Promise<PublicQuoteView | null> {
-  const result = getQuoteByShareToken(getDb(), token);
+  const result = await getQuoteByShareToken(getDb(), token);
   return result ?? null;
 }
 
 /** Customer action: accept. Operates only on whatever quote `token` resolves to — see `getQuoteByShareToken`'s comment. */
 export async function acceptPublicQuoteAction(token: string): Promise<Quote> {
-  return acceptQuoteByToken(getDb(), token);
+  return await acceptQuoteByToken(getDb(), token);
 }
 
 /** Customer action: decline. Same token-only authorization as accept. */
 export async function declinePublicQuoteAction(token: string): Promise<Quote> {
-  return declineQuoteByToken(getDb(), token);
+  return await declineQuoteByToken(getDb(), token);
 }
 
 /** Customer action: request changes / contact the business — persisted as a note, not a status change. */
 export async function requestPublicQuoteChangesAction(token: string, note: string): Promise<Quote> {
-  return requestQuoteChangesByToken(getDb(), token, note);
+  return await requestQuoteChangesByToken(getDb(), token, note);
 }

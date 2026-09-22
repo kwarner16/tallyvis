@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import type {
   CustomerInput,
   Property,
@@ -12,6 +11,7 @@ import { canTransitionQuoteStatus } from "@tallyvis/types";
 import { calculateEstimate, reconcilePricingInput } from "@tallyvis/pricing";
 import type { RawPropertyObservation } from "@tallyvis/ai";
 import type { AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import * as quotesRepo from "../repositories/quotes";
 import * as customersService from "./customers";
 import * as pricingService from "./pricing";
@@ -82,27 +82,27 @@ function validateServiceAddress(address: unknown): string {
   return trimmed;
 }
 
-export function listQuotes(db: DatabaseSync, session: AuthSession): Quote[] {
+export async function listQuotes(db: Queryable, session: AuthSession): Promise<Quote[]> {
   return quotesRepo.listQuotes(db, session.businessId);
 }
 
-export function getQuote(db: DatabaseSync, session: AuthSession, id: string): Quote | undefined {
+export async function getQuote(db: Queryable, session: AuthSession, id: string): Promise<Quote | undefined> {
   return quotesRepo.getQuoteById(db, session.businessId, id);
 }
 
-function getQuoteOrThrow(db: DatabaseSync, session: AuthSession, id: string): Quote {
-  const quote = getQuote(db, session, id);
+async function getQuoteOrThrow(db: Queryable, session: AuthSession, id: string): Promise<Quote> {
+  const quote = await getQuote(db, session, id);
   if (!quote) throw new Error(`Quote "${id}" not found.`);
   return quote;
 }
 
 /** The AI's raw observation this quote was saved with, if any — see `CreateQuoteInput.aiObservation`'s comment. `undefined` for a manually-entered quote, never fabricated. */
-export function getQuoteAiObservation(
-  db: DatabaseSync,
+export async function getQuoteAiObservation(
+  db: Queryable,
   session: AuthSession,
   quoteId: string,
-): RawPropertyObservation | undefined {
-  getQuoteOrThrow(db, session, quoteId);
+): Promise<RawPropertyObservation | undefined> {
+  await getQuoteOrThrow(db, session, quoteId);
   return quotesRepo.getQuoteAiObservation(db, session.businessId, quoteId);
 }
 
@@ -113,9 +113,9 @@ export function getQuoteAiObservation(
  * `Customer` record rather than forking a duplicate — safe here precisely
  * because the caller is the business that owns the record.
  */
-export function createQuote(db: DatabaseSync, session: AuthSession, input: CreateQuoteInput): Quote {
-  requireProductAccess(db, session);
-  const customer = customersService.findOrCreateCustomer(db, session, input.customer);
+export async function createQuote(db: Queryable, session: AuthSession, input: CreateQuoteInput): Promise<Quote> {
+  await requireProductAccess(db, session);
+  const customer = await customersService.findOrCreateCustomer(db, session, input.customer);
   return persistPricedQuote(db, session.businessId, customer.id, input);
 }
 
@@ -131,8 +131,8 @@ export function createQuote(db: DatabaseSync, session: AuthSession, input: Creat
  * enforcement lands keeps this phase's foundation low-risk; extending it
  * to the public flow is a natural next step, not done here.
  */
-function requireProductAccess(db: DatabaseSync, session: AuthSession): void {
-  const subscription = getSubscription(db, session);
+async function requireProductAccess(db: Queryable, session: AuthSession): Promise<void> {
+  const subscription = await getSubscription(db, session);
   if (!hasProductAccess(subscription)) {
     throw new Error("Your Tallyvis trial or subscription has ended. Reactivate your plan to create new quotes.");
   }
@@ -153,8 +153,8 @@ function requireProductAccess(db: DatabaseSync, session: AuthSession): void {
  * already holds would turn this endpoint into a lookup for that customer's
  * real name, phone, and address — see `createCustomerForBusiness`.
  */
-export function createQuotePublic(db: DatabaseSync, businessId: string, input: CreateQuoteInput): Quote {
-  const customer = customersService.createCustomerForBusiness(db, businessId, input.customer);
+export async function createQuotePublic(db: Queryable, businessId: string, input: CreateQuoteInput): Promise<Quote> {
+  const customer = await customersService.createCustomerForBusiness(db, businessId, input.customer);
   return persistPricedQuote(db, businessId, customer.id, input);
 }
 
@@ -165,14 +165,14 @@ export function createQuotePublic(db: DatabaseSync, businessId: string, input: C
  * estimate is always computed here from the configuration this business
  * has active right now; no caller can hand in a pre-computed total.
  */
-function persistPricedQuote(
-  db: DatabaseSync,
+async function persistPricedQuote(
+  db: Queryable,
   businessId: string,
   customerId: string,
   input: CreateQuoteInput,
-): Quote {
+): Promise<Quote> {
   const address = validateServiceAddress(input.property.address);
-  const configuration = pricingService.getActiveConfigurationForBusiness(db, businessId);
+  const configuration = await pricingService.getActiveConfigurationForBusiness(db, businessId);
   const pricingInput = reconcilePricingInput(input.servicePreferences, input.analysis.characteristics);
   const estimate = calculateEstimate(pricingInput, configuration, input.analysis.metadata.confidence);
 
@@ -197,14 +197,14 @@ function persistPricedQuote(
  * are active today. Use `recalculateQuoteEstimate` to explicitly opt a
  * quote into current pricing.
  */
-export function updateQuoteAnalysis(
-  db: DatabaseSync,
+export async function updateQuoteAnalysis(
+  db: Queryable,
   session: AuthSession,
   quoteId: string,
   characteristics: PropertyAnalysisResult["characteristics"],
-): Quote {
-  const quote = getQuoteOrThrow(db, session, quoteId);
-  const configuration = pricingService.getConfigurationById(db, session, quote.pricingConfigId);
+): Promise<Quote> {
+  const quote = await getQuoteOrThrow(db, session, quoteId);
+  const configuration = await pricingService.getConfigurationById(db, session, quote.pricingConfigId);
   if (!configuration) {
     throw new Error(`Pricing configuration "${quote.pricingConfigId}" not found.`);
   }
@@ -213,7 +213,7 @@ export function updateQuoteAnalysis(
   const pricingInput = reconcilePricingInput(quote.servicePreferences, characteristics);
   const estimate = calculateEstimate(pricingInput, configuration, analysis.metadata.confidence);
 
-  const updated = quotesRepo.updateQuoteAnalysisAndEstimate(
+  const updated = await quotesRepo.updateQuoteAnalysisAndEstimate(
     db,
     session.businessId,
     quoteId,
@@ -231,13 +231,13 @@ export function updateQuoteAnalysis(
  * explicit opt-in to today's rules, used when rules changed since the
  * quote was created.
  */
-export function recalculateQuoteEstimate(db: DatabaseSync, session: AuthSession, quoteId: string): Quote {
-  const quote = getQuoteOrThrow(db, session, quoteId);
-  const configuration = pricingService.getActiveConfiguration(db, session);
+export async function recalculateQuoteEstimate(db: Queryable, session: AuthSession, quoteId: string): Promise<Quote> {
+  const quote = await getQuoteOrThrow(db, session, quoteId);
+  const configuration = await pricingService.getActiveConfiguration(db, session);
   const pricingInput = reconcilePricingInput(quote.servicePreferences, quote.analysis.characteristics);
   const estimate = calculateEstimate(pricingInput, configuration, quote.analysis.metadata.confidence);
 
-  const updated = quotesRepo.updateQuoteAnalysisAndEstimate(
+  const updated = await quotesRepo.updateQuoteAnalysisAndEstimate(
     db,
     session.businessId,
     quoteId,
@@ -250,28 +250,28 @@ export function recalculateQuoteEstimate(db: DatabaseSync, session: AuthSession,
 }
 
 /** Updates the quote's customer record (shared across all of that customer's quotes) — never re-prices, since customer contact info doesn't feed pricing. */
-export function updateQuoteCustomer(
-  db: DatabaseSync,
+export async function updateQuoteCustomer(
+  db: Queryable,
   session: AuthSession,
   quoteId: string,
   input: CustomerInput,
-): Quote {
-  const quote = getQuoteOrThrow(db, session, quoteId);
-  customersService.updateCustomer(db, session, quote.customerId, input);
+): Promise<Quote> {
+  const quote = await getQuoteOrThrow(db, session, quoteId);
+  await customersService.updateCustomer(db, session, quote.customerId, input);
   return getQuoteOrThrow(db, session, quoteId);
 }
 
-export function updateQuoteStatus(
-  db: DatabaseSync,
+export async function updateQuoteStatus(
+  db: Queryable,
   session: AuthSession,
   quoteId: string,
   status: QuoteStatus,
-): Quote {
-  const quote = getQuoteOrThrow(db, session, quoteId);
+): Promise<Quote> {
+  const quote = await getQuoteOrThrow(db, session, quoteId);
   if (!canTransitionQuoteStatus(quote.status, status)) {
     throw new Error(`Cannot move a quote from "${quote.status}" to "${status}".`);
   }
-  const updated = quotesRepo.updateQuoteStatus(db, session.businessId, quoteId, status);
+  const updated = await quotesRepo.updateQuoteStatus(db, session.businessId, quoteId, status);
   if (!updated) throw new Error(`Quote "${quoteId}" not found.`);
   return updated;
 }

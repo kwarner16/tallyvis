@@ -48,7 +48,7 @@ import { describeAiErrorCategory } from "./aiErrorMessages";
 
 export async function createQuoteAction(input: CreateQuoteInput): Promise<Quote> {
   const { db, session } = await requireContext();
-  const quote = apiCreateQuote(db, session, input);
+  const quote = await apiCreateQuote(db, session, input);
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard");
   return quote;
@@ -83,7 +83,7 @@ export async function updateQuoteAnalysisAction(
   characteristics: WindowCleaningCharacteristics,
 ): Promise<Quote> {
   const { db, session } = await requireContext();
-  const quote = apiUpdateQuoteAnalysis(db, session, quoteId, characteristics);
+  const quote = await apiUpdateQuoteAnalysis(db, session, quoteId, characteristics);
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   return quote;
 }
@@ -98,22 +98,22 @@ export async function recalculateQuoteEstimateAction(
   quoteId: string,
 ): Promise<{ quote: Quote; pricingConfiguration: PricingConfiguration | undefined }> {
   const { db, session } = await requireContext();
-  const quote = apiRecalculateQuoteEstimate(db, session, quoteId);
-  const pricingConfiguration = getConfigurationById(db, session, quote.pricingConfigId);
+  const quote = await apiRecalculateQuoteEstimate(db, session, quoteId);
+  const pricingConfiguration = await getConfigurationById(db, session, quote.pricingConfigId);
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   return { quote, pricingConfiguration };
 }
 
 export async function updateQuoteCustomerAction(quoteId: string, customer: CustomerInput): Promise<Quote> {
   const { db, session } = await requireContext();
-  const quote = apiUpdateQuoteCustomer(db, session, quoteId, customer);
+  const quote = await apiUpdateQuoteCustomer(db, session, quoteId, customer);
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   return quote;
 }
 
 export async function updateQuoteStatusAction(quoteId: string, status: QuoteStatus): Promise<Quote> {
   const { db, session } = await requireContext();
-  const quote = apiUpdateQuoteStatus(db, session, quoteId, status);
+  const quote = await apiUpdateQuoteStatus(db, session, quoteId, status);
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   revalidatePath("/dashboard/quotes");
   revalidatePath("/dashboard");
@@ -136,20 +136,20 @@ export interface ShareLinkView extends ShareLinkStatus {
 
 export async function getQuoteShareLinkStatusAction(quoteId: string): Promise<ShareLinkView> {
   const { db, session } = await requireContext();
-  return getShareLinkStatus(db, session, quoteId);
+  return await getShareLinkStatus(db, session, quoteId);
 }
 
 /** Generates (or regenerates, revoking any existing link first) a share link and returns the full customer-facing URL — the one and only time the raw token is available to show/copy. */
 export async function generateQuoteShareLinkAction(quoteId: string): Promise<ShareLinkView> {
   const { db, session } = await requireContext();
-  const result = generateShareLink(db, session, quoteId);
+  const result = await generateShareLink(db, session, quoteId);
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   return { active: true, createdAt: result.createdAt, expiresAt: result.expiresAt, url: buildQuoteShareUrl(result.token) };
 }
 
 export async function revokeQuoteShareLinkAction(quoteId: string): Promise<void> {
   const { db, session } = await requireContext();
-  revokeShareLink(db, session, quoteId);
+  await revokeShareLink(db, session, quoteId);
   revalidatePath(`/dashboard/quotes/${quoteId}`);
 }
 
@@ -162,7 +162,7 @@ export async function revokeQuoteShareLinkAction(quoteId: string): Promise<void>
  */
 export async function recordJobOutcomeAction(quoteId: string, input: SaveJobOutcomeInput): Promise<JobOutcome> {
   const { db, session } = await requireContext();
-  const outcome = apiRecordJobOutcome(db, session, quoteId, input);
+  const outcome = await apiRecordJobOutcome(db, session, quoteId, input);
   revalidatePath(`/dashboard/quotes/${quoteId}`);
   revalidatePath("/dashboard/job-outcomes");
   return outcome;

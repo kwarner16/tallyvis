@@ -1,6 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { Business } from "@tallyvis/types";
 import type { AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import type { PublicBusinessSummary } from "./quoteSharing";
 import {
   getBusinessById,
@@ -34,25 +34,24 @@ function validateUpdateBusinessInput(input: UpdateBusinessInput): void {
  * docs/decisions/0011-persistence-auth-and-multi-tenancy.md for why this
  * is called out rather than silently built.
  */
-export function getDefaultPublicBusiness(db: DatabaseSync): Business | undefined {
-  const row = db.prepare(`SELECT id FROM businesses ORDER BY created_at ASC LIMIT 1`).get() as
-    | { id: string }
-    | undefined;
+export async function getDefaultPublicBusiness(db: Queryable): Promise<Business | undefined> {
+  const result = await db.query<{ id: string }>(`SELECT id FROM businesses ORDER BY created_at ASC LIMIT 1`);
+  const row = result.rows[0];
   return row ? getBusinessById(db, row.id) : undefined;
 }
 
 /** There is no "get any business by id" in the public surface — a session can only ever resolve to its own business. */
-export function getCurrentBusiness(db: DatabaseSync, session: AuthSession): Business {
-  const business = getBusinessById(db, session.businessId);
+export async function getCurrentBusiness(db: Queryable, session: AuthSession): Promise<Business> {
+  const business = await getBusinessById(db, session.businessId);
   if (!business) throw new Error(`Business "${session.businessId}" not found.`);
   return business;
 }
 
-export function updateCurrentBusiness(
-  db: DatabaseSync,
+export async function updateCurrentBusiness(
+  db: Queryable,
   session: AuthSession,
   input: UpdateBusinessInput,
-): Business {
+): Promise<Business> {
   validateUpdateBusinessInput(input);
   return updateBusiness(db, session.businessId, input);
 }
@@ -65,9 +64,9 @@ export function updateCurrentBusiness(
  * Also records that the embed was actually loaded, for the dashboard's
  * install-status indicator.
  */
-export function resolveEmbedBusiness(db: DatabaseSync, embedId: string): Business | undefined {
-  const business = getBusinessByPublicEmbedId(db, embedId);
-  if (business) touchEmbedLastSeen(db, business.id);
+export async function resolveEmbedBusiness(db: Queryable, embedId: string): Promise<Business | undefined> {
+  const business = await getBusinessByPublicEmbedId(db, embedId);
+  if (business) await touchEmbedLastSeen(db, business.id);
   return business;
 }
 
@@ -84,11 +83,11 @@ export function resolveEmbedBusiness(db: DatabaseSync, embedId: string): Busines
  * client/server boundary as a Server Action, those fields were genuinely
  * transmitted to the browser on every page load.
  */
-export function resolvePublicBusinessSummary(
-  db: DatabaseSync,
+export async function resolvePublicBusinessSummary(
+  db: Queryable,
   embedId?: string,
-): PublicBusinessSummary | undefined {
-  const business = embedId ? resolveEmbedBusiness(db, embedId) : getDefaultPublicBusiness(db);
+): Promise<PublicBusinessSummary | undefined> {
+  const business = embedId ? await resolveEmbedBusiness(db, embedId) : await getDefaultPublicBusiness(db);
   if (!business) return undefined;
   return { name: business.name, phone: business.phone, logoUrl: business.logoUrl, brandColor: business.brandColor };
 }

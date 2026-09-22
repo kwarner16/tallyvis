@@ -1,5 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
 import { randomBytes, createHash } from "node:crypto";
+import type { Queryable } from "../db/pg/client";
 
 export const SESSION_COOKIE_NAME = "tallyvis_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -26,14 +26,15 @@ function hashToken(token: string): string {
 }
 
 /** Creates a session for an already-authenticated user and returns the raw token to store in the browser's cookie. The database only ever holds the hash. */
-export function createSession(db: DatabaseSync, userId: string, businessId: string): string {
+export async function createSession(db: Queryable, userId: string, businessId: string): Promise<string> {
   const token = generateToken();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
 
-  db.prepare(
-    `INSERT INTO sessions (token_hash, user_id, business_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`,
-  ).run(hashToken(token), userId, businessId, expiresAt.toISOString(), now.toISOString());
+  await db.query(
+    `INSERT INTO sessions (token_hash, user_id, business_id, expires_at, created_at) VALUES ($1, $2, $3, $4, $5)`,
+    [hashToken(token), userId, businessId, expiresAt.toISOString(), now.toISOString()],
+  );
 
   return token;
 }
@@ -44,34 +45,35 @@ export function createSession(db: DatabaseSync, userId: string, businessId: stri
  * authoritative point every server-side data access must go through —
  * never trust a client-supplied userId/businessId directly.
  */
-export function validateSession(db: DatabaseSync, token: string | undefined): AuthSession | undefined {
+export async function validateSession(db: Queryable, token: string | undefined): Promise<AuthSession | undefined> {
   if (!token) return undefined;
 
-  const row = db
-    .prepare(`SELECT user_id, business_id, expires_at FROM sessions WHERE token_hash = ?`)
-    .get(hashToken(token)) as { user_id: string; business_id: string; expires_at: string } | undefined;
+  const result = await db.query<{ user_id: string; business_id: string; expires_at: string }>(
+    `SELECT user_id, business_id, expires_at FROM sessions WHERE token_hash = $1`,
+    [hashToken(token)],
+  );
+  const row = result.rows[0];
 
   if (!row) return undefined;
   if (new Date(row.expires_at).getTime() < Date.now()) {
-    db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(hashToken(token));
+    await db.query(`DELETE FROM sessions WHERE token_hash = $1`, [hashToken(token)]);
     return undefined;
   }
 
   return { userId: row.user_id, businessId: row.business_id };
 }
 
-export function revokeSession(db: DatabaseSync, token: string | undefined): void {
+export async function revokeSession(db: Queryable, token: string | undefined): Promise<void> {
   if (!token) return;
-  db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(hashToken(token));
+  await db.query(`DELETE FROM sessions WHERE token_hash = $1`, [hashToken(token)]);
 }
 
 /**
  * Revokes every session belonging to a user — used after a successful
- * password reset (Phase 14 — see
- * docs/decisions/0016-onboarding-billing-embed.md): if the account was
- * compromised, whoever reset the password is the only party who should
- * stay signed in anywhere, on any device.
+ * password reset (see docs/decisions/0016-onboarding-billing-embed.md): if
+ * the account was compromised, whoever reset the password is the only
+ * party who should stay signed in anywhere, on any device.
  */
-export function revokeAllSessionsForUser(db: DatabaseSync, userId: string): void {
-  db.prepare(`DELETE FROM sessions WHERE user_id = ?`).run(userId);
+export async function revokeAllSessionsForUser(db: Queryable, userId: string): Promise<void> {
+  await db.query(`DELETE FROM sessions WHERE user_id = $1`, [userId]);
 }

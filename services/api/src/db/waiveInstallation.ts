@@ -21,7 +21,7 @@
  * overwritten by this script.
  */
 import { PROFESSIONAL_INSTALLATION_FEE } from "@tallyvis/config";
-import { getDb } from "./client";
+import { getDb } from "./pg/client";
 import { getUserWithPasswordHashByEmail } from "../repositories/users";
 import {
   createBillingCharge,
@@ -37,28 +37,30 @@ async function main() {
   }
 
   const db = getDb();
-  const found = getUserWithPasswordHashByEmail(db, email);
+  const found = await getUserWithPasswordHashByEmail(db, email);
   if (!found) {
     console.error(`No account found for ${email}.`);
     process.exit(1);
+    return;
   }
   const businessId = found.user.businessId;
 
-  const existing = getBillingChargeByKind(db, businessId, PROFESSIONAL_INSTALLATION_FEE.kind);
+  const existing = await getBillingChargeByKind(db, businessId, PROFESSIONAL_INSTALLATION_FEE.kind);
   if (existing?.status === "paid") {
     console.error(`${email}'s installation fee has already been paid — refusing to overwrite a real payment.`);
     process.exit(1);
+    return;
   }
 
   const charge =
     existing ??
-    createBillingCharge(db, businessId, {
+    (await createBillingCharge(db, businessId, {
       kind: PROFESSIONAL_INSTALLATION_FEE.kind,
       amountCents: PROFESSIONAL_INSTALLATION_FEE.amountCents,
       currency: PROFESSIONAL_INSTALLATION_FEE.currency,
-    });
+    }));
 
-  markBillingChargeStatus(db, charge.id, "waived");
+  await markBillingChargeStatus(db, charge.id, "waived");
   console.log(`Waived the professional installation fee for ${email} (business ${businessId}).`);
 }
 

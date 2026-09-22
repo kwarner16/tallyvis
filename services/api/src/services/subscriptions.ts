@@ -1,6 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
 import { getPlan, isPlanId, TRIAL_DAYS, PROFESSIONAL_INSTALLATION_FEE } from "@tallyvis/config";
 import type { AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import * as subscriptionsRepo from "../repositories/subscriptions";
 import type { Subscription, SubscriptionStatus } from "../repositories/subscriptions";
 import * as billingChargesRepo from "../repositories/billingCharges";
@@ -101,7 +101,7 @@ function checkoutIdempotencyKey(kind: "subscription" | "installation", businessI
  * to be showing.
  */
 
-export function getSubscription(db: DatabaseSync, session: AuthSession): Subscription | undefined {
+export async function getSubscription(db: Queryable, session: AuthSession): Promise<Subscription | undefined> {
   return subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
 }
 
@@ -159,12 +159,12 @@ export function hasProductAccess(subscription: Subscription | undefined, now: nu
  * genuine (re)start). Without this, a business could indefinitely extend
  * a "free" trial by repeatedly clicking "Choose plan."
  */
-export function startTrial(db: DatabaseSync, session: AuthSession, planId: string): Subscription {
+export async function startTrial(db: Queryable, session: AuthSession, planId: string): Promise<Subscription> {
   if (!isPlanId(planId)) {
     throw new Error(`Unknown plan "${planId}".`);
   }
 
-  const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+  const existing = await subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
   const alreadyEntitled = existing && (existing.status === "trialing" || existing.status === "active");
 
   const now = new Date();
@@ -182,7 +182,7 @@ export function startTrial(db: DatabaseSync, session: AuthSession, planId: strin
   });
 }
 
-export function listBillingCharges(db: DatabaseSync, session: AuthSession): BillingCharge[] {
+export async function listBillingCharges(db: Queryable, session: AuthSession): Promise<BillingCharge[]> {
   return billingChargesRepo.listBillingCharges(db, session.businessId);
 }
 
@@ -216,7 +216,7 @@ export function billingConfigured(): boolean {
  * actually started a trial).
  */
 export async function createCheckoutSessionForPlan(
-  db: DatabaseSync,
+  db: Queryable,
   session: AuthSession,
   planId: string,
   urls: { successUrl: string; cancelUrl: string },
@@ -224,13 +224,24 @@ export async function createCheckoutSessionForPlan(
   const plan = getPlan(planId);
   if (!plan) throw new Error(`Unknown plan "${planId}".`);
 
-  const business = getBusinessById(db, session.businessId);
-  if (!business) throw new Error("Business not found.");
-
+  // Registered synchronously, before the first `await` below — see this
+  // file's own comment on `inFlightCheckouts` for why: `getBusinessById`
+  // is a real network round trip against Postgres (unlike the SQLite-era
+  // synchronous lookup this guard was originally written against), so a
+  // guard registered AFTER it would leave a real race window where two
+  // near-simultaneous calls could both pass the (not-yet-registered) guard
+  // before either finishes its own lookup — defeating the guard's entire
+  // purpose. Registering it here, before anything async happens, restores
+  // the "whichever call was actually invoked first wins" guarantee
+  // regardless of how the two calls' subsequent database round trips
+  // happen to interleave.
   beginCheckout(session.businessId);
   try {
+    const business = await getBusinessById(db, session.businessId);
+    if (!business) throw new Error("Business not found.");
+
     const priceId = resolveStripePriceId(plan.id);
-    const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+    const existing = await subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
 
     const result = await providerCreateCheckoutSession({
       mode: "subscription",
@@ -244,7 +255,7 @@ export async function createCheckoutSessionForPlan(
       idempotencyKey: checkoutIdempotencyKey("subscription", session.businessId, existing?.updatedAt ?? "new"),
     });
 
-    subscriptionsRepo.upsertSubscription(db, session.businessId, {
+    await subscriptionsRepo.upsertSubscription(db, session.businessId, {
       planId: plan.id,
       status: existing?.status ?? "incomplete",
       providerCheckoutSessionId: result.id,
@@ -267,16 +278,18 @@ export async function createCheckoutSessionForPlan(
  * accidentally pay twice or re-litigate a founder-waived fee.
  */
 export async function createInstallationCheckoutSession(
-  db: DatabaseSync,
+  db: Queryable,
   session: AuthSession,
   urls: { successUrl: string; cancelUrl: string },
 ): Promise<{ url: string }> {
-  const business = getBusinessById(db, session.businessId);
-  if (!business) throw new Error("Business not found.");
-
+  // Registered synchronously, before the first `await` below — see
+  // `createCheckoutSessionForPlan`'s identical comment above for why.
   beginCheckout(session.businessId);
   try {
-    const existingCharge = billingChargesRepo.getBillingChargeByKind(
+    const business = await getBusinessById(db, session.businessId);
+    if (!business) throw new Error("Business not found.");
+
+    const existingCharge = await billingChargesRepo.getBillingChargeByKind(
       db,
       session.businessId,
       PROFESSIONAL_INSTALLATION_FEE.kind,
@@ -286,13 +299,13 @@ export async function createInstallationCheckoutSession(
     }
     const charge =
       existingCharge ??
-      billingChargesRepo.createBillingCharge(db, session.businessId, {
+      (await billingChargesRepo.createBillingCharge(db, session.businessId, {
         kind: PROFESSIONAL_INSTALLATION_FEE.kind,
         amountCents: PROFESSIONAL_INSTALLATION_FEE.amountCents,
         currency: PROFESSIONAL_INSTALLATION_FEE.currency,
-      });
+      }));
 
-    const existingSubscription = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+    const existingSubscription = await subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
 
     const result = await providerCreateCheckoutSession({
       mode: "payment",
@@ -325,8 +338,8 @@ export async function createInstallationCheckoutSession(
  * to show "you chose self-install" and doesn't re-prompt — refuses if this
  * business's installation choice has already been resolved either way.
  */
-export function chooseSelfInstall(db: DatabaseSync, session: AuthSession): BillingCharge {
-  const existing = billingChargesRepo.getBillingChargeByKind(db, session.businessId, PROFESSIONAL_INSTALLATION_FEE.kind);
+export async function chooseSelfInstall(db: Queryable, session: AuthSession): Promise<BillingCharge> {
+  const existing = await billingChargesRepo.getBillingChargeByKind(db, session.businessId, PROFESSIONAL_INSTALLATION_FEE.kind);
   if (existing) {
     throw new Error("Installation has already been resolved for this business.");
   }
@@ -348,11 +361,11 @@ export function chooseSelfInstall(db: DatabaseSync, session: AuthSession): Billi
  * business with no billing history has nothing to manage yet.
  */
 export async function createBillingPortalSession(
-  db: DatabaseSync,
+  db: Queryable,
   session: AuthSession,
   returnUrl: string,
 ): Promise<{ url: string }> {
-  const subscription = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+  const subscription = await subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
   if (!subscription?.billingCustomerId) {
     throw new Error("No billing account yet — start checkout before managing billing.");
   }

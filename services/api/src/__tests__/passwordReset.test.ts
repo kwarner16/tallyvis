@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp, logIn } from "../services/auth";
 import { requestPasswordReset, resetPassword } from "../services/passwordReset";
 import { createSession, validateSession } from "../auth/session";
+
+const getDb = useTestDb();
 
 /**
  * Phase 14 — password recovery (see
@@ -13,7 +15,7 @@ import { createSession, validateSession } from "../auth/session";
  */
 
 async function setUp(email = "owner@sparkle.example") {
-  const db = createTestDb();
+  const db = getDb();
   const { session } = await signUp(db, {
     businessName: "Sparkle Windows",
     ownerEmail: email,
@@ -44,7 +46,7 @@ describe("requestPasswordReset", () => {
   });
 
   it("resolves the same way (no thrown error, no distinguishing signal) for an email with no account — account enumeration protection", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const capture = captureToken();
 
     await expect(requestPasswordReset(db, "nobody@nowhere.example", capture.buildResetUrl)).resolves.toBeUndefined();
@@ -69,7 +71,7 @@ describe("requestPasswordReset — enumeration/reliability hardening", () => {
   });
 
   it("resolves without ever invoking buildResetUrl for a nonexistent email, same as before this change — the equivalent-work fix only adds local, discarded work, it never issues or exposes a usable token for an account that doesn't exist", async () => {
-    const db = createTestDb();
+    const db = getDb();
     let called = false;
 
     await requestPasswordReset(db, "still-nobody@nowhere.example", () => {
@@ -112,20 +114,20 @@ describe("resetPassword — success", () => {
 
   it("revokes every existing session for the user on a successful reset", async () => {
     const { db, session, email } = await setUp("reset-revokes@sparkle.example");
-    const otherToken = createSession(db, session.userId, session.businessId);
-    expect(validateSession(db, otherToken)).toBeDefined();
+    const otherToken = await createSession(db, session.userId, session.businessId);
+    expect(await validateSession(db, otherToken)).toBeDefined();
 
     const capture = captureToken();
     await requestPasswordReset(db, email, capture.buildResetUrl);
     await resetPassword(db, capture.get(), "brand-new-password-1");
 
-    expect(validateSession(db, otherToken)).toBeUndefined();
+    expect(await validateSession(db, otherToken)).toBeUndefined();
   });
 });
 
 describe("resetPassword — token validation", () => {
   it("rejects an unknown/forged token", async () => {
-    const db = createTestDb();
+    const db = getDb();
     await expect(resetPassword(db, "totally-made-up-token", "brand-new-password-1")).rejects.toThrow(
       /invalid or has expired/,
     );
@@ -143,7 +145,7 @@ describe("resetPassword — token validation", () => {
   });
 
   it("rejects an expired token", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const { insertPasswordResetToken } = await import("../repositories/passwordResetTokens");
     const { createHash } = await import("node:crypto");
     const { session } = await signUp(db, {
@@ -157,7 +159,7 @@ describe("resetPassword — token validation", () => {
     // given an already-past expiry — exactly what `resetPassword` checks.
     const rawToken = "manually-issued-expired-token-for-testing";
     const tokenHash = createHash("sha256").update(rawToken).digest("hex");
-    insertPasswordResetToken(db, session.userId, tokenHash, new Date(Date.now() - 1000).toISOString());
+    await insertPasswordResetToken(db, session.userId, tokenHash, new Date(Date.now() - 1000).toISOString());
 
     await expect(resetPassword(db, rawToken, "brand-new-password-1")).rejects.toThrow(/invalid or has expired/);
   });

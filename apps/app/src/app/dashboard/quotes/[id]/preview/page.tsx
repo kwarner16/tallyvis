@@ -23,7 +23,7 @@ export default async function QuotePreviewPage({
 }) {
   const { id } = await params;
   const { db, session } = await requireContext();
-  const quote = getQuote(db, session, id);
+  const quote = await getQuote(db, session, id);
 
   if (!quote) {
     return (
@@ -39,7 +39,7 @@ export default async function QuotePreviewPage({
     );
   }
 
-  const business = getCurrentBusiness(db, session);
+  const business = await getCurrentBusiness(db, session);
 
   return (
     <div className="flex flex-col gap-6">

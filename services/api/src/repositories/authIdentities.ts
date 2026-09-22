@@ -1,9 +1,9 @@
-import type { DatabaseSync } from "node:sqlite";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 /**
  * See docs/decisions/0019-account-settings-and-google-auth.md and
- * migration `0008_google_auth_identities.sql`. One row per linked
+ * migration `db/pg/migrations/0005_google_auth.sql`. One row per linked
  * external identity provider account — `providerAccountId` is the
  * provider's own stable subject identifier (Google's `sub` claim), never
  * an email, which can change and is never a trustworthy long-lived key.
@@ -41,21 +41,23 @@ function toAuthIdentity(row: AuthIdentityRow): AuthIdentity {
 }
 
 /** The one lookup that matters for login/linking — resolves by the provider's own stable id, never by email. */
-export function getIdentityByProviderAccountId(
-  db: DatabaseSync,
+export async function getIdentityByProviderAccountId(
+  db: Queryable,
   provider: string,
   providerAccountId: string,
-): AuthIdentity | undefined {
-  const row = db
-    .prepare(`SELECT * FROM auth_identities WHERE provider = ? AND provider_account_id = ?`)
-    .get(provider, providerAccountId) as AuthIdentityRow | undefined;
+): Promise<AuthIdentity | undefined> {
+  const result = await db.query<AuthIdentityRow>(
+    `SELECT * FROM auth_identities WHERE provider = $1 AND provider_account_id = $2`,
+    [provider, providerAccountId],
+  );
+  const row = result.rows[0];
   return row ? toAuthIdentity(row) : undefined;
 }
 
 /** For display only ("Signed in with Google") — never used for lookup/authorization. */
-export function listIdentitiesForUser(db: DatabaseSync, userId: string): AuthIdentity[] {
-  const rows = db.prepare(`SELECT * FROM auth_identities WHERE user_id = ?`).all(userId) as unknown as AuthIdentityRow[];
-  return rows.map(toAuthIdentity);
+export async function listIdentitiesForUser(db: Queryable, userId: string): Promise<AuthIdentity[]> {
+  const result = await db.query<AuthIdentityRow>(`SELECT * FROM auth_identities WHERE user_id = $1`, [userId]);
+  return result.rows.map(toAuthIdentity);
 }
 
 /**
@@ -66,15 +68,16 @@ export function listIdentitiesForUser(db: DatabaseSync, userId: string): AuthIde
  * index the schema already enforces (a duplicate insert throws rather
  * than silently succeeding twice).
  */
-export function createAuthIdentity(
-  db: DatabaseSync,
+export async function createAuthIdentity(
+  db: Queryable,
   userId: string,
   input: { provider: string; providerAccountId: string; email: string },
-): AuthIdentity {
+): Promise<AuthIdentity> {
   const id = makeId("identity");
   const createdAt = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO auth_identities (id, user_id, provider, provider_account_id, email, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, userId, input.provider, input.providerAccountId, input.email, createdAt);
+  await db.query(
+    `INSERT INTO auth_identities (id, user_id, provider, provider_account_id, email, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, userId, input.provider, input.providerAccountId, input.email, createdAt],
+  );
   return { id, userId, provider: input.provider, providerAccountId: input.providerAccountId, email: input.email, createdAt };
 }

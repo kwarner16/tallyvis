@@ -4,7 +4,7 @@ import { JobOutcomesPageClient } from "@/components/dashboard/JobOutcomesPageCli
 
 export default async function JobOutcomesPage() {
   const { db, session } = await requireContext();
-  const summaries = listQuotesWithOutcomes(db, session);
+  const summaries = await listQuotesWithOutcomes(db, session);
 
   return <JobOutcomesPageClient summaries={summaries} />;
 }

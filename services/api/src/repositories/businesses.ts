@@ -1,7 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
 import { randomBytes } from "node:crypto";
 import type { Business } from "@tallyvis/types";
 import { makeId } from "../db/ids";
+import type { Queryable } from "../db/pg/client";
 
 interface BusinessRow {
   id: string;
@@ -46,14 +46,15 @@ export interface CreateBusinessInput {
 }
 
 /** No ownership scoping here — creating a business is how a tenant boundary comes into existence in the first place. */
-export function createBusiness(db: DatabaseSync, input: CreateBusinessInput): Business {
+export async function createBusiness(db: Queryable, input: CreateBusinessInput): Promise<Business> {
   const id = makeId("business");
   const createdAt = new Date().toISOString();
   const publicEmbedId = generatePublicEmbedId();
-  db.prepare(
+  await db.query(
     `INSERT INTO businesses (id, name, email, phone, service_area, default_industry, created_at, public_embed_id)
-     VALUES (?, ?, ?, ?, ?, 'window-cleaning', ?, ?)`,
-  ).run(id, input.name, input.email, input.phone ?? "", input.serviceArea ?? "", createdAt, publicEmbedId);
+     VALUES ($1, $2, $3, $4, $5, 'window-cleaning', $6, $7)`,
+    [id, input.name, input.email, input.phone ?? "", input.serviceArea ?? "", createdAt, publicEmbedId],
+  );
 
   return {
     id,
@@ -68,8 +69,9 @@ export function createBusiness(db: DatabaseSync, input: CreateBusinessInput): Bu
 }
 
 /** A business may only ever read/update its own row — callers pass the id from an already-validated session, never from client input. */
-export function getBusinessById(db: DatabaseSync, id: string): Business | undefined {
-  const row = db.prepare(`SELECT * FROM businesses WHERE id = ?`).get(id) as BusinessRow | undefined;
+export async function getBusinessById(db: Queryable, id: string): Promise<Business | undefined> {
+  const result = await db.query<BusinessRow>(`SELECT * FROM businesses WHERE id = $1`, [id]);
+  const row = result.rows[0];
   return row ? toBusiness(row) : undefined;
 }
 
@@ -79,19 +81,18 @@ export function getBusinessById(db: DatabaseSync, id: string): Business | undefi
  * input, precisely because `publicEmbedId` (unlike `id`) is the identifier
  * designed to be public. See docs/decisions/0016-onboarding-billing-embed.md.
  */
-export function getBusinessByPublicEmbedId(db: DatabaseSync, publicEmbedId: string): Business | undefined {
-  const row = db.prepare(`SELECT * FROM businesses WHERE public_embed_id = ?`).get(publicEmbedId) as
-    | BusinessRow
-    | undefined;
+export async function getBusinessByPublicEmbedId(db: Queryable, publicEmbedId: string): Promise<Business | undefined> {
+  const result = await db.query<BusinessRow>(`SELECT * FROM businesses WHERE public_embed_id = $1`, [publicEmbedId]);
+  const row = result.rows[0];
   return row ? toBusiness(row) : undefined;
 }
 
 /** Best-effort "is the embed actually installed somewhere" signal for the dashboard — bumped every time the embed route resolves this business, never a guarantee of a live/working installation. */
-export function touchEmbedLastSeen(db: DatabaseSync, businessId: string): void {
-  db.prepare(`UPDATE businesses SET embed_last_seen_at = ? WHERE id = ?`).run(
+export async function touchEmbedLastSeen(db: Queryable, businessId: string): Promise<void> {
+  await db.query(`UPDATE businesses SET embed_last_seen_at = $1 WHERE id = $2`, [
     new Date().toISOString(),
     businessId,
-  );
+  ]);
 }
 
 export interface UpdateBusinessInput {
@@ -103,19 +104,12 @@ export interface UpdateBusinessInput {
   brandColor?: string;
 }
 
-export function updateBusiness(db: DatabaseSync, id: string, input: UpdateBusinessInput): Business {
-  db.prepare(
-    `UPDATE businesses SET name = ?, email = ?, phone = ?, service_area = ?, logo_url = ?, brand_color = ? WHERE id = ?`,
-  ).run(
-    input.name,
-    input.email,
-    input.phone,
-    input.serviceArea,
-    input.logoUrl ?? null,
-    input.brandColor ?? null,
-    id,
+export async function updateBusiness(db: Queryable, id: string, input: UpdateBusinessInput): Promise<Business> {
+  await db.query(
+    `UPDATE businesses SET name = $1, email = $2, phone = $3, service_area = $4, logo_url = $5, brand_color = $6 WHERE id = $7`,
+    [input.name, input.email, input.phone, input.serviceArea, input.logoUrl ?? null, input.brandColor ?? null, id],
   );
-  const updated = getBusinessById(db, id);
+  const updated = await getBusinessById(db, id);
   if (!updated) throw new Error(`Business "${id}" not found after update.`);
   return updated;
 }

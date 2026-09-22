@@ -34,7 +34,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = await request.text();
 
   try {
-    handleStripeWebhook(getDb(), rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET!);
+    await handleStripeWebhook(getDb(), rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET!);
   } catch (err) {
     if (err instanceof WebhookVerificationError) {
       return NextResponse.json({ error: "Invalid signature" }, { status: 400 });

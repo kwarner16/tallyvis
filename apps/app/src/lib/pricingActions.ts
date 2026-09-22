@@ -9,7 +9,7 @@ export async function savePricingRulesAction(
   rules: WindowCleaningPricingRules,
 ): Promise<PricingConfiguration> {
   const { db, session } = await requireContext();
-  const configuration = saveNewPricingConfigurationVersion(db, session, rules);
+  const configuration = await saveNewPricingConfigurationVersion(db, session, rules);
   revalidatePath("/dashboard/pricing");
   return configuration;
 }

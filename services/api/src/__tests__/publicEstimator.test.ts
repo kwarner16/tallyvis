@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { getDefaultPublicBusiness } from "../services/business";
 import { createQuote, createQuotePublic, getQuote, listQuotes } from "../services/quotes";
 import { findOrCreateCustomer, listCustomers } from "../services/customers";
 import { getActiveConfiguration, saveNewPricingConfigurationVersion } from "../services/pricing";
+
+const getDb = useTestDb();
 
 /**
  * The unauthenticated `/estimate/*` wizard is one of Phase 9's two
@@ -50,7 +52,7 @@ const publicSubmission = (customer: { name: string; email: string; phone?: strin
 });
 
 async function setUp() {
-  const db = createTestDb();
+  const db = getDb();
   const first = await signUp(db, {
     businessName: "Sparkle Windows",
     ownerEmail: "owner@sparkle.example",
@@ -67,25 +69,25 @@ async function setUp() {
 describe("getDefaultPublicBusiness", () => {
   it("resolves to the business that signed up first (the stated Phase 9 simplification)", async () => {
     const { db, session } = await setUp();
-    expect(getDefaultPublicBusiness(db)!.id).toBe(session.businessId);
+    expect((await getDefaultPublicBusiness(db))!.id).toBe(session.businessId);
   });
 
-  it("is undefined before any business exists, so the public wizard fails closed", () => {
-    expect(getDefaultPublicBusiness(createTestDb())).toBeUndefined();
+  it("is undefined before any business exists, so the public wizard fails closed", async () => {
+    expect(await getDefaultPublicBusiness(getDb())).toBeUndefined();
   });
 });
 
 describe("createQuotePublic customer handling", () => {
   it("never resolves an anonymous submission onto an existing customer record", async () => {
     const { db, session } = await setUp();
-    const known = findOrCreateCustomer(db, session, {
+    const known = await findOrCreateCustomer(db, session, {
       name: "Jane Smith",
       email: "jane@example.com",
       phone: "(555) 111-2222",
     });
 
     // A visitor who guesses a real customer's email must learn nothing about them.
-    const quote = createQuotePublic(
+    const quote = await createQuotePublic(
       db,
       session.businessId,
       publicSubmission({ name: "Not Jane", email: "jane@example.com" }),
@@ -96,19 +98,19 @@ describe("createQuotePublic customer handling", () => {
     expect(quote.customer.phone).toBeUndefined();
 
     // The real record is untouched by the submission.
-    const reloadedKnown = listCustomers(db, session).find((c) => c.id === known.id)!;
+    const reloadedKnown = (await listCustomers(db, session)).find((c) => c.id === known.id)!;
     expect(reloadedKnown.name).toBe("Jane Smith");
     expect(reloadedKnown.phone).toBe("(555) 111-2222");
   });
 
   it("does not let a repeated anonymous submission confirm an earlier one exists", async () => {
     const { db, session } = await setUp();
-    const first = createQuotePublic(
+    const first = await createQuotePublic(
       db,
       session.businessId,
       publicSubmission({ name: "Visitor", email: "visitor@example.com" }),
     );
-    const second = createQuotePublic(
+    const second = await createQuotePublic(
       db,
       session.businessId,
       publicSubmission({ name: "Visitor", email: "visitor@example.com" }),
@@ -119,26 +121,26 @@ describe("createQuotePublic customer handling", () => {
 
   it("still applies the authoritative customer validation", async () => {
     const { db, session } = await setUp();
-    expect(() =>
+    await expect(
       createQuotePublic(
         db,
         session.businessId,
         publicSubmission({ name: " ", email: "v@example.com" }),
       ),
-    ).toThrow(/name is required/);
-    expect(() =>
+    ).rejects.toThrow(/name is required/);
+    await expect(
       createQuotePublic(db, session.businessId, publicSubmission({ name: "V", email: "nope" })),
-    ).toThrow(/valid customer email/);
+    ).rejects.toThrow(/valid customer email/);
   });
 
   it("leaves a signed-in business's own create-quote flow reusing customers as before", async () => {
     const { db, session } = await setUp();
-    const first = createQuote(
+    const first = await createQuote(
       db,
       session,
       publicSubmission({ name: "Jordan", email: "jordan@example.com" }),
     );
-    const second = createQuote(
+    const second = await createQuote(
       db,
       session,
       publicSubmission({ name: "Jordan", email: "jordan@example.com" }),
@@ -151,34 +153,34 @@ describe("createQuotePublic customer handling", () => {
 describe("createQuotePublic tenancy and pricing", () => {
   it("files the quote against the resolved business only — no other tenant can see it", async () => {
     const { db, session, otherSession } = await setUp();
-    const quote = createQuotePublic(
+    const quote = await createQuotePublic(
       db,
       session.businessId,
       publicSubmission({ name: "Visitor", email: "visitor@example.com" }),
     );
 
     expect(quote.businessId).toBe(session.businessId);
-    expect(getQuote(db, session, quote.id)).toBeDefined();
-    expect(getQuote(db, otherSession, quote.id)).toBeUndefined();
-    expect(listQuotes(db, otherSession)).toHaveLength(0);
-    expect(listCustomers(db, otherSession)).toHaveLength(0);
+    expect(await getQuote(db, session, quote.id)).toBeDefined();
+    expect(await getQuote(db, otherSession, quote.id)).toBeUndefined();
+    expect(await listQuotes(db, otherSession)).toHaveLength(0);
+    expect(await listCustomers(db, otherSession)).toHaveLength(0);
   });
 
   it("prices server-side against the business's current configuration and pins that version", async () => {
     const { db, session } = await setUp();
-    const v1 = getActiveConfiguration(db, session);
-    const before = createQuotePublic(
+    const v1 = await getActiveConfiguration(db, session);
+    const before = await createQuotePublic(
       db,
       session.businessId,
       publicSubmission({ name: "Early", email: "early@example.com" }),
     );
     expect(before.pricingConfigId).toBe(v1.id);
 
-    const v2 = saveNewPricingConfigurationVersion(db, session, {
+    const v2 = await saveNewPricingConfigurationVersion(db, session, {
       ...v1.rules,
       basePrice: v1.rules.basePrice + 50,
     });
-    const after = createQuotePublic(
+    const after = await createQuotePublic(
       db,
       session.businessId,
       publicSubmission({ name: "Late", email: "late@example.com" }),
@@ -187,12 +189,12 @@ describe("createQuotePublic tenancy and pricing", () => {
     expect(after.pricingConfigId).toBe(v2.id);
     expect(after.estimate.total).toBeGreaterThan(before.estimate.total);
     // The earlier quote is untouched by the business changing its rates.
-    expect(getQuote(db, session, before.id)!.estimate.total).toBe(before.estimate.total);
+    expect((await getQuote(db, session, before.id))!.estimate.total).toBe(before.estimate.total);
   });
 
   it("starts every publicly submitted quote in the 'new' status", async () => {
     const { db, session } = await setUp();
-    const quote = createQuotePublic(
+    const quote = await createQuotePublic(
       db,
       session.businessId,
       publicSubmission({ name: "Visitor", email: "visitor@example.com" }),

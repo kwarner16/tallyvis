@@ -4,7 +4,7 @@ import { PricingPageClient } from "@/components/dashboard/PricingPageClient";
 
 export default async function PricingPage() {
   const { db, session } = await requireContext();
-  const configuration = getActiveConfiguration(db, session);
+  const configuration = await getActiveConfiguration(db, session);
 
   return <PricingPageClient initialConfiguration={configuration} />;
 }

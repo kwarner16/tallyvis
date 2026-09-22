@@ -4,7 +4,7 @@
 // from a validated cookie, never from client input" rule can't be
 // accidentally bypassed by reaching past the service layer.
 
-export { getDb } from "./db/client";
+export { getDb, type Queryable } from "./db/pg/client";
 export { SESSION_COOKIE_NAME, type AuthSession } from "./auth/session";
 export type { AuthUser } from "./types";
 

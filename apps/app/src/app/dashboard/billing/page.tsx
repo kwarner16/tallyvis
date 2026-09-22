@@ -33,8 +33,8 @@ export default async function BillingPage({
 }) {
   const { db, session } = await requireContext();
   const { checkout, installation } = await searchParams;
-  const subscription = getSubscription(db, session);
-  const charges = listBillingCharges(db, session);
+  const subscription = await getSubscription(db, session);
+  const charges = await listBillingCharges(db, session);
   const installationCharge = charges.find((charge) => charge.kind === "website_installation");
 
   if (!subscription) {

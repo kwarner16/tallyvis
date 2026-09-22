@@ -1,6 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { AuthSession } from "../auth/session";
 import { revokeAllSessionsForUser } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import { getSubscriptionByBusinessId } from "../repositories/subscriptions";
 import { deleteAllBusinessData } from "../repositories/accountDeletion";
 import { cancelSubscriptionImmediately } from "../billing";
@@ -35,14 +35,14 @@ const inFlightDeletions = new Set<string>();
  *    cookie/redirect without needing to re-derive anything from now-gone
  *    data.
  */
-export async function deleteAccount(db: DatabaseSync, session: AuthSession): Promise<void> {
+export async function deleteAccount(db: Queryable, session: AuthSession): Promise<void> {
   if (inFlightDeletions.has(session.businessId)) {
     throw new AccountDeletionError("A deletion request is already in progress for this account.");
   }
   inFlightDeletions.add(session.businessId);
 
   try {
-    const subscription = getSubscriptionByBusinessId(db, session.businessId);
+    const subscription = await getSubscriptionByBusinessId(db, session.businessId);
 
     if (subscription?.providerSubscriptionId && subscription.status !== "canceled") {
       try {
@@ -55,17 +55,16 @@ export async function deleteAccount(db: DatabaseSync, session: AuthSession): Pro
       }
     }
 
-    db.exec("BEGIN");
     try {
-      deleteAllBusinessData(db, session.businessId);
-      db.exec("COMMIT");
+      await db.transaction(async (tx) => {
+        await deleteAllBusinessData(tx, session.businessId);
+      });
     } catch (err) {
-      db.exec("ROLLBACK");
       console.error("deleteAccount: local deletion failed:", err);
       throw new AccountDeletionError("Could not delete your account. Please try again or contact support.");
     }
 
-    revokeAllSessionsForUser(db, session.userId);
+    await revokeAllSessionsForUser(db, session.userId);
   } finally {
     inFlightDeletions.delete(session.businessId);
   }

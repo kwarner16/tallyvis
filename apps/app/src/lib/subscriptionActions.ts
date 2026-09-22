@@ -61,7 +61,7 @@ const SAFE_MESSAGE_PATTERN = /^(Unknown plan "|Installation has already been res
 export async function startTrialAction(planId: string): Promise<Subscription> {
   const { db, session } = await requireContext();
   try {
-    const subscription = apiStartTrial(db, session, planId);
+    const subscription = await apiStartTrial(db, session, planId);
     (await cookies()).delete(INTENDED_PLAN_COOKIE_NAME);
     revalidatePath("/dashboard");
     revalidatePath("/dashboard/billing");
@@ -117,7 +117,7 @@ export async function createInstallationCheckoutSessionAction(): Promise<{ url: 
 export async function chooseSelfInstallAction(): Promise<BillingCharge> {
   const { db, session } = await requireContext();
   try {
-    const charge = chooseSelfInstall(db, session);
+    const charge = await chooseSelfInstall(db, session);
     revalidatePath("/dashboard/billing");
     return charge;
   } catch (err) {

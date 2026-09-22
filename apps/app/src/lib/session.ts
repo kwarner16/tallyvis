@@ -21,7 +21,7 @@ async function readSessionToken(): Promise<string | undefined> {
 
 export async function getOptionalSession(): Promise<AuthSession | undefined> {
   const token = await readSessionToken();
-  return resolveSession(getDb(), token);
+  return await resolveSession(getDb(), token);
 }
 
 /**
@@ -32,7 +32,7 @@ export async function getOptionalSession(): Promise<AuthSession | undefined> {
 export async function requireContext(): Promise<RequestContext> {
   const db = getDb();
   const token = await readSessionToken();
-  const session = resolveSession(db, token);
+  const session = await resolveSession(db, token);
   if (!session) redirect("/login");
   return { db, session };
 }

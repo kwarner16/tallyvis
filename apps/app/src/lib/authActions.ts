@@ -80,7 +80,7 @@ export async function logInAction(
 export async function logOutAction(): Promise<void> {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE_NAME)?.value;
-  logOut(getDb(), token);
+  await logOut(getDb(), token);
   store.delete(SESSION_COOKIE_NAME);
   redirect("/login");
 }

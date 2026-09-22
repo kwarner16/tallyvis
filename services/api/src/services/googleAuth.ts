@@ -1,6 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
 import { windowCleaningDefaultPricingRules } from "@tallyvis/config";
 import { createSession, type AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
+import { isUniqueViolation } from "../db/pg/client";
 import { createBusiness } from "../repositories/businesses";
 import { createUser, getUserWithPasswordHashByEmail } from "../repositories/users";
 import { createAuthIdentity, getIdentityByProviderAccountId } from "../repositories/authIdentities";
@@ -47,11 +48,11 @@ const GOOGLE_PROVIDER = "google";
  * (`resolveSession`), never a raw cookie value.
  */
 export async function signInWithGoogle(
-  db: DatabaseSync,
+  db: Queryable,
   identity: VerifiedGoogleIdentity,
   currentSession?: AuthSession,
 ): Promise<GoogleAuthOutcome> {
-  const existing = getIdentityByProviderAccountId(db, GOOGLE_PROVIDER, identity.sub);
+  const existing = await getIdentityByProviderAccountId(db, GOOGLE_PROVIDER, identity.sub);
 
   if (existing) {
     if (currentSession && currentSession.userId !== existing.userId) {
@@ -67,8 +68,8 @@ export async function signInWithGoogle(
     // proof of control, safe to log in. `currentSession.businessId` is
     // already known-correct when present (we just checked it matches
     // `existing.userId` above); otherwise look it up.
-    const businessId = currentSession?.businessId ?? businessIdForUser(db, existing.userId);
-    const token = createSession(db, existing.userId, businessId);
+    const businessId = currentSession?.businessId ?? (await businessIdForUser(db, existing.userId));
+    const token = await createSession(db, existing.userId, businessId);
     return { kind: "login", session: { userId: existing.userId, businessId }, token };
   }
 
@@ -81,13 +82,13 @@ export async function signInWithGoogle(
       throw new GoogleSignInError("Your Google account's email isn't verified, so it can't be connected.");
     }
     try {
-      createAuthIdentity(db, currentSession.userId, {
+      await createAuthIdentity(db, currentSession.userId, {
         provider: GOOGLE_PROVIDER,
         providerAccountId: identity.sub,
         email: identity.email,
       });
     } catch (err) {
-      if (err instanceof Error && err.message.includes("UNIQUE constraint failed")) {
+      if (isUniqueViolation(err)) {
         // Lost a race against a concurrent link of the same Google identity
         // (to this account or another) — same safe, generic outcome either way.
         throw new GoogleSignInError("This Google account is already connected to another account.");
@@ -98,7 +99,7 @@ export async function signInWithGoogle(
   }
 
   // Fresh sign-in attempt, no existing identity, not already logged in.
-  const collision = getUserWithPasswordHashByEmail(db, identity.email);
+  const collision = await getUserWithPasswordHashByEmail(db, identity.email);
   if (collision) {
     // An account with this email already exists but has never linked this
     // Google identity. Do NOT auto-link on email match alone (see this
@@ -117,10 +118,9 @@ export async function signInWithGoogle(
   return createAccountFromGoogle(db, identity);
 }
 
-function businessIdForUser(db: DatabaseSync, userId: string): string {
-  const row = db.prepare(`SELECT business_id FROM users WHERE id = ?`).get(userId) as
-    | { business_id: string }
-    | undefined;
+async function businessIdForUser(db: Queryable, userId: string): Promise<string> {
+  const result = await db.query<{ business_id: string }>(`SELECT business_id FROM users WHERE id = $1`, [userId]);
+  const row = result.rows[0];
   if (!row) throw new Error(`User "${userId}" not found.`);
   return row.business_id;
 }
@@ -135,25 +135,24 @@ function businessIdForUser(db: DatabaseSync, userId: string): string {
  * (`/dashboard`), not a separate onboarding path, so both signup routes
  * share one in-dashboard onboarding experience rather than two.
  */
-async function createAccountFromGoogle(db: DatabaseSync, identity: VerifiedGoogleIdentity): Promise<GoogleAuthOutcome> {
+async function createAccountFromGoogle(db: Queryable, identity: VerifiedGoogleIdentity): Promise<GoogleAuthOutcome> {
   const businessName = deriveBusinessName(identity.email);
 
-  db.exec("BEGIN");
   try {
-    const business = createBusiness(db, { name: businessName, email: identity.email });
-    createInitialPricingConfiguration(db, business.id, windowCleaningDefaultPricingRules);
-    const user = createUser(db, business.id, identity.email, null);
-    createAuthIdentity(db, user.id, {
-      provider: GOOGLE_PROVIDER,
-      providerAccountId: identity.sub,
-      email: identity.email,
+    return await db.transaction(async (tx) => {
+      const business = await createBusiness(tx, { name: businessName, email: identity.email });
+      await createInitialPricingConfiguration(tx, business.id, windowCleaningDefaultPricingRules);
+      const user = await createUser(tx, business.id, identity.email, null);
+      await createAuthIdentity(tx, user.id, {
+        provider: GOOGLE_PROVIDER,
+        providerAccountId: identity.sub,
+        email: identity.email,
+      });
+      const token = await createSession(tx, user.id, business.id);
+      return { kind: "signup", session: { userId: user.id, businessId: business.id }, token };
     });
-    const token = createSession(db, user.id, business.id);
-    db.exec("COMMIT");
-    return { kind: "signup", session: { userId: user.id, businessId: business.id }, token };
   } catch (err) {
-    db.exec("ROLLBACK");
-    if (err instanceof Error && err.message.includes("UNIQUE constraint failed")) {
+    if (isUniqueViolation(err)) {
       // Lost a race against a concurrent signup/link for the same email or
       // the same Google identity — same generic outcome as the password
       // signup path's equivalent race.

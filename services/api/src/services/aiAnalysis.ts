@@ -1,8 +1,8 @@
-import type { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import type { PropertyImage, PropertyMetadata } from "@tallyvis/types";
 import { AiProviderError, analyzePropertyDetailed, type AnalyzePropertyResult } from "@tallyvis/ai";
 import type { AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 
 export type { AnalyzePropertyResult };
 export { AiProviderError, type AiErrorCategory } from "@tallyvis/ai";
@@ -128,7 +128,7 @@ async function runAnalysisFor(businessId: string, input: AnalyzePropertyInput): 
  * the ADR.
  */
 export async function analyzePropertyForBusiness(
-  _db: DatabaseSync,
+  _db: Queryable,
   session: AuthSession,
   input: AnalyzePropertyInput,
 ): Promise<AnalyzePropertyResult> {
@@ -144,7 +144,7 @@ export async function analyzePropertyForBusiness(
  * share-link view has no path to this function at all.
  */
 export async function analyzePropertyPublic(
-  _db: DatabaseSync,
+  _db: Queryable,
   businessId: string,
   input: AnalyzePropertyInput,
 ): Promise<AnalyzePropertyResult> {

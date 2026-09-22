@@ -1,12 +1,15 @@
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { verifyStripeWebhookSignature } from "../billing/verifyWebhookSignature";
 import { handleStripeWebhook, WebhookVerificationError } from "../services/billingWebhooks";
 import { getSubscription, chooseSelfInstall, createInstallationCheckoutSession, listBillingCharges } from "../services/subscriptions";
 import { startTrial } from "../services/subscriptions";
 import { upsertSubscription } from "../repositories/subscriptions";
+import type { Queryable } from "../db/pg/client";
+
+const getDb = useTestDb();
 
 /**
  * Phase 14 — reconciling internal subscription state against Stripe (see
@@ -26,7 +29,7 @@ function signPayload(payload: string, secret = SECRET, timestamp = Math.floor(Da
   return `t=${timestamp},v1=${signature}`;
 }
 
-async function newBusiness(db: ReturnType<typeof createTestDb>, email = "owner@sparkle.example") {
+async function newBusiness(db: Queryable, email = "owner@sparkle.example") {
   const { session } = await signUp(db, {
     businessName: "Sparkle Windows",
     ownerEmail: email,
@@ -68,27 +71,27 @@ describe("verifyStripeWebhookSignature", () => {
 
 describe("handleStripeWebhook — checkout.session.completed (subscription mode)", () => {
   it("throws WebhookVerificationError and applies nothing for an invalid signature", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    startTrial(db, session, "starter");
-    const before = getSubscription(db, session);
+    await startTrial(db, session, "starter");
+    const before = await getSubscription(db, session);
 
     const payload = JSON.stringify({
       type: "checkout.session.completed",
       data: { object: { customer: "cus_x", subscription: "sub_x", metadata: { businessId: session.businessId } } },
     });
 
-    expect(() => handleStripeWebhook(db, payload, "t=1,v1=not-a-real-signature", SECRET)).toThrow(
+    await expect(handleStripeWebhook(db, payload, "t=1,v1=not-a-real-signature", SECRET)).rejects.toThrow(
       WebhookVerificationError,
     );
-    expect(getSubscription(db, session)).toEqual(before);
+    expect(await getSubscription(db, session)).toEqual(before);
   });
 
   it("links the Stripe customer/subscription ids WITHOUT forcing status to active (regression: this used to hardcode active even for a trialing subscription)", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
     // Simulate the real production path: createCheckoutSessionForPlan leaves status "incomplete" pending a webhook.
-    upsertSubscription(db, session.businessId, { planId: "growth", status: "incomplete" });
+    await upsertSubscription(db, session.businessId, { planId: "growth", status: "incomplete" });
 
     const payload = JSON.stringify({
       id: "evt_checkout_1",
@@ -103,9 +106,9 @@ describe("handleStripeWebhook — checkout.session.completed (subscription mode)
       },
     });
 
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const subscription = getSubscription(db, session)!;
+    const subscription = (await getSubscription(db, session))!;
     // Status is untouched by this event — still "incomplete" until
     // customer.subscription.created (below) supplies the real status.
     expect(subscription.status).toBe("incomplete");
@@ -114,20 +117,20 @@ describe("handleStripeWebhook — checkout.session.completed (subscription mode)
   });
 
   it("ignores a checkout.session.completed event with no businessId in metadata (not one of ours)", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const payload = JSON.stringify({
       type: "checkout.session.completed",
       data: { object: { customer: "cus_x", subscription: "sub_x", metadata: {} } },
     });
-    expect(() => handleStripeWebhook(db, payload, signPayload(payload), SECRET)).not.toThrow();
+    await expect(handleStripeWebhook(db, payload, signPayload(payload), SECRET)).resolves.not.toThrow();
   });
 });
 
 describe("handleStripeWebhook — customer.subscription.created (fixes the status-mapping bug)", () => {
   it("sets status to trialing when Stripe reports the new subscription as trialing", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "growth",
       status: "incomplete",
       providerSubscriptionId: "sub_new_trial",
@@ -139,15 +142,15 @@ describe("handleStripeWebhook — customer.subscription.created (fixes the statu
       type: "customer.subscription.created",
       data: { object: { id: "sub_new_trial", status: "trialing" } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    expect(getSubscription(db, session)?.status).toBe("trialing");
+    expect((await getSubscription(db, session))?.status).toBe("trialing");
   });
 
   it("the full realistic sequence — checkout.session.completed then customer.subscription.created — ends up trialing, never incorrectly active", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, { planId: "pro", status: "incomplete" });
+    await upsertSubscription(db, session.businessId, { planId: "pro", status: "incomplete" });
 
     const checkoutPayload = JSON.stringify({
       id: "evt_seq_checkout",
@@ -157,8 +160,8 @@ describe("handleStripeWebhook — customer.subscription.created (fixes the statu
         object: { customer: "cus_seq", subscription: "sub_seq", metadata: { businessId: session.businessId, planId: "pro" } },
       },
     });
-    handleStripeWebhook(db, checkoutPayload, signPayload(checkoutPayload), SECRET);
-    expect(getSubscription(db, session)?.status).toBe("incomplete");
+    await handleStripeWebhook(db, checkoutPayload, signPayload(checkoutPayload), SECRET);
+    expect((await getSubscription(db, session))?.status).toBe("incomplete");
 
     const subCreatedPayload = JSON.stringify({
       id: "evt_seq_sub_created",
@@ -166,18 +169,18 @@ describe("handleStripeWebhook — customer.subscription.created (fixes the statu
       type: "customer.subscription.created",
       data: { object: { id: "sub_seq", status: "trialing" } },
     });
-    handleStripeWebhook(db, subCreatedPayload, signPayload(subCreatedPayload), SECRET);
+    await handleStripeWebhook(db, subCreatedPayload, signPayload(subCreatedPayload), SECRET);
 
-    const final = getSubscription(db, session)!;
+    const final = (await getSubscription(db, session))!;
     expect(final.status).toBe("trialing");
     expect(final.billingCustomerId).toBe("cus_seq");
     expect(final.providerSubscriptionId).toBe("sub_seq");
   });
 
   it("persists Stripe's own trial_start/trial_end onto our row (regression: these were never written for a real webhook-driven subscription, so the dashboard's 'X of 7 days remaining' UI silently showed nothing for every real customer)", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "growth",
       status: "incomplete",
       providerSubscriptionId: "sub_with_trial_dates",
@@ -191,9 +194,9 @@ describe("handleStripeWebhook — customer.subscription.created (fixes the statu
       type: "customer.subscription.created",
       data: { object: { id: "sub_with_trial_dates", status: "trialing", trial_start: trialStartSeconds, trial_end: trialEndSeconds } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const updated = getSubscription(db, session)!;
+    const updated = (await getSubscription(db, session))!;
     expect(updated.trialStartedAt).toBe(new Date(trialStartSeconds * 1000).toISOString());
     expect(updated.trialEndsAt).toBe(new Date(trialEndSeconds * 1000).toISOString());
   });
@@ -201,10 +204,10 @@ describe("handleStripeWebhook — customer.subscription.created (fixes the statu
 
 describe("handleStripeWebhook — customer.subscription.updated / .deleted", () => {
   it("syncs status to canceled on customer.subscription.deleted", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    startTrial(db, session, "starter");
-    upsertSubscription(db, session.businessId, {
+    await startTrial(db, session, "starter");
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "active",
       providerSubscriptionId: "sub_to_cancel",
@@ -214,15 +217,15 @@ describe("handleStripeWebhook — customer.subscription.updated / .deleted", () 
       type: "customer.subscription.deleted",
       data: { object: { id: "sub_to_cancel", status: "canceled" } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    expect(getSubscription(db, session)?.status).toBe("canceled");
+    expect((await getSubscription(db, session))?.status).toBe("canceled");
   });
 
   it("maps Stripe's past_due status to still-active internal access", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "active",
       providerSubscriptionId: "sub_past_due",
@@ -232,57 +235,57 @@ describe("handleStripeWebhook — customer.subscription.updated / .deleted", () 
       type: "customer.subscription.updated",
       data: { object: { id: "sub_past_due", status: "past_due" } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    expect(getSubscription(db, session)?.status).toBe("active");
+    expect((await getSubscription(db, session))?.status).toBe("active");
   });
 
   it("maps unpaid/incomplete_expired/paused to expired (denies access)", async () => {
-    const db = createTestDb();
+    const db = getDb();
     for (const [stripeStatus, subId] of [
       ["unpaid", "sub_unpaid"],
       ["incomplete_expired", "sub_incomplete_expired"],
       ["paused", "sub_paused"],
     ] as const) {
       const session = await newBusiness(db, `owner-${stripeStatus}@sparkle.example`);
-      upsertSubscription(db, session.businessId, { planId: "starter", status: "active", providerSubscriptionId: subId });
+      await upsertSubscription(db, session.businessId, { planId: "starter", status: "active", providerSubscriptionId: subId });
 
       const payload = JSON.stringify({ type: "customer.subscription.updated", data: { object: { id: subId, status: stripeStatus } } });
-      handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+      await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-      expect(getSubscription(db, session)?.status).toBe("expired");
+      expect((await getSubscription(db, session))?.status).toBe("expired");
     }
   });
 
   it("does nothing for a subscription-updated event referencing an id we don't have on file", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const payload = JSON.stringify({
       type: "customer.subscription.updated",
       data: { object: { id: "sub_unknown_to_us", status: "active" } },
     });
-    expect(() => handleStripeWebhook(db, payload, signPayload(payload), SECRET)).not.toThrow();
+    await expect(handleStripeWebhook(db, payload, signPayload(payload), SECRET)).resolves.not.toThrow();
   });
 
   it("ignores an event type this app doesn't handle, without throwing (e.g. invoice.paid, invoice.payment_failed)", async () => {
-    const db = createTestDb();
+    const db = getDb();
     for (const type of ["invoice.paid", "invoice.payment_failed", "checkout.session.expired"]) {
       const payload = JSON.stringify({ type, data: { object: { id: "in_123" } } });
-      expect(() => handleStripeWebhook(db, payload, signPayload(payload), SECRET)).not.toThrow();
+      await expect(handleStripeWebhook(db, payload, signPayload(payload), SECRET)).resolves.not.toThrow();
     }
   });
 
   it("rejects a malformed (non-JSON) payload with a clean error, never a crash — signature is checked first, so a validly-signed non-JSON body still fails safely", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const malformed = "{not valid json";
-    expect(() => handleStripeWebhook(db, malformed, signPayload(malformed), SECRET)).toThrow();
+    await expect(handleStripeWebhook(db, malformed, signPayload(malformed), SECRET)).rejects.toThrow();
   });
 });
 
 describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cancel at period end')", () => {
   it("persists cancel_at_period_end + cancel_at WITHOUT changing status or revoking access — scheduling a cancellation is not the same as canceling", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, { planId: "growth", status: "active", providerSubscriptionId: "sub_scheduled" });
+    await upsertSubscription(db, session.businessId, { planId: "growth", status: "active", providerSubscriptionId: "sub_scheduled" });
 
     const cancelAtSeconds = NOW_SECONDS + 5 * 24 * 60 * 60;
     const payload = JSON.stringify({
@@ -291,19 +294,19 @@ describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cance
       type: "customer.subscription.updated",
       data: { object: { id: "sub_scheduled", status: "active", cancel_at_period_end: true, cancel_at: cancelAtSeconds } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const updated = getSubscription(db, session)!;
+    const updated = (await getSubscription(db, session))!;
     expect(updated.status).toBe("active"); // access unaffected
     expect(updated.cancelAtPeriodEnd).toBe(true);
     expect(updated.cancelAt).toBe(new Date(cancelAtSeconds * 1000).toISOString());
   });
 
   it("scheduling cancellation during a trial does not end the trial or change trial dates", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    const original = startTrial(db, session, "growth");
-    upsertSubscription(db, session.businessId, { planId: "growth", status: "trialing", providerSubscriptionId: "sub_trial_scheduled" });
+    const original = await startTrial(db, session, "growth");
+    await upsertSubscription(db, session.businessId, { planId: "growth", status: "trialing", providerSubscriptionId: "sub_trial_scheduled" });
 
     const cancelAtSeconds = NOW_SECONDS + 3 * 24 * 60 * 60;
     const payload = JSON.stringify({
@@ -312,9 +315,9 @@ describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cance
       type: "customer.subscription.updated",
       data: { object: { id: "sub_trial_scheduled", status: "trialing", cancel_at_period_end: true, cancel_at: cancelAtSeconds } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const updated = getSubscription(db, session)!;
+    const updated = (await getSubscription(db, session))!;
     expect(updated.status).toBe("trialing");
     expect(updated.cancelAtPeriodEnd).toBe(true);
     expect(updated.trialStartedAt).toBe(original.trialStartedAt);
@@ -322,9 +325,9 @@ describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cance
   });
 
   it("reactivation (cancel_at_period_end back to false) clears cancel_at, not just the boolean", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "growth",
       status: "active",
       providerSubscriptionId: "sub_reactivated",
@@ -338,17 +341,17 @@ describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cance
       type: "customer.subscription.updated",
       data: { object: { id: "sub_reactivated", status: "active", cancel_at_period_end: false, cancel_at: null } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const updated = getSubscription(db, session)!;
+    const updated = (await getSubscription(db, session))!;
     expect(updated.cancelAtPeriodEnd).toBe(false);
     expect(updated.cancelAt).toBeUndefined();
   });
 
   it("actual cancellation (customer.subscription.deleted) clears any scheduled-cancellation state rather than leaving it stale", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "growth",
       status: "active",
       providerSubscriptionId: "sub_now_deleted",
@@ -360,19 +363,19 @@ describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cance
       type: "customer.subscription.deleted",
       data: { object: { id: "sub_now_deleted", status: "canceled", cancel_at_period_end: true, cancel_at: NOW_SECONDS } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const updated = getSubscription(db, session)!;
+    const updated = (await getSubscription(db, session))!;
     expect(updated.status).toBe("canceled");
     expect(updated.cancelAtPeriodEnd).toBe(false);
     expect(updated.cancelAt).toBeUndefined();
   });
 
   it("an event with no opinion about cancel_at_period_end (omitted from the payload) leaves the existing scheduled state untouched", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
     const scheduledAt = new Date(NOW_SECONDS * 1000).toISOString();
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "growth",
       status: "active",
       providerSubscriptionId: "sub_untouched",
@@ -390,9 +393,9 @@ describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cance
       type: "customer.subscription.updated",
       data: { object: { id: "sub_untouched", status: "past_due" } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const updated = getSubscription(db, session)!;
+    const updated = (await getSubscription(db, session))!;
     expect(updated.status).toBe("active"); // past_due maps to active
     expect(updated.cancelAtPeriodEnd).toBe(true);
     expect(updated.cancelAt).toBe(scheduledAt);
@@ -412,10 +415,10 @@ describe("handleStripeWebhook — plan switching (Customer Portal-driven price c
   });
 
   it("Growth -> Pro: a subscription.updated event with the new Price id resolves and updates planId", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    const original = startTrial(db, session, "growth");
-    upsertSubscription(db, session.businessId, { planId: "growth", status: "trialing", providerSubscriptionId: "sub_switch" });
+    const original = await startTrial(db, session, "growth");
+    await upsertSubscription(db, session.businessId, { planId: "growth", status: "trialing", providerSubscriptionId: "sub_switch" });
 
     const payload = JSON.stringify({
       id: "evt_switch_1",
@@ -423,9 +426,9 @@ describe("handleStripeWebhook — plan switching (Customer Portal-driven price c
       type: "customer.subscription.updated",
       data: { object: { id: "sub_switch", status: "trialing", items: { data: [{ price: { id: "price_test_pro" } }] } } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const after = getSubscription(db, session)!;
+    const after = (await getSubscription(db, session))!;
     expect(after.planId).toBe("pro");
     // Switching plans must never reset the trial clock.
     expect(after.trialStartedAt).toBe(original.trialStartedAt);
@@ -433,11 +436,11 @@ describe("handleStripeWebhook — plan switching (Customer Portal-driven price c
   });
 
   it("Pro -> Starter -> Growth: each switch updates planId without creating a second subscription row", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    startTrial(db, session, "pro");
-    upsertSubscription(db, session.businessId, { planId: "pro", status: "active", providerSubscriptionId: "sub_multi_switch" });
-    const originalId = getSubscription(db, session)!.id;
+    await startTrial(db, session, "pro");
+    await upsertSubscription(db, session.businessId, { planId: "pro", status: "active", providerSubscriptionId: "sub_multi_switch" });
+    const originalId = (await getSubscription(db, session))!.id;
 
     for (const [priceId, expectedPlan] of [
       ["price_test_starter", "starter"],
@@ -449,32 +452,32 @@ describe("handleStripeWebhook — plan switching (Customer Portal-driven price c
         type: "customer.subscription.updated",
         data: { object: { id: "sub_multi_switch", status: "active", items: { data: [{ price: { id: priceId } }] } } },
       });
-      handleStripeWebhook(db, payload, signPayload(payload), SECRET);
-      expect(getSubscription(db, session)?.planId).toBe(expectedPlan);
-      expect(getSubscription(db, session)?.id).toBe(originalId);
+      await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+      expect((await getSubscription(db, session))?.planId).toBe(expectedPlan);
+      expect((await getSubscription(db, session))?.id).toBe(originalId);
     }
   });
 
   it("leaves planId untouched when the reported price isn't recognized by this environment's config", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, { planId: "growth", status: "active", providerSubscriptionId: "sub_unknown_price" });
+    await upsertSubscription(db, session.businessId, { planId: "growth", status: "active", providerSubscriptionId: "sub_unknown_price" });
 
     const payload = JSON.stringify({
       type: "customer.subscription.updated",
       data: { object: { id: "sub_unknown_price", status: "active", items: { data: [{ price: { id: "price_from_a_different_stripe_account" } }] } } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    expect(getSubscription(db, session)?.planId).toBe("growth");
+    expect((await getSubscription(db, session))?.planId).toBe("growth");
   });
 });
 
 describe("handleStripeWebhook — idempotency (exact replay)", () => {
   it("is idempotent against an exact replay of the same checkout.session.completed event", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, { planId: "growth", status: "incomplete" });
+    await upsertSubscription(db, session.businessId, { planId: "growth", status: "incomplete" });
 
     const payload = JSON.stringify({
       id: "evt_replay_test_1",
@@ -485,20 +488,20 @@ describe("handleStripeWebhook — idempotency (exact replay)", () => {
       },
     });
 
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
-    const afterFirst = getSubscription(db, session);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    const afterFirst = await getSubscription(db, session);
 
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET); // Stripe redelivers the exact same event.
-    const afterSecond = getSubscription(db, session);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET); // Stripe redelivers the exact same event.
+    const afterSecond = await getSubscription(db, session);
 
     expect(afterSecond).toEqual(afterFirst);
     expect(afterSecond?.lastWebhookEventId).toBe("evt_replay_test_1");
   });
 
   it("is idempotent against an exact replay of the same customer.subscription.updated event", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "trialing",
       providerSubscriptionId: "sub_idempotency_check",
@@ -511,17 +514,17 @@ describe("handleStripeWebhook — idempotency (exact replay)", () => {
       data: { object: { id: "sub_idempotency_check", status: "active" } },
     });
 
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET); // redelivered
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET); // redelivered
 
-    expect(getSubscription(db, session)?.status).toBe("active");
-    expect(getSubscription(db, session)?.lastWebhookEventId).toBe("evt_replay_test_2");
+    expect((await getSubscription(db, session))?.status).toBe("active");
+    expect((await getSubscription(db, session))?.lastWebhookEventId).toBe("evt_replay_test_2");
   });
 
   it("still applies a genuinely NEW event after a previous one, rather than treating every event after the first as a duplicate", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "trialing",
       providerSubscriptionId: "sub_sequence_check",
@@ -540,19 +543,19 @@ describe("handleStripeWebhook — idempotency (exact replay)", () => {
       data: { object: { id: "sub_sequence_check", status: "canceled" } },
     });
 
-    handleStripeWebhook(db, first, signPayload(first), SECRET);
-    expect(getSubscription(db, session)?.status).toBe("active");
+    await handleStripeWebhook(db, first, signPayload(first), SECRET);
+    expect((await getSubscription(db, session))?.status).toBe("active");
 
-    handleStripeWebhook(db, second, signPayload(second), SECRET);
-    expect(getSubscription(db, session)?.status).toBe("canceled");
+    await handleStripeWebhook(db, second, signPayload(second), SECRET);
+    expect((await getSubscription(db, session))?.status).toBe("canceled");
   });
 });
 
 describe("handleStripeWebhook — out-of-order event protection (distinct events, not just exact replays)", () => {
   it("rejects a late-arriving OLDER event that would otherwise stomp already-applied newer state", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "trialing",
       providerSubscriptionId: "sub_out_of_order",
@@ -564,8 +567,8 @@ describe("handleStripeWebhook — out-of-order event protection (distinct events
       type: "customer.subscription.updated",
       data: { object: { id: "sub_out_of_order", status: "active" } },
     });
-    handleStripeWebhook(db, newer, signPayload(newer), SECRET);
-    expect(getSubscription(db, session)?.status).toBe("active");
+    await handleStripeWebhook(db, newer, signPayload(newer), SECRET);
+    expect((await getSubscription(db, session))?.status).toBe("active");
 
     // A DIFFERENT, OLDER event (lower `created`) arrives late — e.g. a
     // retried delivery that took an unusually long path. Its id doesn't
@@ -577,17 +580,17 @@ describe("handleStripeWebhook — out-of-order event protection (distinct events
       type: "customer.subscription.updated",
       data: { object: { id: "sub_out_of_order", status: "past_due" } },
     });
-    handleStripeWebhook(db, older, signPayload(older), SECRET);
+    await handleStripeWebhook(db, older, signPayload(older), SECRET);
 
     // Still "active" — the older event must NOT have overwritten it.
-    expect(getSubscription(db, session)?.status).toBe("active");
-    expect(getSubscription(db, session)?.lastWebhookEventId).toBe("evt_newer");
+    expect((await getSubscription(db, session))?.status).toBe("active");
+    expect((await getSubscription(db, session))?.lastWebhookEventId).toBe("evt_newer");
   });
 
   it("still applies events in correct chronological order regardless of arrival order gaps", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "trialing",
       providerSubscriptionId: "sub_chronological",
@@ -601,17 +604,17 @@ describe("handleStripeWebhook — out-of-order event protection (distinct events
     for (const e of events) {
       const type = e.status === "canceled" ? "customer.subscription.deleted" : "customer.subscription.updated";
       const payload = JSON.stringify({ id: e.id, created: e.created, type, data: { object: { id: "sub_chronological", status: e.status } } });
-      handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+      await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
     }
 
-    expect(getSubscription(db, session)?.status).toBe("canceled");
-    expect(getSubscription(db, session)?.lastWebhookEventId).toBe("evt_c3");
+    expect((await getSubscription(db, session))?.status).toBe("canceled");
+    expect((await getSubscription(db, session))?.lastWebhookEventId).toBe("evt_c3");
   });
 
   it("does not apply the ordering check when a hand-built test event has no `created` field (back-compat)", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "trialing",
       providerSubscriptionId: "sub_no_created_field",
@@ -621,8 +624,8 @@ describe("handleStripeWebhook — out-of-order event protection (distinct events
       type: "customer.subscription.updated",
       data: { object: { id: "sub_no_created_field", status: "active" } },
     });
-    expect(() => handleStripeWebhook(db, payload, signPayload(payload), SECRET)).not.toThrow();
-    expect(getSubscription(db, session)?.status).toBe("active");
+    await expect(handleStripeWebhook(db, payload, signPayload(payload), SECRET)).resolves.not.toThrow();
+    expect((await getSubscription(db, session))?.status).toBe("active");
   });
 });
 
@@ -635,7 +638,7 @@ describe("handleStripeWebhook — one-time professional installation payment (ch
     vi.restoreAllMocks();
   });
 
-  async function pendingInstallationCharge(db: ReturnType<typeof createTestDb>, email?: string) {
+  async function pendingInstallationCharge(db: Queryable, email?: string) {
     const session = await newBusiness(db, email);
     const billing = await import("../billing");
     vi.spyOn(billing, "createCheckoutSession").mockResolvedValue({
@@ -643,14 +646,15 @@ describe("handleStripeWebhook — one-time professional installation payment (ch
       url: "https://checkout.stripe.example/cs_test_installation",
     });
     await createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" });
-    const charge = listBillingCharges(db, session)[0]!;
+    const charges = await listBillingCharges(db, session);
+    const charge = charges[0]!;
     return { session, charge };
   }
 
   it("marks the billing charge paid, storing the payment_intent id, and never touches the subscriptions table", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const { session, charge } = await pendingInstallationCharge(db);
-    const subscriptionBefore = getSubscription(db, session);
+    const subscriptionBefore = await getSubscription(db, session);
 
     const payload = JSON.stringify({
       id: "evt_install_paid_1",
@@ -662,16 +666,16 @@ describe("handleStripeWebhook — one-time professional installation payment (ch
         },
       },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const updated = listBillingCharges(db, session)[0]!;
+    const updated = (await listBillingCharges(db, session))[0]!;
     expect(updated.status).toBe("paid");
     expect(updated.providerChargeId).toBe("pi_test_paid_1");
-    expect(getSubscription(db, session)).toEqual(subscriptionBefore);
+    expect(await getSubscription(db, session)).toEqual(subscriptionBefore);
   });
 
   it("does not mark it paid if the metadata's businessId doesn't match the charge's actual owner (tampered/foreign metadata)", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const { charge } = await pendingInstallationCharge(db);
 
     const payload = JSON.stringify({
@@ -681,14 +685,14 @@ describe("handleStripeWebhook — one-time professional installation payment (ch
         object: { payment_intent: "pi_test_tampered", metadata: { businessId: "biz_someone_else", billingChargeId: charge.id } },
       },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
     const { getBillingChargeById } = await import("../repositories/billingCharges");
-    expect(getBillingChargeById(db, charge.id)?.status).toBe("pending");
+    expect((await getBillingChargeById(db, charge.id))?.status).toBe("pending");
   });
 
   it("is idempotent — replaying the same paid event does not error or double-apply", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const { session, charge } = await pendingInstallationCharge(db);
 
     const payload = JSON.stringify({
@@ -701,19 +705,19 @@ describe("handleStripeWebhook — one-time professional installation payment (ch
         },
       },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    const updated = listBillingCharges(db, session)[0]!;
+    const updated = (await listBillingCharges(db, session))[0]!;
     expect(updated.status).toBe("paid");
     expect(updated.providerChargeId).toBe("pi_test_replay");
   });
 
   it("cross-tenant: Business B's webhook payload can never mark Business A's charge paid", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const { charge: chargeA } = await pendingInstallationCharge(db, "install-a@sparkle.example");
     const sessionB = await newBusiness(db, "install-b@sparkle.example");
-    chooseSelfInstall(db, sessionB); // Business B has its own, unrelated, already-resolved charge.
+    await chooseSelfInstall(db, sessionB); // Business B has its own, unrelated, already-resolved charge.
 
     // A payload claiming Business B's id but referencing Business A's real charge id.
     const payload = JSON.stringify({
@@ -721,25 +725,25 @@ describe("handleStripeWebhook — one-time professional installation payment (ch
       type: "checkout.session.completed",
       data: { object: { payment_intent: "pi_cross", metadata: { businessId: sessionB.businessId, billingChargeId: chargeA.id } } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
     const { getBillingChargeById } = await import("../repositories/billingCharges");
-    expect(getBillingChargeById(db, chargeA.id)?.status).toBe("pending"); // untouched
+    expect((await getBillingChargeById(db, chargeA.id))?.status).toBe("pending"); // untouched
   });
 
   it("never marks an already-paid or waived charge paid again from a later stray event", async () => {
-    const db = createTestDb();
+    const db = getDb();
     const session = await newBusiness(db);
-    const charge = chooseSelfInstall(db, session); // status "waived", amountCents 0
+    const charge = await chooseSelfInstall(db, session); // status "waived", amountCents 0
 
     const payload = JSON.stringify({
       id: "evt_stray",
       type: "checkout.session.completed",
       data: { object: { payment_intent: "pi_stray", metadata: { businessId: session.businessId, billingChargeId: charge.id } } },
     });
-    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
     const { getBillingChargeById } = await import("../repositories/billingCharges");
-    expect(getBillingChargeById(db, charge.id)?.status).toBe("waived");
+    expect((await getBillingChargeById(db, charge.id))?.status).toBe("waived");
   });
 });

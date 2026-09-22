@@ -12,7 +12,7 @@ export default async function QuoteDetailPage({
 }) {
   const { id } = await params;
   const { db, session } = await requireContext();
-  const quote = getQuote(db, session, id);
+  const quote = await getQuote(db, session, id);
 
   if (!quote) {
     return (
@@ -28,9 +28,9 @@ export default async function QuoteDetailPage({
     );
   }
 
-  const pricingConfiguration = getConfigurationById(db, session, quote.pricingConfigId);
-  const jobOutcome = getJobOutcome(db, session, id);
-  const observationComparison = getQuoteObservationComparison(db, session, id);
+  const pricingConfiguration = await getConfigurationById(db, session, quote.pricingConfigId);
+  const jobOutcome = await getJobOutcome(db, session, id);
+  const observationComparison = await getQuoteObservationComparison(db, session, id);
 
   return (
     <QuoteDetailClient

@@ -7,7 +7,7 @@ import { requireContext } from "./session";
 
 export async function updateBusinessAction(input: UpdateBusinessInput): Promise<Business> {
   const { db, session } = await requireContext();
-  const business = updateCurrentBusiness(db, session, input);
+  const business = await updateCurrentBusiness(db, session, input);
   revalidatePath("/dashboard/settings");
   revalidatePath("/dashboard");
   return business;

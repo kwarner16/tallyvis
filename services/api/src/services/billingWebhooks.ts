@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { Queryable } from "../db/pg/client";
 import { verifyStripeWebhookSignature } from "../billing/verifyWebhookSignature";
 import { resolvePlanIdFromPriceId } from "../billing";
 import * as subscriptionsRepo from "../repositories/subscriptions";
@@ -56,7 +56,7 @@ function isStaleOrReplayed(event: StripeEvent, existing: Subscription | undefine
 }
 
 /** Shared by `customer.subscription.created`/`.updated`/`.deleted` — the only difference between them is where `status` comes from. */
-function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedStatus?: SubscriptionStatus): void {
+async function applyStripeSubscription(db: Queryable, event: StripeEvent, forcedStatus?: SubscriptionStatus): Promise<void> {
   const stripeSub = event.data.object as {
     id: string;
     status: string;
@@ -69,7 +69,7 @@ function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedSta
     cancel_at?: number | null;
     items?: { data?: Array<{ price?: { id?: string } }> };
   };
-  const existing = subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
+  const existing = await subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
   if (!existing) return;
   if (isStaleOrReplayed(event, existing)) return;
 
@@ -108,7 +108,7 @@ function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedSta
       ? undefined
       : new Date(stripeSub.cancel_at * 1000).toISOString();
 
-  subscriptionsRepo.upsertSubscription(db, existing.businessId, {
+  await subscriptionsRepo.upsertSubscription(db, existing.businessId, {
     planId: resolvedPlanId ?? existing.planId,
     status,
     trialStartedAt: stripeSub.trial_start ? new Date(stripeSub.trial_start * 1000).toISOString() : undefined,
@@ -134,12 +134,12 @@ function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedSta
  * lifecycle events this app actually needs to stay in sync. See this
  * file's own comments on each branch for exactly what's handled and why.
  */
-export function handleStripeWebhook(
-  db: DatabaseSync,
+export async function handleStripeWebhook(
+  db: Queryable,
   rawBody: string,
   signatureHeader: string,
   webhookSecret: string,
-): void {
+): Promise<void> {
   if (!verifyStripeWebhookSignature(rawBody, signatureHeader, webhookSecret)) {
     throw new WebhookVerificationError("Stripe webhook signature verification failed.");
   }
@@ -161,17 +161,17 @@ export function handleStripeWebhook(
     // businessId cross-check as defense in depth — never by trusting a
     // client-suppliable businessId/amount at this point.
     if (session.metadata?.billingChargeId) {
-      const charge = billingChargesRepo.getBillingChargeById(db, session.metadata.billingChargeId);
+      const charge = await billingChargesRepo.getBillingChargeById(db, session.metadata.billingChargeId);
       if (!charge || charge.businessId !== session.metadata.businessId) return; // Not ours, or tampered metadata.
       if (charge.status !== "pending") return; // Already resolved — also covers an exact webhook replay.
-      billingChargesRepo.markBillingChargeStatus(db, charge.id, "paid", session.payment_intent);
+      await billingChargesRepo.markBillingChargeStatus(db, charge.id, "paid", session.payment_intent);
       return;
     }
 
     const businessId = session.metadata?.businessId;
     if (!businessId) return; // Not one of ours (or malformed) — nothing to reconcile.
 
-    const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, businessId);
+    const existing = await subscriptionsRepo.getSubscriptionByBusinessId(db, businessId);
     if (isStaleOrReplayed(event, existing)) return;
 
     // Deliberately does NOT set `status` to "active" (the bug this fixes —
@@ -182,7 +182,7 @@ export function handleStripeWebhook(
     // below, via the same status-mapping table as `.updated`) supplies the
     // real status; until then this preserves whatever was already known
     // (typically "incomplete" from `createCheckoutSessionForPlan`).
-    subscriptionsRepo.upsertSubscription(db, businessId, {
+    await subscriptionsRepo.upsertSubscription(db, businessId, {
       planId: session.metadata?.planId ?? existing?.planId ?? "starter",
       status: existing?.status ?? "incomplete",
       billingCustomerId: session.customer,
@@ -194,12 +194,12 @@ export function handleStripeWebhook(
   }
 
   if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated") {
-    applyStripeSubscription(db, event);
+    await applyStripeSubscription(db, event);
     return;
   }
 
   if (event.type === "customer.subscription.deleted") {
-    applyStripeSubscription(db, event, "canceled");
+    await applyStripeSubscription(db, event, "canceled");
     return;
   }
 

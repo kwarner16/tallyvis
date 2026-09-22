@@ -1,6 +1,6 @@
 # 0021 — Postgres migration (Phase 1 of production readiness)
 
-**Status:** In progress — schema and migration system designed; repository-layer port not yet started (see "What this ADR does NOT cover" below).
+**Status:** Accepted — repository/service layer ported, `node:sqlite` fully retired from production code, full canonical test suite (395 tests) passing against real Postgres. Deployment to Vercel and provisioning a production (as opposed to development) database are separate, not-yet-started steps — see "What remains" at the end of this ADR.
 
 ## Context
 
@@ -350,25 +350,116 @@ whatever Postgres is running locally — the same driver code path,
 no branching logic for "am I local or production," which is the direct
 answer to Part 6's "avoid two divergent production data implementations."
 
-## What this ADR does NOT cover yet
+## Cutover (completed once a real `DATABASE_URL`/`DIRECT_URL` existed)
 
-Deliberately stopped here, before:
+Everything below was written and verified against a real, reachable
+Postgres database — none of it was written blind.
 
-- Porting any of the 12 repository files or 15 service files from
-  synchronous `node:sqlite` calls to `async`/`await` `pg` calls (Part 10).
-- Updating any of the ~20 test files or any `apps/app` caller for the
-  resulting async signatures (Part 10/17).
-- Writing the Postgres-backed integration test suite (Part 17).
-- Touching `.env.example`'s `DATABASE_URL` documentation — it currently,
-  correctly, still describes the SQLite file-path meaning, because the
-  running application has not been cut over yet. Rewriting that
-  documentation now would describe behavior that doesn't exist yet.
+- **Repository layer**: all 12 repository files converted from synchronous
+  `node:sqlite` calls to `async`/`await` `pg` calls through the `Queryable`
+  interface — `?` placeholders became `$1, $2, ...`, `.get()`/`.all()`
+  became `await db.query(...)` + `.rows[0]`/`.rows`, `.changes` became
+  `.rowCount`. `repositories/subscriptions.ts` additionally switched
+  `cancel_at_period_end` from `number` (0/1) to a real `boolean`, per the
+  ADR's own "deliberate type upgrades" section above.
+- **Service layer**: all 15 service files converted the same way. The five
+  manual-transaction call sites (`services/auth.ts`'s `signUp`,
+  `services/googleAuth.ts`'s `createAccountFromGoogle`,
+  `services/passwordReset.ts`'s `resetPassword`,
+  `services/quoteSharing.ts`'s `generateShareLink`,
+  `services/accountDeletion.ts`'s `deleteAccount`) now call
+  `db.transaction(async (tx) => { ... })` instead of hand-rolled
+  `BEGIN`/`COMMIT`/`ROLLBACK`. The three `"UNIQUE constraint failed"`
+  string-match sites (`services/auth.ts`, `services/googleAuth.ts` ×2) now
+  use `isUniqueViolation(err)` (Postgres's `23505` code) instead.
+- **A real architecture bug found and fixed during this cutover** (not
+  present in the design, only surfaced once real async gaps existed):
+  `db/pg/client.ts`'s first draft had a free-floating `withTransaction(fn)`
+  function bound to the app's own singleton pool — meaning a transaction
+  opened from *test* code (with its own isolated schema-scoped pool) would
+  silently write into the real application schema instead. Fixed by making
+  `transaction()` a method ON a `Queryable` (`poolQueryable(pool)`), so it
+  always operates against whichever pool the caller's `db` actually came
+  from. Caught by `pricing.test.ts`/`business.test.ts`/`customers.test.ts`
+  writing real rows into the dev database's `public` schema on the very
+  first cutover test run; those leaked rows were identified and deleted
+  before continuing.
+- **A second real concurrency bug found and fixed**: `services/subscriptions.ts`'s
+  `createCheckoutSessionForPlan` and `createInstallationCheckoutSession`
+  both called their in-memory `inFlightCheckouts` double-submit guard
+  (`beginCheckout()`) *after* an `await getBusinessById(...)`. Under the
+  old synchronous SQLite code this was safe — nothing could interleave
+  before the guard registered. Under real async Postgres, this opened a
+  genuine race window where two near-simultaneous calls could both pass
+  the (not-yet-registered) guard before either finished its own lookup,
+  undermining the exact double-Stripe-Checkout-session protection this
+  guard exists for (see that guard's own module comment on
+  `inFlightCheckouts`, and Part 13 of the mission on concurrent billing
+  correctness). Fixed by moving `beginCheckout()` to before the first
+  `await` in both functions — found via a full-suite test run (this
+  specific interleaving only manifested under the concurrent load of many
+  test files hitting Postgres at once, not when the affected test file ran
+  alone), not by static reasoning alone.
+- **Tests**: all ~20 test files ported to `services/api/src/__tests__/testHarness.ts`'s
+  `useTestDb()` — one fresh, randomly-named Postgres schema per test FILE
+  (`beforeAll`), `TRUNCATE`d before every individual test (`beforeEach`,
+  restoring the same "nothing from a previous test survives" guarantee the
+  old per-test in-memory SQLite database gave), dropped afterward
+  (`afterAll`). `migrations.test.ts` was rewritten from scratch — its
+  SQLite-era regression coverage (the `users.password_hash`-nullable
+  `ALTER TABLE` rebuild under populated data) no longer has a Postgres
+  equivalent to test, since the consolidated schema defines that column as
+  nullable directly; replaced with idempotency, full-table-existence, the
+  boolean-column type, and partial-unique-index coverage instead.
+  `stripeProvider.test.ts` and `googleOAuth.test.ts` needed no changes —
+  neither touches the database. Final count: 32 test files, 395 tests (net
+  +3 over the pre-migration 392, entirely from `migrations.test.ts` gaining
+  3 more tests than the file it replaced), all passing against real
+  Postgres.
+- **`apps/app` callers**: every Server Component/Action calling into
+  `@tallyvis/api` updated to `await` the now-async calls. `tsc` caught most
+  of these directly; a handful were missed by the type checker because
+  returning an un-awaited promise as an async function's own return value,
+  or discarding an un-awaited promise's result entirely, doesn't produce a
+  type error — found instead by grepping every known async API function
+  name (including two that were only reachable through an aliased import,
+  `apiCreateQuote`/`apiStartTrial`-style) against every call site in
+  `apps/app`. Two of these were genuine bugs, not just missing
+  explicitness: `apps/app/src/app/api/webhooks/stripe/route.ts` called
+  `handleStripeWebhook(...)` without `await`, so its own `try/catch` could
+  never actually catch a verification failure (the promise rejects after
+  the `try` block has already returned a 200); the same class of bug
+  existed in `subscriptionActions.ts`'s `chooseSelfInstallAction`.
+- **`node:sqlite` fully retired from production code**: `db/client.ts`,
+  `db/migrate.ts`, and the entire `db/migrations/` directory (the 8
+  historical SQLite migration files) deleted outright — nothing imports
+  them any longer. The only remaining `node:sqlite` mentions in the
+  repository are historical comments (this file's own client/migrate
+  modules explaining what they replaced) and two `apps/app` files
+  (`middleware.ts`, `lib/quoteActions.ts`) whose comments explain why they
+  must never import `@tallyvis/api` — neither ever actually imported
+  `node:sqlite`. The local dev SQLite file
+  (`services/api/data/tallyvis.dev.db`) was left on disk, untouched and
+  gitignored — it's simply unused now, not deleted, since it wasn't this
+  work's data to discard.
+- **`services/api/.env.local`**: a new, hermetic, package-local env file
+  (gitignored, `DATABASE_URL`/`DIRECT_URL` only) so `pnpm test` for this
+  package never accidentally inherits `apps/app/.env.local`'s unrelated
+  credentials (Resend, Stripe, Google) — discovered the hard way when an
+  early test run fired real Resend API calls against fixture addresses.
+  `vitest.config.ts` loads it directly (a ~10-line inline parser, not the
+  `dotenv` package, for two known simple values).
 
-All of the above requires a real, reachable Postgres connection to
-develop and verify against — writing ~90 queries' worth of async
-repository code blind, with no way to confirm it actually behaves
-correctly against real Postgres semantics (parameter binding, transaction
-behavior, the partial unique index, the boolean column, etc.), is exactly
-the "blind conversion" the mission's own Part 2 says not to do. See the
-message accompanying this report for the concrete provider recommendation
-and what's needed to continue.
+## What remains
+
+Not part of this phase, and not started:
+
+- Deploying to Vercel itself.
+- Provisioning a separate PRODUCTION database (this phase's `DATABASE_URL`
+  points at a development database; see "Data migration strategy" above
+  for why production intentionally starts clean rather than importing
+  local dev data).
+- Configuring live (non-test-mode) Stripe credentials.
+- A human smoke test of the running application against Postgres locally
+  (Part 24 of the mission) — required before this phase can be considered
+  fully verified, not just automated-test-verified.

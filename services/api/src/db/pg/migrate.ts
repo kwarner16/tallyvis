@@ -8,8 +8,9 @@ const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "
 /**
  * Applies every `.sql` file in `db/pg/migrations/` in filename order,
  * tracking what's already been applied in a `schema_migrations` table —
- * the same idempotent, safe-to-call-on-every-process-start shape
- * `../migrate.ts` (SQLite) already established, adapted for Postgres:
+ * the same idempotent, safe-to-call-on-every-process-start shape the
+ * retired SQLite-era migration runner already established, adapted for
+ * Postgres:
  *
  *   * Each migration file runs inside its own real transaction
  *     (BEGIN/COMMIT/ROLLBACK) with foreign keys enforced throughout —

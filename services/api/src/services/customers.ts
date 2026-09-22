@@ -1,6 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { Customer, CustomerInput } from "@tallyvis/types";
 import type { AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import * as customersRepo from "../repositories/customers";
 
 const EMAIL_PATTERN = /\S+@\S+\.\S+/;
@@ -20,22 +20,22 @@ function validateCustomerInput(input: CustomerInput): void {
   }
 }
 
-export function listCustomers(db: DatabaseSync, session: AuthSession): Customer[] {
+export async function listCustomers(db: Queryable, session: AuthSession): Promise<Customer[]> {
   return customersRepo.listCustomers(db, session.businessId);
 }
 
-export function getCustomer(db: DatabaseSync, session: AuthSession, id: string): Customer | undefined {
+export async function getCustomer(db: Queryable, session: AuthSession, id: string): Promise<Customer | undefined> {
   return customersRepo.getCustomerById(db, session.businessId, id);
 }
 
 /** Reuses an existing customer (matched by email, case-insensitively) for this business rather than forking a new record every time the same person is quoted again. */
-export function findOrCreateCustomer(
-  db: DatabaseSync,
+export async function findOrCreateCustomer(
+  db: Queryable,
   session: AuthSession,
   input: CustomerInput,
-): Customer {
+): Promise<Customer> {
   validateCustomerInput(input);
-  const existing = customersRepo.findCustomerByEmail(db, session.businessId, input.email);
+  const existing = await customersRepo.findCustomerByEmail(db, session.businessId, input.email);
   return existing ?? customersRepo.createCustomer(db, session.businessId, input);
 }
 
@@ -53,23 +53,23 @@ export function findOrCreateCustomer(
  * package's `index.ts` — `findOrCreateCustomer` above stays the only
  * customer-creating path a signed-in caller gets.
  */
-export function createCustomerForBusiness(
-  db: DatabaseSync,
+export async function createCustomerForBusiness(
+  db: Queryable,
   businessId: string,
   input: CustomerInput,
-): Customer {
+): Promise<Customer> {
   validateCustomerInput(input);
   return customersRepo.createCustomer(db, businessId, input);
 }
 
-export function updateCustomer(
-  db: DatabaseSync,
+export async function updateCustomer(
+  db: Queryable,
   session: AuthSession,
   id: string,
   input: CustomerInput,
-): Customer {
+): Promise<Customer> {
   validateCustomerInput(input);
-  const updated = customersRepo.updateCustomer(db, session.businessId, id, input);
+  const updated = await customersRepo.updateCustomer(db, session.businessId, id, input);
   if (!updated) throw new Error(`Customer "${id}" not found.`);
   return updated;
 }

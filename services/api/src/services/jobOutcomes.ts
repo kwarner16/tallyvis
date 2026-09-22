@@ -1,7 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { Quote } from "@tallyvis/types";
 import { compareObservationToCharacteristics, wasObservationCorrected, type ObservationComparisonRow } from "@tallyvis/ai";
 import type { AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import * as quotesRepo from "../repositories/quotes";
 import * as jobOutcomesRepo from "../repositories/jobOutcomes";
 import type { JobOutcome, SaveJobOutcomeInput } from "../repositories/jobOutcomes";
@@ -20,25 +20,25 @@ export type { ObservationComparisonRow } from "@tallyvis/ai";
  */
 
 /** A business can only record/inspect an outcome for a quote it owns. Throws (not "not found" vs. "not yours") — same convention as every other quote lookup in this package. */
-function requireOwnedQuote(db: DatabaseSync, session: AuthSession, quoteId: string): Quote {
-  const quote = quotesRepo.getQuoteById(db, session.businessId, quoteId);
+async function requireOwnedQuote(db: Queryable, session: AuthSession, quoteId: string): Promise<Quote> {
+  const quote = await quotesRepo.getQuoteById(db, session.businessId, quoteId);
   if (!quote) throw new Error(`Quote "${quoteId}" not found.`);
   return quote;
 }
 
 /** Records (or updates) the actual outcome of a completed job. Never touches the quote's own historical `analysis`/`estimate`/`pricingConfigId` — this is purely additive, sibling data. */
-export function recordJobOutcome(
-  db: DatabaseSync,
+export async function recordJobOutcome(
+  db: Queryable,
   session: AuthSession,
   quoteId: string,
   input: SaveJobOutcomeInput,
-): JobOutcome {
-  requireOwnedQuote(db, session, quoteId);
+): Promise<JobOutcome> {
+  await requireOwnedQuote(db, session, quoteId);
   return jobOutcomesRepo.saveJobOutcome(db, session.businessId, quoteId, input);
 }
 
-export function getJobOutcome(db: DatabaseSync, session: AuthSession, quoteId: string): JobOutcome | undefined {
-  requireOwnedQuote(db, session, quoteId);
+export async function getJobOutcome(db: Queryable, session: AuthSession, quoteId: string): Promise<JobOutcome | undefined> {
+  await requireOwnedQuote(db, session, quoteId);
   return jobOutcomesRepo.getJobOutcomeByQuoteId(db, session.businessId, quoteId);
 }
 
@@ -47,13 +47,13 @@ export function getJobOutcome(db: DatabaseSync, session: AuthSession, quoteId: s
  * `undefined` if AI analysis wasn't used to produce it — "not determinable"
  * per this phase's brief, not "nothing was corrected."
  */
-export function getQuoteObservationComparison(
-  db: DatabaseSync,
+export async function getQuoteObservationComparison(
+  db: Queryable,
   session: AuthSession,
   quoteId: string,
-): ObservationComparisonRow[] | undefined {
-  const quote = requireOwnedQuote(db, session, quoteId);
-  const observation = quotesRepo.getQuoteAiObservation(db, session.businessId, quoteId);
+): Promise<ObservationComparisonRow[] | undefined> {
+  const quote = await requireOwnedQuote(db, session, quoteId);
+  const observation = await quotesRepo.getQuoteAiObservation(db, session.businessId, quoteId);
   if (!observation) return undefined;
   return compareObservationToCharacteristics(observation, quote.analysis.characteristics);
 }
@@ -74,12 +74,13 @@ export interface QuoteWithOutcomeSummary {
  * outcome: the point of the view is to show what still needs recording,
  * not only what's already done.
  */
-export function listQuotesWithOutcomes(db: DatabaseSync, session: AuthSession): QuoteWithOutcomeSummary[] {
-  const quotes = quotesRepo.listQuotes(db, session.businessId);
-  const outcomes = new Map(
-    jobOutcomesRepo.listJobOutcomesForBusiness(db, session.businessId).map((outcome) => [outcome.quoteId, outcome]),
-  );
-  const observations = quotesRepo.listAiObservationsByQuoteId(db, session.businessId);
+export async function listQuotesWithOutcomes(db: Queryable, session: AuthSession): Promise<QuoteWithOutcomeSummary[]> {
+  const [quotes, outcomeRows, observations] = await Promise.all([
+    quotesRepo.listQuotes(db, session.businessId),
+    jobOutcomesRepo.listJobOutcomesForBusiness(db, session.businessId),
+    quotesRepo.listAiObservationsByQuoteId(db, session.businessId),
+  ]);
+  const outcomes = new Map(outcomeRows.map((outcome) => [outcome.quoteId, outcome]));
 
   return quotes.map((quote) => {
     const observation = observations.get(quote.id);

@@ -1,5 +1,5 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { AuthSession } from "../auth/session";
+import type { Queryable } from "../db/pg/client";
 import * as quotesRepo from "../repositories/quotes";
 import { getCurrentBusiness } from "./business";
 import { generateShareLink } from "./quoteSharing";
@@ -31,8 +31,8 @@ export interface QuoteEmailResult {
   providerMessageId?: string;
 }
 
-function requireOwnedQuote(db: DatabaseSync, session: AuthSession, quoteId: string) {
-  const quote = quotesRepo.getQuoteById(db, session.businessId, quoteId);
+async function requireOwnedQuote(db: Queryable, session: AuthSession, quoteId: string) {
+  const quote = await quotesRepo.getQuoteById(db, session.businessId, quoteId);
   if (!quote) throw new Error(`Quote "${quoteId}" not found.`);
   return quote;
 }
@@ -59,18 +59,18 @@ function escapeHtml(value: string): string {
  * URL construction (`buildQuoteShareUrl`) for the exact same token type.
  */
 export async function sendQuoteEmail(
-  db: DatabaseSync,
+  db: Queryable,
   session: AuthSession,
   quoteId: string,
   buildQuoteUrl: (rawToken: string) => string,
 ): Promise<QuoteEmailResult> {
-  const quote = requireOwnedQuote(db, session, quoteId);
+  const quote = await requireOwnedQuote(db, session, quoteId);
   if (!quote.customer.email) {
     throw new Error("This customer has no email address on file.");
   }
 
-  const business = getCurrentBusiness(db, session);
-  const { token } = generateShareLink(db, session, quoteId);
+  const business = await getCurrentBusiness(db, session);
+  const { token } = await generateShareLink(db, session, quoteId);
   const quoteUrl = buildQuoteUrl(token);
   const total = getEstimateDisplayTotal(quote.estimate);
 
@@ -86,10 +86,10 @@ export async function sendQuoteEmail(
       "quote-notification",
     );
   } catch (err) {
-    quotesRepo.recordQuoteEmailAttempt(db, session.businessId, quoteId, "failed", undefined);
+    await quotesRepo.recordQuoteEmailAttempt(db, session.businessId, quoteId, "failed", undefined);
     throw err;
   }
 
-  quotesRepo.recordQuoteEmailAttempt(db, session.businessId, quoteId, "sent", result.providerMessageId);
+  await quotesRepo.recordQuoteEmailAttempt(db, session.businessId, quoteId, "sent", result.providerMessageId);
   return { sentAt: new Date().toISOString(), status: "sent", providerMessageId: result.providerMessageId };
 }

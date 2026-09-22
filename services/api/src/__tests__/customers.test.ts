@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { findOrCreateCustomer, getCustomer, listCustomers, updateCustomer } from "../services/customers";
 
+const getDb = useTestDb();
+
 async function setUp() {
-  const db = createTestDb();
+  const db = getDb();
   const { session } = await signUp(db, {
     businessName: "Sparkle Windows",
     ownerEmail: "owner@sparkle.example",
@@ -16,31 +18,31 @@ async function setUp() {
 describe("findOrCreateCustomer", () => {
   it("creates a new customer scoped to the business", async () => {
     const { db, session } = await setUp();
-    const customer = findOrCreateCustomer(db, session, { name: "Alice", email: "alice@example.com" });
+    const customer = await findOrCreateCustomer(db, session, { name: "Alice", email: "alice@example.com" });
 
     expect(customer.businessId).toBe(session.businessId);
-    expect(getCustomer(db, session, customer.id)).toEqual(customer);
+    expect(await getCustomer(db, session, customer.id)).toEqual(customer);
   });
 
   it("reuses an existing customer matched by email, case-insensitively", async () => {
     const { db, session } = await setUp();
-    const first = findOrCreateCustomer(db, session, { name: "Alice", email: "alice@example.com" });
-    const second = findOrCreateCustomer(db, session, { name: "Alice A.", email: "ALICE@example.com" });
+    const first = await findOrCreateCustomer(db, session, { name: "Alice", email: "alice@example.com" });
+    const second = await findOrCreateCustomer(db, session, { name: "Alice A.", email: "ALICE@example.com" });
 
     expect(second.id).toBe(first.id);
-    expect(listCustomers(db, session)).toHaveLength(1);
+    expect(await listCustomers(db, session)).toHaveLength(1);
   });
 
   it("rejects an empty name even though the UI is expected to prevent it — this is the authoritative check", async () => {
     const { db, session } = await setUp();
-    expect(() => findOrCreateCustomer(db, session, { name: "  ", email: "alice@example.com" })).toThrow(
+    await expect(findOrCreateCustomer(db, session, { name: "  ", email: "alice@example.com" })).rejects.toThrow(
       /name is required/,
     );
   });
 
   it("rejects an invalid email", async () => {
     const { db, session } = await setUp();
-    expect(() => findOrCreateCustomer(db, session, { name: "Alice", email: "not-an-email" })).toThrow(
+    await expect(findOrCreateCustomer(db, session, { name: "Alice", email: "not-an-email" })).rejects.toThrow(
       /valid customer email/,
     );
   });
@@ -49,9 +51,9 @@ describe("findOrCreateCustomer", () => {
 describe("updateCustomer", () => {
   it("updates the customer's details", async () => {
     const { db, session } = await setUp();
-    const customer = findOrCreateCustomer(db, session, { name: "Alice", email: "alice@example.com" });
+    const customer = await findOrCreateCustomer(db, session, { name: "Alice", email: "alice@example.com" });
 
-    const updated = updateCustomer(db, session, customer.id, {
+    const updated = await updateCustomer(db, session, customer.id, {
       name: "Alice Anderson",
       email: "alice.anderson@example.com",
       phone: "(555) 222-3333",
@@ -64,8 +66,8 @@ describe("updateCustomer", () => {
 
   it("throws for a customer that doesn't exist", async () => {
     const { db, session } = await setUp();
-    expect(() =>
+    await expect(
       updateCustomer(db, session, "not-a-real-customer", { name: "X", email: "x@example.com" }),
-    ).toThrow(/not found/);
+    ).rejects.toThrow(/not found/);
   });
 });

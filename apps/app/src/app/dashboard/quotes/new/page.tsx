@@ -4,7 +4,7 @@ import { NewQuoteClient } from "@/components/dashboard/NewQuoteClient";
 
 export default async function NewQuotePage() {
   const { db, session } = await requireContext();
-  const configuration = getActiveConfiguration(db, session);
+  const configuration = await getActiveConfiguration(db, session);
 
   return <NewQuoteClient configuration={configuration} />;
 }

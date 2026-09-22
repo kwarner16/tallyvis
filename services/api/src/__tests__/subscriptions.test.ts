@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROFESSIONAL_INSTALLATION_FEE } from "@tallyvis/config";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { createQuote } from "../services/quotes";
 import {
@@ -15,7 +15,8 @@ import {
   startTrial,
 } from "../services/subscriptions";
 import type { Subscription } from "../repositories/subscriptions";
-import type { AuthSession } from "../auth/session";
+
+const getDb = useTestDb();
 
 /**
  * Phase 14 — SaaS plan/trial/subscription foundation (see
@@ -47,8 +48,8 @@ const sampleQuoteInput = () => ({
   },
 });
 
-async function setUp(): Promise<{ db: ReturnType<typeof createTestDb>; session: AuthSession }> {
-  const db = createTestDb();
+async function setUp() {
+  const db = getDb();
   const { session } = await signUp(db, {
     businessName: "Sparkle Windows",
     ownerEmail: "owner@sparkle.example",
@@ -62,7 +63,7 @@ describe("startTrial", () => {
     const { db, session } = await setUp();
     const before = Date.now();
 
-    const subscription = startTrial(db, session, "growth");
+    const subscription = await startTrial(db, session, "growth");
 
     expect(subscription.planId).toBe("growth");
     expect(subscription.status).toBe("trialing");
@@ -75,29 +76,29 @@ describe("startTrial", () => {
 
   it("rejects an unknown plan id", async () => {
     const { db, session } = await setUp();
-    expect(() => startTrial(db, session, "not-a-real-plan")).toThrow(/unknown plan/i);
+    await expect(startTrial(db, session, "not-a-real-plan")).rejects.toThrow(/unknown plan/i);
   });
 
   it("does NOT create an installation charge as a side effect — installation is now an explicit, separate choice (see createInstallationCheckoutSession/chooseSelfInstall below)", async () => {
     const { db, session } = await setUp();
-    startTrial(db, session, "starter");
-    expect(listBillingCharges(db, session)).toHaveLength(0);
+    await startTrial(db, session, "starter");
+    expect(await listBillingCharges(db, session)).toHaveLength(0);
   });
 
   it("persists and is retrievable via getSubscription", async () => {
     const { db, session } = await setUp();
-    startTrial(db, session, "pro");
-    expect(getSubscription(db, session)?.planId).toBe("pro");
+    await startTrial(db, session, "pro");
+    expect((await getSubscription(db, session))?.planId).toBe("pro");
   });
 });
 
 describe("startTrial — hardening: repeated/duplicate plan selection", () => {
   it("does not reset the trial clock when the same plan is re-selected while already trialing (idempotent repeated selection)", async () => {
     const { db, session } = await setUp();
-    const first = startTrial(db, session, "starter");
+    const first = await startTrial(db, session, "starter");
 
     // A later "clock" — if the bug were present, re-selecting would push trialEndsAt further out.
-    const second = startTrial(db, session, "starter");
+    const second = await startTrial(db, session, "starter");
 
     expect(second.trialStartedAt).toBe(first.trialStartedAt);
     expect(second.trialEndsAt).toBe(first.trialEndsAt);
@@ -105,9 +106,9 @@ describe("startTrial — hardening: repeated/duplicate plan selection", () => {
 
   it("does not reset the trial clock when switching to a DIFFERENT plan mid-trial — only planId changes", async () => {
     const { db, session } = await setUp();
-    const first = startTrial(db, session, "starter");
+    const first = await startTrial(db, session, "starter");
 
-    const switched = startTrial(db, session, "pro");
+    const switched = await startTrial(db, session, "pro");
 
     expect(switched.planId).toBe("pro");
     expect(switched.trialStartedAt).toBe(first.trialStartedAt);
@@ -116,19 +117,19 @@ describe("startTrial — hardening: repeated/duplicate plan selection", () => {
 
   it("does not create a second subscription row on repeated selection — still exactly one row for the business", async () => {
     const { db, session } = await setUp();
-    const first = startTrial(db, session, "starter");
-    const second = startTrial(db, session, "growth");
+    const first = await startTrial(db, session, "starter");
+    const second = await startTrial(db, session, "growth");
     expect(second.id).toBe(first.id);
   });
 
   it("DOES grant a fresh 7-day trial when reactivating a canceled/expired subscription", async () => {
     const { db, session } = await setUp();
-    startTrial(db, session, "starter");
+    await startTrial(db, session, "starter");
 
     const { upsertSubscription } = await import("../repositories/subscriptions");
-    upsertSubscription(db, session.businessId, { planId: "starter", status: "canceled" });
+    await upsertSubscription(db, session.businessId, { planId: "starter", status: "canceled" });
 
-    const reactivated = startTrial(db, session, "growth");
+    const reactivated = await startTrial(db, session, "growth");
     expect(reactivated.status).toBe("trialing");
     const freshTrialMs =
       new Date(reactivated.trialEndsAt!).getTime() - new Date(reactivated.trialStartedAt!).getTime();
@@ -138,19 +139,19 @@ describe("startTrial — hardening: repeated/duplicate plan selection", () => {
 
   it("never wipes an already-linked Stripe customer/subscription id when re-selecting a plan (regression: upsertSubscription used to fully overwrite every column)", async () => {
     const { db, session } = await setUp();
-    startTrial(db, session, "starter");
+    await startTrial(db, session, "starter");
 
     const { upsertSubscription } = await import("../repositories/subscriptions");
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "trialing",
       billingCustomerId: "cus_already_linked",
       providerSubscriptionId: "sub_already_linked",
     });
 
-    startTrial(db, session, "growth"); // re-selecting must not erase the Stripe identifiers above
+    await startTrial(db, session, "growth"); // re-selecting must not erase the Stripe identifiers above
 
-    const after = getSubscription(db, session)!;
+    const after = (await getSubscription(db, session))!;
     expect(after.billingCustomerId).toBe("cus_already_linked");
     expect(after.providerSubscriptionId).toBe("sub_already_linked");
   });
@@ -193,13 +194,13 @@ describe("hasProductAccess — server-authoritative gate", () => {
 
   it("grants access while trialing", async () => {
     const { db, session } = await setUp();
-    const sub = startTrial(db, session, "starter");
+    const sub = await startTrial(db, session, "starter");
     expect(hasProductAccess(sub)).toBe(true);
   });
 
   it("denies access once the trial has expired", async () => {
     const { db, session } = await setUp();
-    const sub = startTrial(db, session, "starter");
+    const sub = await startTrial(db, session, "starter");
     const expired = { ...sub, trialEndsAt: new Date(Date.now() - 1000).toISOString() };
     expect(hasProductAccess(expired)).toBe(false);
   });
@@ -222,37 +223,37 @@ describe("hasProductAccess — server-authoritative gate", () => {
 describe("createQuote — subscription gate integration", () => {
   it("still allows quote creation for a business with no subscription row (unaffected by this phase)", async () => {
     const { db, session } = await setUp();
-    const quote = createQuote(db, session, sampleQuoteInput());
+    const quote = await createQuote(db, session, sampleQuoteInput());
     expect(quote.id).toBeTruthy();
   });
 
   it("allows quote creation while trialing", async () => {
     const { db, session } = await setUp();
-    startTrial(db, session, "starter");
-    const quote = createQuote(db, session, sampleQuoteInput());
+    await startTrial(db, session, "starter");
+    const quote = await createQuote(db, session, sampleQuoteInput());
     expect(quote.id).toBeTruthy();
   });
 
   it("blocks quote creation once the trial has expired", async () => {
     const { db, session } = await setUp();
-    startTrial(db, session, "starter");
+    await startTrial(db, session, "starter");
 
     const { upsertSubscription } = await import("../repositories/subscriptions");
-    const sub = getSubscription(db, session)!;
-    upsertSubscription(db, session.businessId, {
+    const sub = (await getSubscription(db, session))!;
+    await upsertSubscription(db, session.businessId, {
       planId: sub.planId,
       status: "trialing",
       trialStartedAt: sub.trialStartedAt,
       trialEndsAt: new Date(Date.now() - 1000).toISOString(),
     });
 
-    expect(() => createQuote(db, session, sampleQuoteInput())).toThrow(/trial or subscription has ended/);
+    await expect(createQuote(db, session, sampleQuoteInput())).rejects.toThrow(/trial or subscription has ended/);
   });
 });
 
 describe("business isolation", () => {
   it("Business B's subscription/trial is entirely independent of Business A's", async () => {
-    const dbA = createTestDb();
+    const dbA = getDb();
     const { session: sessionA } = await signUp(dbA, {
       businessName: "Business A",
       ownerEmail: "a@example.com",
@@ -264,13 +265,13 @@ describe("business isolation", () => {
       password: "password-b1",
     });
 
-    startTrial(dbA, sessionA, "pro");
-    expect(getSubscription(dbA, sessionB)).toBeUndefined();
-    expect(getSubscription(dbA, sessionA)?.planId).toBe("pro");
+    await startTrial(dbA, sessionA, "pro");
+    expect(await getSubscription(dbA, sessionB)).toBeUndefined();
+    expect((await getSubscription(dbA, sessionA))?.planId).toBe("pro");
   });
 
   it("Business B's installation choice is entirely independent of Business A's, and a portal session always resolves the CALLER's own Stripe Customer", async () => {
-    const dbA = createTestDb();
+    const dbA = getDb();
     const { session: sessionA } = await signUp(dbA, {
       businessName: "Business A",
       ownerEmail: "isoA@example.com",
@@ -282,13 +283,13 @@ describe("business isolation", () => {
       password: "password-b1",
     });
 
-    chooseSelfInstall(dbA, sessionA);
-    expect(listBillingCharges(dbA, sessionB)).toHaveLength(0);
-    expect(listBillingCharges(dbA, sessionA)).toHaveLength(1);
+    await chooseSelfInstall(dbA, sessionA);
+    expect(await listBillingCharges(dbA, sessionB)).toHaveLength(0);
+    expect(await listBillingCharges(dbA, sessionA)).toHaveLength(1);
 
     const { upsertSubscription } = await import("../repositories/subscriptions");
-    upsertSubscription(dbA, sessionA.businessId, { planId: "starter", status: "active", billingCustomerId: "cus_business_a" });
-    upsertSubscription(dbA, sessionB.businessId, { planId: "starter", status: "active", billingCustomerId: "cus_business_b" });
+    await upsertSubscription(dbA, sessionA.businessId, { planId: "starter", status: "active", billingCustomerId: "cus_business_a" });
+    await upsertSubscription(dbA, sessionB.businessId, { planId: "starter", status: "active", billingCustomerId: "cus_business_b" });
 
     const billing = await import("../billing");
     const spy = vi.spyOn(billing, "createPortalSession").mockResolvedValue({ url: "https://billing.stripe.example/p/session" });
@@ -375,7 +376,7 @@ describe("createCheckoutSessionForPlan", () => {
     // parameter a caller could substitute here.
     expect(callArg.metadata.businessId).toBe(session.businessId);
 
-    expect(getSubscription(db, session)?.providerCheckoutSessionId).toBe("cs_test_mocked");
+    expect((await getSubscription(db, session))?.providerCheckoutSessionId).toBe("cs_test_mocked");
   });
 
   it("uses customer_email (no customerId) for a business's first-ever checkout", async () => {
@@ -395,7 +396,7 @@ describe("createCheckoutSessionForPlan", () => {
   it("reuses an already-linked Stripe Customer id instead of customer_email, avoiding a duplicate Customer", async () => {
     const { db, session } = await setUp();
     const { upsertSubscription } = await import("../repositories/subscriptions");
-    upsertSubscription(db, session.businessId, {
+    await upsertSubscription(db, session.businessId, {
       planId: "starter",
       status: "trialing",
       billingCustomerId: "cus_already_linked",
@@ -423,7 +424,7 @@ describe("createCheckoutSessionForPlan", () => {
 
     await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
 
-    expect(getSubscription(db, session)?.status).toBe("incomplete");
+    expect((await getSubscription(db, session))?.status).toBe("incomplete");
   });
 
   it("propagates a BillingProviderError from the provider layer as-is (already a safe, categorized message)", async () => {
@@ -539,7 +540,7 @@ describe("createInstallationCheckoutSession", () => {
     expect(callArg.priceId).toBe("price_test_installation");
     expect(callArg.metadata.businessId).toBe(session.businessId);
 
-    const charges = listBillingCharges(db, session);
+    const charges = await listBillingCharges(db, session);
     expect(charges).toHaveLength(1);
     expect(charges[0]).toMatchObject({
       kind: "website_installation",
@@ -560,7 +561,7 @@ describe("createInstallationCheckoutSession", () => {
     await createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" });
     await createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" });
 
-    expect(listBillingCharges(db, session)).toHaveLength(1);
+    expect(await listBillingCharges(db, session)).toHaveLength(1);
   });
 
   it("refuses to start a new checkout once the charge has already been paid", async () => {
@@ -572,7 +573,8 @@ describe("createInstallationCheckoutSession", () => {
     });
     await createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" });
     const { markBillingChargeStatus } = await import("../repositories/billingCharges");
-    markBillingChargeStatus(db, listBillingCharges(db, session)[0]!.id, "paid", "pi_test_123");
+    const charges = await listBillingCharges(db, session);
+    await markBillingChargeStatus(db, charges[0]!.id, "paid", "pi_test_123");
 
     await expect(
       createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" }),
@@ -581,7 +583,7 @@ describe("createInstallationCheckoutSession", () => {
 
   it("refuses to start a new checkout once self-install has already been chosen", async () => {
     const { db, session } = await setUp();
-    chooseSelfInstall(db, session);
+    await chooseSelfInstall(db, session);
 
     await expect(
       createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" }),
@@ -607,7 +609,7 @@ describe("createInstallationCheckoutSession", () => {
     await firstCall;
 
     // Only ONE billing_charges row exists — the concurrent attempt never got far enough to create a second one.
-    expect(listBillingCharges(db, session)).toHaveLength(1);
+    expect(await listBillingCharges(db, session)).toHaveLength(1);
   });
 
   it("sends a real Stripe idempotency key scoped to the pending charge, stable while it's still pending", async () => {
@@ -640,7 +642,7 @@ describe("chooseSelfInstall", () => {
     const billing = await import("../billing");
     const spy = vi.spyOn(billing, "createCheckoutSession");
 
-    const charge = chooseSelfInstall(db, session);
+    const charge = await chooseSelfInstall(db, session);
 
     expect(charge).toMatchObject({ kind: "website_installation", status: "waived", amountCents: 0 });
     expect(spy).not.toHaveBeenCalled();
@@ -657,7 +659,7 @@ describe("chooseSelfInstall", () => {
       });
       await createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" });
 
-      expect(() => chooseSelfInstall(db, session)).toThrow(/already been resolved/i);
+      await expect(chooseSelfInstall(db, session)).rejects.toThrow(/already been resolved/i);
     } finally {
       delete process.env.STRIPE_PRICE_INSTALLATION;
       vi.restoreAllMocks();
@@ -678,7 +680,7 @@ describe("createBillingPortalSession", () => {
   it("creates a portal session for this business's own Stripe Customer id", async () => {
     const { db, session } = await setUp();
     const { upsertSubscription } = await import("../repositories/subscriptions");
-    upsertSubscription(db, session.businessId, { planId: "starter", status: "active", billingCustomerId: "cus_owned_by_this_business" });
+    await upsertSubscription(db, session.businessId, { planId: "starter", status: "active", billingCustomerId: "cus_owned_by_this_business" });
 
     const billing = await import("../billing");
     const spy = vi.spyOn(billing, "createPortalSession").mockResolvedValue({ url: "https://billing.stripe.example/p/session_1" });

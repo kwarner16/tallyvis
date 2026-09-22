@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { getCurrentBusiness, resolveEmbedBusiness, resolvePublicBusinessSummary } from "../services/business";
 import { getActiveConfigurationForBusiness } from "../services/pricing";
-import { createQuotePublic } from "../services/quotes";
+import { createQuotePublic, listQuotes } from "../services/quotes";
+
+const getDb = useTestDb();
 
 /**
  * Phase 14 — website-embed foundation (see
@@ -15,7 +17,7 @@ import { createQuotePublic } from "../services/quotes";
  */
 
 async function setUpTwoBusinesses() {
-  const db = createTestDb();
+  const db = getDb();
   const a = await signUp(db, { businessName: "Business A", ownerEmail: "a@example.com", password: "password-a1" });
   const b = await signUp(db, { businessName: "Business B", ownerEmail: "b@example.com", password: "password-b1" });
   return { db, sessionA: a.session, sessionB: b.session };
@@ -24,43 +26,43 @@ async function setUpTwoBusinesses() {
 describe("resolveEmbedBusiness", () => {
   it("resolves the correct business for its own public embed id", async () => {
     const { db, sessionA } = await setUpTwoBusinesses();
-    const businessA = getCurrentBusiness(db, sessionA);
+    const businessA = await getCurrentBusiness(db, sessionA);
 
-    const resolved = resolveEmbedBusiness(db, businessA.publicEmbedId);
+    const resolved = await resolveEmbedBusiness(db, businessA.publicEmbedId);
     expect(resolved?.id).toBe(businessA.id);
   });
 
   it("never resolves a different business's embed id to the wrong business — cross-business isolation", async () => {
     const { db, sessionA, sessionB } = await setUpTwoBusinesses();
-    const businessA = getCurrentBusiness(db, sessionA);
-    const businessB = getCurrentBusiness(db, sessionB);
+    const businessA = await getCurrentBusiness(db, sessionA);
+    const businessB = await getCurrentBusiness(db, sessionB);
 
     expect(businessA.publicEmbedId).not.toBe(businessB.publicEmbedId);
-    expect(resolveEmbedBusiness(db, businessA.publicEmbedId)?.id).toBe(businessA.id);
-    expect(resolveEmbedBusiness(db, businessB.publicEmbedId)?.id).toBe(businessB.id);
+    expect((await resolveEmbedBusiness(db, businessA.publicEmbedId))?.id).toBe(businessA.id);
+    expect((await resolveEmbedBusiness(db, businessB.publicEmbedId))?.id).toBe(businessB.id);
   });
 
   it("resolves an invalid/unknown embed identifier to undefined, never a fallback business", async () => {
     const { db } = await setUpTwoBusinesses();
-    expect(resolveEmbedBusiness(db, "not-a-real-embed-id")).toBeUndefined();
-    expect(resolveEmbedBusiness(db, "")).toBeUndefined();
+    expect(await resolveEmbedBusiness(db, "not-a-real-embed-id")).toBeUndefined();
+    expect(await resolveEmbedBusiness(db, "")).toBeUndefined();
   });
 
   it("does not trust the internal businessId as if it were the public embed id", async () => {
     const { db, sessionA } = await setUpTwoBusinesses();
-    const businessA = getCurrentBusiness(db, sessionA);
+    const businessA = await getCurrentBusiness(db, sessionA);
     expect(businessA.publicEmbedId).not.toBe(businessA.id);
-    expect(resolveEmbedBusiness(db, businessA.id)).toBeUndefined();
+    expect(await resolveEmbedBusiness(db, businessA.id)).toBeUndefined();
   });
 
   it("records that the embed was loaded (embedLastSeenAt) without exposing anything beyond the public Business shape", async () => {
     const { db, sessionA } = await setUpTwoBusinesses();
-    const businessA = getCurrentBusiness(db, sessionA);
+    const businessA = await getCurrentBusiness(db, sessionA);
     expect(businessA.embedLastSeenAt).toBeUndefined();
 
-    resolveEmbedBusiness(db, businessA.publicEmbedId);
+    await resolveEmbedBusiness(db, businessA.publicEmbedId);
 
-    const after = getCurrentBusiness(db, sessionA);
+    const after = await getCurrentBusiness(db, sessionA);
     expect(after.embedLastSeenAt).toBeTruthy();
   });
 });
@@ -68,9 +70,9 @@ describe("resolveEmbedBusiness", () => {
 describe("resolvePublicBusinessSummary — over-exposure regression (same bug class as quoteSharing's PublicBusinessSummary, see docs/decisions/0012)", () => {
   it("never includes the owner's email, internal id, or createdAt — only what the public estimator result page renders", async () => {
     const { db, sessionA } = await setUpTwoBusinesses();
-    const businessA = getCurrentBusiness(db, sessionA);
+    const businessA = await getCurrentBusiness(db, sessionA);
 
-    const summary = resolvePublicBusinessSummary(db, businessA.publicEmbedId);
+    const summary = await resolvePublicBusinessSummary(db, businessA.publicEmbedId);
 
     expect(summary).toEqual({
       name: businessA.name,
@@ -86,7 +88,7 @@ describe("resolvePublicBusinessSummary — over-exposure regression (same bug cl
 
   it("falls back to the default public business (same non-exposure guarantee) when no embed id is given", async () => {
     const { db } = await setUpTwoBusinesses();
-    const summary = resolvePublicBusinessSummary(db);
+    const summary = await resolvePublicBusinessSummary(db);
     expect(summary).toBeTruthy();
     expect(summary).not.toHaveProperty("email");
     expect(summary).not.toHaveProperty("id");
@@ -94,18 +96,18 @@ describe("resolvePublicBusinessSummary — over-exposure regression (same bug cl
 
   it("resolves to undefined for an unknown embed id, never a fallback business's data", async () => {
     const { db } = await setUpTwoBusinesses();
-    expect(resolvePublicBusinessSummary(db, "not-a-real-embed-id")).toBeUndefined();
+    expect(await resolvePublicBusinessSummary(db, "not-a-real-embed-id")).toBeUndefined();
   });
 });
 
 describe("quote creation through the embedded estimator", () => {
   it("prices and creates a quote against the business resolved from the embed id, isolated from other tenants", async () => {
     const { db, sessionA, sessionB } = await setUpTwoBusinesses();
-    const businessA = getCurrentBusiness(db, sessionA);
-    const resolved = resolveEmbedBusiness(db, businessA.publicEmbedId)!;
-    const configuration = getActiveConfigurationForBusiness(db, resolved.id);
+    const businessA = await getCurrentBusiness(db, sessionA);
+    const resolved = (await resolveEmbedBusiness(db, businessA.publicEmbedId))!;
+    const configuration = await getActiveConfigurationForBusiness(db, resolved.id);
 
-    const quote = createQuotePublic(db, resolved.id, {
+    const quote = await createQuotePublic(db, resolved.id, {
       customer: { name: "Embed Customer", email: "embed-customer@example.com" },
       property: { propertyType: "single-family", stories: 1, address: "1 Test St" },
       servicePreferences: { interiorCleaning: false, screens: false, tracks: false, hardWaterTreatment: "unsure" },
@@ -134,8 +136,7 @@ describe("quote creation through the embedded estimator", () => {
     expect(quote.pricingConfigId).toBe(configuration.id);
 
     // Business B never sees a quote created through Business A's embed.
-    const { listQuotes } = await import("../services/quotes");
-    expect(listQuotes(db, sessionB)).toHaveLength(0);
-    expect(listQuotes(db, sessionA)).toHaveLength(1);
+    expect(await listQuotes(db, sessionB)).toHaveLength(0);
+    expect(await listQuotes(db, sessionA)).toHaveLength(1);
   });
 });

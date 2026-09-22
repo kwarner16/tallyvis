@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { createTestDb } from "../db/client";
+import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { getActiveConfiguration, saveNewPricingConfigurationVersion } from "../services/pricing";
 
+const getDb = useTestDb();
+
 async function setUp() {
-  const db = createTestDb();
+  const db = getDb();
   const { session } = await signUp(db, {
     businessName: "Sparkle Windows",
     ownerEmail: "owner@sparkle.example",
@@ -16,25 +18,25 @@ async function setUp() {
 describe("saveNewPricingConfigurationVersion", () => {
   it("rejects an invalid rate card and does not create a new version", async () => {
     const { db, session } = await setUp();
-    const before = getActiveConfiguration(db, session);
+    const before = await getActiveConfiguration(db, session);
 
-    expect(() =>
+    await expect(
       saveNewPricingConfigurationVersion(db, session, { ...before.rules, basePrice: -1 }),
-    ).toThrow(/negative/);
+    ).rejects.toThrow(/negative/);
 
-    expect(getActiveConfiguration(db, session)).toEqual(before);
+    expect(await getActiveConfiguration(db, session)).toEqual(before);
   });
 
   it("accepts a valid rate card and it becomes the new active configuration", async () => {
     const { db, session } = await setUp();
-    const before = getActiveConfiguration(db, session);
+    const before = await getActiveConfiguration(db, session);
 
-    const saved = saveNewPricingConfigurationVersion(db, session, {
+    const saved = await saveNewPricingConfigurationVersion(db, session, {
       ...before.rules,
       basePrice: before.rules.basePrice + 10,
     });
 
     expect(saved.version).toBe(before.version + 1);
-    expect(getActiveConfiguration(db, session)).toEqual(saved);
+    expect(await getActiveConfiguration(db, session)).toEqual(saved);
   });
 });

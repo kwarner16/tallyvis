@@ -31,9 +31,9 @@ const PROVIDER_LABELS: Record<string, string> = { google: "Google" };
  */
 export default async function SettingsPage() {
   const { db, session } = await requireContext();
-  const business = getCurrentBusiness(db, session);
-  const user = getCurrentUser(db, session);
-  const subscription = getSubscription(db, session);
+  const business = await getCurrentBusiness(db, session);
+  const user = await getCurrentUser(db, session);
+  const subscription = await getSubscription(db, session);
 
   const plan = subscription ? getPlan(subscription.planId) : undefined;
   const effectiveStatus = subscription ? resolveEffectiveStatus(subscription) : undefined;
