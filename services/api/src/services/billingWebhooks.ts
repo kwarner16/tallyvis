@@ -63,6 +63,8 @@ function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedSta
     current_period_start?: number;
     current_period_end?: number;
     canceled_at?: number | null;
+    trial_start?: number | null;
+    trial_end?: number | null;
     items?: { data?: Array<{ price?: { id?: string } }> };
   };
   const existing = subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
@@ -83,6 +85,8 @@ function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedSta
   subscriptionsRepo.upsertSubscription(db, existing.businessId, {
     planId: resolvedPlanId ?? existing.planId,
     status,
+    trialStartedAt: stripeSub.trial_start ? new Date(stripeSub.trial_start * 1000).toISOString() : undefined,
+    trialEndsAt: stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : undefined,
     currentPeriodStart: stripeSub.current_period_start
       ? new Date(stripeSub.current_period_start * 1000).toISOString()
       : undefined,

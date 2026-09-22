@@ -117,6 +117,29 @@ describe("sendQuoteEmail", () => {
     expect(reloaded.emailDeliveryStatus).toBe("failed");
   });
 
+  it("HTML-escapes the customer name and business name in the email body (regression: raw interpolation let a name containing markup inject into the HTML email)", async () => {
+    const { db, session } = await setUp();
+    const quote = createQuote(db, session, {
+      ...sampleInput(),
+      customer: { name: 'Jordan <img src=x onerror="alert(1)"> Rivera', email: "jordan@example.com" },
+    });
+
+    const capturedMessages: { subject: string; text: string; html: string }[] = [];
+    const notifications = await import("../notifications");
+    vi.spyOn(notifications, "sendEmail").mockImplementation(async (message) => {
+      capturedMessages.push(message);
+      return { providerMessageId: "test-message-id" };
+    });
+
+    await sendQuoteEmail(db, session, quote.id, (token) => `https://example.com/quote/${token}`);
+
+    const [message] = capturedMessages;
+    expect(message!.html).not.toContain("<img");
+    expect(message!.html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+    // The plain-text body has no HTML-injection risk, so it's left as-is.
+    expect(message!.text).toContain("Jordan <img src=x onerror=\"alert(1)\"> Rivera");
+  });
+
   it("throws when the customer has no email on file, rather than silently sending nowhere", async () => {
     // Every customer-creation path validates a real email is present, so
     // this defensive check is normally unreachable through the public

@@ -173,6 +173,30 @@ describe("handleStripeWebhook — customer.subscription.created (fixes the statu
     expect(final.billingCustomerId).toBe("cus_seq");
     expect(final.providerSubscriptionId).toBe("sub_seq");
   });
+
+  it("persists Stripe's own trial_start/trial_end onto our row (regression: these were never written for a real webhook-driven subscription, so the dashboard's 'X of 7 days remaining' UI silently showed nothing for every real customer)", async () => {
+    const db = createTestDb();
+    const session = await newBusiness(db);
+    upsertSubscription(db, session.businessId, {
+      planId: "growth",
+      status: "incomplete",
+      providerSubscriptionId: "sub_with_trial_dates",
+    });
+
+    const trialStartSeconds = NOW_SECONDS;
+    const trialEndSeconds = NOW_SECONDS + 7 * 24 * 60 * 60;
+    const payload = JSON.stringify({
+      id: "evt_trial_dates",
+      created: NOW_SECONDS,
+      type: "customer.subscription.created",
+      data: { object: { id: "sub_with_trial_dates", status: "trialing", trial_start: trialStartSeconds, trial_end: trialEndSeconds } },
+    });
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+
+    const updated = getSubscription(db, session)!;
+    expect(updated.trialStartedAt).toBe(new Date(trialStartSeconds * 1000).toISOString());
+    expect(updated.trialEndsAt).toBe(new Date(trialEndSeconds * 1000).toISOString());
+  });
 });
 
 describe("handleStripeWebhook — customer.subscription.updated / .deleted", () => {

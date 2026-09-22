@@ -38,6 +38,22 @@ function requireOwnedQuote(db: DatabaseSync, session: AuthSession, quoteId: stri
 }
 
 /**
+ * `quote.customer.name` (customer-supplied, from the unauthenticated
+ * public estimator) and `business.name` (business-owner-supplied at
+ * signup) are both interpolated into the HTML email body below — without
+ * this, a name containing `<`/`>` would be injected verbatim into HTML an
+ * email client renders. The plain-text body has no equivalent risk.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
  * `buildQuoteUrl` turns a raw share token into the absolute link a
  * customer opens — supplied by the caller (apps/app), which already owns
  * URL construction (`buildQuoteShareUrl`) for the exact same token type.
@@ -65,7 +81,7 @@ export async function sendQuoteEmail(
         to: quote.customer.email,
         subject: `Your window cleaning estimate from ${business.name}`,
         text: `Hi ${quote.customer.name || "there"},\n\n${business.name} put together an estimate for your property: ${total}.\n\nView your estimate and respond here:\n${quoteUrl}\n\nThanks,\n${business.name}`,
-        html: `<p>Hi ${quote.customer.name || "there"},</p><p>${business.name} put together an estimate for your property: <strong>${total}</strong>.</p><p><a href="${quoteUrl}">View your estimate and respond</a></p><p>Thanks,<br/>${business.name}</p>`,
+        html: `<p>Hi ${escapeHtml(quote.customer.name || "there")},</p><p>${escapeHtml(business.name)} put together an estimate for your property: <strong>${escapeHtml(total)}</strong>.</p><p><a href="${quoteUrl}">View your estimate and respond</a></p><p>Thanks,<br/>${escapeHtml(business.name)}</p>`,
       },
       "quote-notification",
     );
