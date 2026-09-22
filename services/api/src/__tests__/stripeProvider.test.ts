@@ -24,6 +24,7 @@ const sampleSubscriptionInput = () => ({
   successUrl: "https://app.tallyvis.example/dashboard/billing?checkout=success",
   cancelUrl: "https://app.tallyvis.example/dashboard/billing?checkout=canceled",
   metadata: { businessId: "business_abc123", planId: "growth" },
+  idempotencyKey: "tallyvis:subscription-checkout:business_abc123:test",
 });
 
 const samplePaymentInput = () => ({
@@ -33,6 +34,7 @@ const samplePaymentInput = () => ({
   successUrl: "https://app.tallyvis.example/dashboard/billing?installation=success",
   cancelUrl: "https://app.tallyvis.example/dashboard/billing?installation=canceled",
   metadata: { businessId: "business_abc123", billingChargeId: "charge_abc123", kind: "website_installation" },
+  idempotencyKey: "tallyvis:installation-checkout:business_abc123:test",
 });
 
 let server: Server | undefined;
@@ -96,6 +98,24 @@ describe("createStripeProvider — subscription checkout (mode: subscription)", 
     await provider.createCheckoutSession(sampleSubscriptionInput());
 
     expect(received?.get("managed_payments[enabled]")).toBe("false");
+  });
+
+  it("sends the caller-derived idempotency key as the Idempotency-Key header (never in the request body, and never invented by this layer itself)", async () => {
+    let idempotencyKeyHeader: string | undefined;
+    const baseUrl = await listen(async (req, res) => {
+      idempotencyKeyHeader = req.headers["idempotency-key"] as string | undefined;
+      await readFormBody(req);
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ id: "cs_test_123", url: "https://checkout.stripe.example/cs_test_123" }));
+    });
+
+    const provider = createStripeProvider({ secretKey: "sk_test_fake", baseUrl });
+    await provider.createCheckoutSession({
+      ...sampleSubscriptionInput(),
+      idempotencyKey: "tallyvis:subscription-checkout:business_abc123:2026-01-01T00:00:00.000Z",
+    });
+
+    expect(idempotencyKeyHeader).toBe("tallyvis:subscription-checkout:business_abc123:2026-01-01T00:00:00.000Z");
   });
 
   it("reuses an existing Stripe Customer (passes `customer`, not `customer_email`) when one is already on file", async () => {

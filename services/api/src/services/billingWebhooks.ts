@@ -65,6 +65,8 @@ function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedSta
     canceled_at?: number | null;
     trial_start?: number | null;
     trial_end?: number | null;
+    cancel_at_period_end?: boolean;
+    cancel_at?: number | null;
     items?: { data?: Array<{ price?: { id?: string } }> };
   };
   const existing = subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
@@ -82,6 +84,30 @@ function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedSta
   const newPriceId = stripeSub.items?.data?.[0]?.price?.id;
   const resolvedPlanId = newPriceId ? resolvePlanIdFromPriceId(newPriceId) : undefined;
 
+  // `.deleted` means the subscription has ACTUALLY ended — that supersedes
+  // any "scheduled to cancel" state regardless of what this particular
+  // payload says, so it's forced to false/cleared. Otherwise, only treat
+  // `cancel_at_period_end` as known when the payload actually includes the
+  // property (real Stripe events always do; a hand-built test payload may
+  // not) — passing `undefined` when it's genuinely absent lets the
+  // repository's COALESCE preserve whatever was already stored, rather
+  // than this defaulting a missing field to "not scheduled" and silently
+  // clearing a real scheduled cancellation. When it IS present, pass the
+  // real current value through unconditionally (even `false`) so a
+  // portal-driven reactivation correctly clears `cancel_at` too — see
+  // repositories/subscriptions.ts's upsertSubscription for why this field
+  // can't use plain COALESCE-preserve semantics like the others below.
+  const cancelAtPeriodEnd =
+    forcedStatus === "canceled"
+      ? false
+      : "cancel_at_period_end" in stripeSub
+        ? Boolean(stripeSub.cancel_at_period_end)
+        : undefined;
+  const cancelAt =
+    forcedStatus === "canceled" || !stripeSub.cancel_at
+      ? undefined
+      : new Date(stripeSub.cancel_at * 1000).toISOString();
+
   subscriptionsRepo.upsertSubscription(db, existing.businessId, {
     planId: resolvedPlanId ?? existing.planId,
     status,
@@ -94,6 +120,8 @@ function applyStripeSubscription(db: DatabaseSync, event: StripeEvent, forcedSta
       ? new Date(stripeSub.current_period_end * 1000).toISOString()
       : undefined,
     canceledAt: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000).toISOString() : undefined,
+    cancelAtPeriodEnd,
+    cancelAt,
     lastWebhookEventId: event.id,
     lastWebhookEventCreatedAt: event.created,
   });

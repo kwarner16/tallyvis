@@ -31,6 +31,18 @@ export function runMigrations(db: DatabaseSync): void {
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8");
+
+    // `PRAGMA foreign_keys` is a no-op inside a transaction — it can only
+    // be toggled between statements, outside any BEGIN/COMMIT — which
+    // matters for any migration that rebuilds a table other tables
+    // reference (SQLite has no `ALTER TABLE ... ALTER COLUMN`, so relaxing
+    // a NOT NULL constraint means create-new/copy/drop-old/rename; with
+    // enforcement left on, dropping the referenced table fails outright
+    // even though the data itself never becomes inconsistent). Verified
+    // against a real, previously-populated database, not just fresh
+    // empty test databases, which would never have exposed this: an
+    // empty `users` table has no `sessions` rows yet to violate anything.
+    db.exec("PRAGMA foreign_keys = OFF");
     db.exec("BEGIN");
     try {
       db.exec(sql);
@@ -41,7 +53,19 @@ export function runMigrations(db: DatabaseSync): void {
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");
+      db.exec("PRAGMA foreign_keys = ON");
       throw new Error(`Migration ${file} failed: ${err instanceof Error ? err.message : err}`);
+    }
+    db.exec("PRAGMA foreign_keys = ON");
+
+    // Re-enabling enforcement doesn't retroactively validate existing
+    // data — explicitly check for anything the migration's own table
+    // rebuild(s) may have left inconsistent (e.g. a stray row referencing
+    // an id that no longer exists) before trusting this migration
+    // succeeded cleanly.
+    const violations = db.prepare("PRAGMA foreign_key_check").all();
+    if (violations.length > 0) {
+      throw new Error(`Migration ${file} left ${violations.length} foreign key violation(s): ${JSON.stringify(violations)}`);
     }
   }
 }

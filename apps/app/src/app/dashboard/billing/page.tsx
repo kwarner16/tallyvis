@@ -87,8 +87,15 @@ export default async function BillingPage({
             <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Current plan</p>
             <p className="mt-1 text-lg font-semibold text-ink">{plan?.name ?? subscription.planId}</p>
           </div>
-          <span className="rounded-full bg-paper-alt px-3 py-1 text-xs font-medium text-ink-soft">
+          <span
+            className={
+              subscription.cancelAtPeriodEnd
+                ? "rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800"
+                : "rounded-full bg-paper-alt px-3 py-1 text-xs font-medium text-ink-soft"
+            }
+          >
             {STATUS_LABELS[effectiveStatus] ?? effectiveStatus}
+            {subscription.cancelAtPeriodEnd ? " · Canceling" : ""}
           </span>
         </div>
         {trialDaysRemaining !== null ? (
@@ -101,6 +108,19 @@ export default async function BillingPage({
         {effectiveStatus === "expired" ? (
           <p className="mt-3 text-sm text-ink-soft">
             Your trial has ended. Reactivate to keep creating quotes from the dashboard.
+          </p>
+        ) : null}
+        {subscription.cancelAtPeriodEnd && subscription.cancelAt ? (
+          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            Cancellation scheduled — you&rsquo;ll keep full access until{" "}
+            <span className="font-medium">
+              {new Date(subscription.cancelAt).toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              })}
+            </span>
+            , then your subscription will end. Manage billing to change your mind before then.
           </p>
         ) : null}
         <div className="mt-4 flex flex-wrap items-center gap-3">

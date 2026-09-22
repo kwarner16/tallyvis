@@ -163,6 +163,7 @@ describe("resolveEffectiveStatus", () => {
       businessId: "biz_1",
       planId: "starter",
       status: "trialing",
+      cancelAtPeriodEnd: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       ...overrides,
@@ -210,6 +211,7 @@ describe("hasProductAccess — server-authoritative gate", () => {
         businessId: "biz_1",
         planId: "starter",
         status: "canceled",
+        cancelAtPeriodEnd: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }),
@@ -485,6 +487,28 @@ describe("createCheckoutSessionForPlan", () => {
       createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
     ).resolves.toEqual({ url: "https://checkout.stripe.example/cs_test_retry" });
   });
+
+  it("sends a real Stripe idempotency key, and a genuinely later attempt (after the row has changed) derives a DIFFERENT key rather than being permanently deduplicated", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi
+      .spyOn(billing, "createCheckoutSession")
+      .mockResolvedValueOnce({ id: "cs_test_first", url: "https://checkout.stripe.example/cs_test_first" });
+
+    await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+    const firstKey = spy.mock.calls[0]![0].idempotencyKey;
+    expect(firstKey).toBeTruthy();
+    expect(firstKey).toContain(session.businessId);
+
+    // The first call already wrote back (bumping updatedAt), so a later,
+    // distinct attempt must NOT reuse the same key — otherwise a business
+    // could never legitimately retry checkout after this one expired.
+    spy.mockResolvedValueOnce({ id: "cs_test_second", url: "https://checkout.stripe.example/cs_test_second" });
+    await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+    const secondKey = spy.mock.calls[1]![0].idempotencyKey;
+
+    expect(secondKey).not.toBe(firstKey);
+  });
 });
 
 describe("createInstallationCheckoutSession", () => {
@@ -584,6 +608,29 @@ describe("createInstallationCheckoutSession", () => {
 
     // Only ONE billing_charges row exists — the concurrent attempt never got far enough to create a second one.
     expect(listBillingCharges(db, session)).toHaveLength(1);
+  });
+
+  it("sends a real Stripe idempotency key scoped to the pending charge, stable while it's still pending", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi
+      .spyOn(billing, "createCheckoutSession")
+      .mockResolvedValueOnce({ id: "cs_test_install_a", url: "https://checkout.stripe.example/cs_test_install_a" });
+
+    await createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" });
+    const firstKey = spy.mock.calls[0]![0].idempotencyKey;
+    expect(firstKey).toBeTruthy();
+    expect(firstKey).toContain(session.businessId);
+
+    // The charge is still "pending" (no webhook has marked it paid), so a
+    // retry against the SAME unresolved charge reuses the same key —
+    // Stripe returns the original session rather than minting a new one
+    // for an attempt that hasn't actually resolved anything yet.
+    spy.mockResolvedValueOnce({ id: "cs_test_install_b", url: "https://checkout.stripe.example/cs_test_install_b" });
+    await createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" });
+    const secondKey = spy.mock.calls[1]![0].idempotencyKey;
+
+    expect(secondKey).toBe(firstKey);
   });
 });
 

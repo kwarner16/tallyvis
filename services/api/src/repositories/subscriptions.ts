@@ -27,6 +27,10 @@ export interface Subscription {
   providerSubscriptionId?: string;
   providerCheckoutSessionId?: string;
   canceledAt?: string;
+  /** True when Stripe reports this subscription is scheduled to cancel at the end of the current period — still `trialing`/`active` (access unaffected) until `cancel_at` actually passes. See 0007_scheduled_cancellation.sql. */
+  cancelAtPeriodEnd: boolean;
+  /** When the scheduled cancellation above will actually take effect — only meaningful while `cancelAtPeriodEnd` is true; cleared (undefined) once reactivated or once the subscription has actually ended. */
+  cancelAt?: string;
   /** The most recently APPLIED Stripe webhook event's id — see 0005_webhook_idempotency.sql. Used to recognize and skip an exact replay of an already-processed event (Stripe explicitly documents at-least-once delivery). */
   lastWebhookEventId?: string;
   /** The most recently APPLIED Stripe webhook event's `created` (Unix seconds) — see 0006_webhook_event_ordering.sql. Used to reject a late-arriving, OLDER, DISTINCT event from overwriting newer state. */
@@ -48,6 +52,8 @@ interface SubscriptionRow {
   provider_subscription_id: string | null;
   provider_checkout_session_id: string | null;
   canceled_at: string | null;
+  cancel_at_period_end: number;
+  cancel_at: string | null;
   last_webhook_event_id: string | null;
   last_webhook_event_created_at: number | null;
   created_at: string;
@@ -68,6 +74,8 @@ function toSubscription(row: SubscriptionRow): Subscription {
     providerSubscriptionId: row.provider_subscription_id ?? undefined,
     providerCheckoutSessionId: row.provider_checkout_session_id ?? undefined,
     canceledAt: row.canceled_at ?? undefined,
+    cancelAtPeriodEnd: Boolean(row.cancel_at_period_end),
+    cancelAt: row.cancel_at ?? undefined,
     lastWebhookEventId: row.last_webhook_event_id ?? undefined,
     lastWebhookEventCreatedAt: row.last_webhook_event_created_at ?? undefined,
     createdAt: row.created_at,
@@ -93,6 +101,18 @@ export interface UpsertSubscriptionInput {
   providerSubscriptionId?: string;
   providerCheckoutSessionId?: string;
   canceledAt?: string;
+  /**
+   * Unlike every other optional field above, omitting this does NOT mean
+   * "preserve the existing value" when `cancelAt` is also omitted — see
+   * this function's own comment for why a plain COALESCE can't correctly
+   * express "clear cancel_at because cancellation was just reactivated."
+   * Pass `false` explicitly (from `applyStripeSubscription`, which always
+   * knows Stripe's current truth for this field) to clear it; omit both
+   * fields entirely (from callers with no opinion, e.g. `startTrial`) to
+   * leave whatever was already stored untouched.
+   */
+  cancelAtPeriodEnd?: boolean;
+  cancelAt?: string;
   lastWebhookEventId?: string;
   lastWebhookEventCreatedAt?: number;
 }
@@ -122,6 +142,15 @@ export function upsertSubscription(
   const now = new Date().toISOString();
   const existing = getSubscriptionByBusinessId(db, businessId);
 
+  // `cancel_at_period_end` uses COALESCE like everything else — omitting it
+  // preserves the existing value. `cancel_at` is different: when the
+  // caller explicitly passes `cancelAtPeriodEnd: false` (Stripe reporting
+  // cancellation was reactivated/removed), `cancel_at` must be CLEARED to
+  // NULL, which a plain COALESCE(?, cancel_at) can never do (COALESCE(NULL, x)
+  // returns x, not NULL) — hence the CASE. The boolean is bound twice
+  // (once for its own column, once for this CASE's condition).
+  const cancelAtPeriodEndParam = input.cancelAtPeriodEnd === undefined ? null : input.cancelAtPeriodEnd ? 1 : 0;
+
   if (existing) {
     db.prepare(
       `UPDATE subscriptions SET
@@ -134,6 +163,8 @@ export function upsertSubscription(
          provider_subscription_id = COALESCE(?, provider_subscription_id),
          provider_checkout_session_id = COALESCE(?, provider_checkout_session_id),
          canceled_at = COALESCE(?, canceled_at),
+         cancel_at_period_end = COALESCE(?, cancel_at_period_end),
+         cancel_at = CASE WHEN ? = 0 THEN NULL ELSE COALESCE(?, cancel_at) END,
          last_webhook_event_id = COALESCE(?, last_webhook_event_id),
          last_webhook_event_created_at = COALESCE(?, last_webhook_event_created_at),
          updated_at = ?
@@ -149,6 +180,9 @@ export function upsertSubscription(
       input.providerSubscriptionId ?? null,
       input.providerCheckoutSessionId ?? null,
       input.canceledAt ?? null,
+      cancelAtPeriodEndParam,
+      cancelAtPeriodEndParam,
+      input.cancelAt ?? null,
       input.lastWebhookEventId ?? null,
       input.lastWebhookEventCreatedAt ?? null,
       now,
@@ -160,8 +194,9 @@ export function upsertSubscription(
          id, business_id, plan_id, status, trial_started_at, trial_ends_at,
          current_period_start, current_period_end, billing_customer_id,
          provider_subscription_id, provider_checkout_session_id, canceled_at,
+         cancel_at_period_end, cancel_at,
          last_webhook_event_id, last_webhook_event_created_at, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       makeId("subscription"),
       businessId,
@@ -175,6 +210,8 @@ export function upsertSubscription(
       input.providerSubscriptionId ?? null,
       input.providerCheckoutSessionId ?? null,
       input.canceledAt ?? null,
+      cancelAtPeriodEndParam ?? 0,
+      input.cancelAt ?? null,
       input.lastWebhookEventId ?? null,
       input.lastWebhookEventCreatedAt ?? null,
       now,

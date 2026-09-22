@@ -278,6 +278,127 @@ describe("handleStripeWebhook — customer.subscription.updated / .deleted", () 
   });
 });
 
+describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cancel at period end')", () => {
+  it("persists cancel_at_period_end + cancel_at WITHOUT changing status or revoking access — scheduling a cancellation is not the same as canceling", async () => {
+    const db = createTestDb();
+    const session = await newBusiness(db);
+    upsertSubscription(db, session.businessId, { planId: "growth", status: "active", providerSubscriptionId: "sub_scheduled" });
+
+    const cancelAtSeconds = NOW_SECONDS + 5 * 24 * 60 * 60;
+    const payload = JSON.stringify({
+      id: "evt_schedule_cancel",
+      created: NOW_SECONDS,
+      type: "customer.subscription.updated",
+      data: { object: { id: "sub_scheduled", status: "active", cancel_at_period_end: true, cancel_at: cancelAtSeconds } },
+    });
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+
+    const updated = getSubscription(db, session)!;
+    expect(updated.status).toBe("active"); // access unaffected
+    expect(updated.cancelAtPeriodEnd).toBe(true);
+    expect(updated.cancelAt).toBe(new Date(cancelAtSeconds * 1000).toISOString());
+  });
+
+  it("scheduling cancellation during a trial does not end the trial or change trial dates", async () => {
+    const db = createTestDb();
+    const session = await newBusiness(db);
+    const original = startTrial(db, session, "growth");
+    upsertSubscription(db, session.businessId, { planId: "growth", status: "trialing", providerSubscriptionId: "sub_trial_scheduled" });
+
+    const cancelAtSeconds = NOW_SECONDS + 3 * 24 * 60 * 60;
+    const payload = JSON.stringify({
+      id: "evt_schedule_trial_cancel",
+      created: NOW_SECONDS,
+      type: "customer.subscription.updated",
+      data: { object: { id: "sub_trial_scheduled", status: "trialing", cancel_at_period_end: true, cancel_at: cancelAtSeconds } },
+    });
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+
+    const updated = getSubscription(db, session)!;
+    expect(updated.status).toBe("trialing");
+    expect(updated.cancelAtPeriodEnd).toBe(true);
+    expect(updated.trialStartedAt).toBe(original.trialStartedAt);
+    expect(updated.trialEndsAt).toBe(original.trialEndsAt);
+  });
+
+  it("reactivation (cancel_at_period_end back to false) clears cancel_at, not just the boolean", async () => {
+    const db = createTestDb();
+    const session = await newBusiness(db);
+    upsertSubscription(db, session.businessId, {
+      planId: "growth",
+      status: "active",
+      providerSubscriptionId: "sub_reactivated",
+      cancelAtPeriodEnd: true,
+      cancelAt: new Date(NOW_SECONDS * 1000).toISOString(),
+    });
+
+    const payload = JSON.stringify({
+      id: "evt_reactivate",
+      created: NOW_SECONDS + 1,
+      type: "customer.subscription.updated",
+      data: { object: { id: "sub_reactivated", status: "active", cancel_at_period_end: false, cancel_at: null } },
+    });
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+
+    const updated = getSubscription(db, session)!;
+    expect(updated.cancelAtPeriodEnd).toBe(false);
+    expect(updated.cancelAt).toBeUndefined();
+  });
+
+  it("actual cancellation (customer.subscription.deleted) clears any scheduled-cancellation state rather than leaving it stale", async () => {
+    const db = createTestDb();
+    const session = await newBusiness(db);
+    upsertSubscription(db, session.businessId, {
+      planId: "growth",
+      status: "active",
+      providerSubscriptionId: "sub_now_deleted",
+      cancelAtPeriodEnd: true,
+      cancelAt: new Date(NOW_SECONDS * 1000).toISOString(),
+    });
+
+    const payload = JSON.stringify({
+      type: "customer.subscription.deleted",
+      data: { object: { id: "sub_now_deleted", status: "canceled", cancel_at_period_end: true, cancel_at: NOW_SECONDS } },
+    });
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+
+    const updated = getSubscription(db, session)!;
+    expect(updated.status).toBe("canceled");
+    expect(updated.cancelAtPeriodEnd).toBe(false);
+    expect(updated.cancelAt).toBeUndefined();
+  });
+
+  it("an event with no opinion about cancel_at_period_end (omitted from the payload) leaves the existing scheduled state untouched", async () => {
+    const db = createTestDb();
+    const session = await newBusiness(db);
+    const scheduledAt = new Date(NOW_SECONDS * 1000).toISOString();
+    upsertSubscription(db, session.businessId, {
+      planId: "growth",
+      status: "active",
+      providerSubscriptionId: "sub_untouched",
+      cancelAtPeriodEnd: true,
+      cancelAt: scheduledAt,
+    });
+
+    // A hand-built payload that simply omits the field, unlike a real Stripe
+    // payload (which always includes it) — proving the repository-level
+    // COALESCE preserves state when a caller truly has no opinion, even
+    // though in practice every real webhook branch always passes it explicitly.
+    const payload = JSON.stringify({
+      id: "evt_no_opinion",
+      created: NOW_SECONDS + 1,
+      type: "customer.subscription.updated",
+      data: { object: { id: "sub_untouched", status: "past_due" } },
+    });
+    handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+
+    const updated = getSubscription(db, session)!;
+    expect(updated.status).toBe("active"); // past_due maps to active
+    expect(updated.cancelAtPeriodEnd).toBe(true);
+    expect(updated.cancelAt).toBe(scheduledAt);
+  });
+});
+
 describe("handleStripeWebhook — plan switching (Customer Portal-driven price change)", () => {
   beforeEach(() => {
     process.env.STRIPE_PRICE_STARTER = "price_test_starter";

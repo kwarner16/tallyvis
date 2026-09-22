@@ -25,6 +25,17 @@ export interface CreateCheckoutSessionInput {
   cancelUrl: string;
   /** Round-tripped back on the webhook event so the handler can resolve which business/subscription/charge this session belongs to without trusting anything else client-supplied. */
   metadata: Record<string, string>;
+  /**
+   * A Stripe idempotency key scoped to one logical checkout attempt (see
+   * `subscriptions.ts`'s key-derivation comment) — required, not optional,
+   * so no Checkout Session creation call can ever be made without one.
+   * Retrying the identical attempt (a double-click, two tabs, a network
+   * retry) with the same key returns Stripe's original result instead of
+   * creating a second object; a genuinely later attempt naturally derives
+   * a different key once the underlying state has moved on, and Stripe
+   * itself expires unused keys after 24 hours regardless.
+   */
+  idempotencyKey: string;
 }
 
 export interface CheckoutSessionResult {

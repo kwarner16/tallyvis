@@ -45,15 +45,19 @@ async function postForm(
   secretKey: string,
   path: string,
   body: Record<string, string>,
+  idempotencyKey?: string,
 ): Promise<Record<string, unknown>> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${secretKey}`,
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+
   let response: Response;
   try {
     response = await fetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${secretKey}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
+      headers,
       body: encodeFormBody(body),
     });
   } catch {
@@ -117,7 +121,7 @@ export function createStripeProvider(config: StripeProviderConfig): BillingProvi
       body[`metadata[${key}]`] = value;
     }
 
-    const session = (await postForm(baseUrl, config.secretKey, "/v1/checkout/sessions", body)) as {
+    const session = (await postForm(baseUrl, config.secretKey, "/v1/checkout/sessions", body, input.idempotencyKey)) as {
       id: string;
       url: string | null;
     };

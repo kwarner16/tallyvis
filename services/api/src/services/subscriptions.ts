@@ -22,7 +22,8 @@ export type { BillingCharge } from "../repositories/billingCharges";
  * Checkout Sessions — the same documented-limitation pattern
  * `passwordReset.ts`'s request cooldown already uses (not a distributed
  * lock; sufficient for this single-instance deployment, not sufficient
- * once this app runs as multiple concurrent serverless instances).
+ * once this app runs as multiple concurrent serverless instances — see
+ * `checkoutIdempotencyKey` below for the distributed-safe complement).
  *
  * Without this, `createCheckoutSessionForPlan`/`createInstallationCheckoutSession`
  * each read existing state, then `await` a real Stripe API call, then
@@ -36,6 +37,12 @@ export type { BillingCharge } from "../repositories/billingCharges";
  * sessions, an actual double charge. Discovered during the Stripe V1
  * hardening audit (see docs/decisions/0018-stripe-v1-hardening.md), not
  * as a reported production incident.
+ *
+ * This guard alone rejects a concurrent SECOND request outright (fast,
+ * friendly "already in progress" error, zero Stripe calls). It's kept as
+ * defense-in-depth even now that a Stripe idempotency key exists: it's
+ * instant and free, while the key only helps once a request has already
+ * reached this process and called Stripe.
  */
 const inFlightCheckouts = new Set<string>();
 
@@ -48,6 +55,34 @@ function beginCheckout(businessId: string): void {
 
 function endCheckout(businessId: string): void {
   inFlightCheckouts.delete(businessId);
+}
+
+/**
+ * Derives a Stripe idempotency key scoped to one LOGICAL checkout attempt
+ * — the distributed-safe complement to the in-process guard above, and
+ * the one that actually matters once this app runs as more than one
+ * server instance (the in-process `Set` above is invisible across
+ * processes; two different instances handling a near-simultaneous
+ * request for the same business would otherwise each think they're the
+ * only one in flight).
+ *
+ * Key lifecycle: `scopeVersion` is some value that's stable for as long
+ * as "this same attempt" is still outstanding, and changes once it
+ * genuinely resolves — callers pass the relevant row's own `updatedAt`
+ * (a subscription's or a billing charge's). Two requests landing before
+ * either one has written back (a double-click, two tabs, a retried
+ * request) read the SAME `updatedAt` and therefore produce the SAME key,
+ * so Stripe returns its original result for the second one instead of
+ * creating a duplicate object. A genuinely LATER attempt — after a
+ * webhook has updated the row, changing `updatedAt` — naturally derives a
+ * different key, so it's never permanently blocked. Even if `updatedAt`
+ * somehow never changed, Stripe itself expires an idempotency key's
+ * dedup record after 24 hours, which is also comfortably longer than a
+ * Checkout Session's own default expiry — so a stale key can never
+ * outlive the very session it would have deduplicated against.
+ */
+function checkoutIdempotencyKey(kind: "subscription" | "installation", businessId: string, scopeVersion: string): string {
+  return `tallyvis:${kind}-checkout:${businessId}:${scopeVersion}`;
 }
 
 /**
@@ -206,6 +241,7 @@ export async function createCheckoutSessionForPlan(
       successUrl: urls.successUrl,
       cancelUrl: urls.cancelUrl,
       metadata: { businessId: session.businessId, planId: plan.id },
+      idempotencyKey: checkoutIdempotencyKey("subscription", session.businessId, existing?.updatedAt ?? "new"),
     });
 
     subscriptionsRepo.upsertSubscription(db, session.businessId, {
@@ -271,6 +307,7 @@ export async function createInstallationCheckoutSession(
       // uses to find and update the exact right charge — never trusting a
       // client-suppliable businessId/amount at that point either.
       metadata: { businessId: session.businessId, billingChargeId: charge.id, kind: PROFESSIONAL_INSTALLATION_FEE.kind },
+      idempotencyKey: checkoutIdempotencyKey("installation", session.businessId, charge.updatedAt),
     });
 
     return { url: result.url };
