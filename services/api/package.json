@@ -17,7 +17,8 @@
     "@tallyvis/config": "workspace:*",
     "@tallyvis/pricing": "workspace:*",
     "@tallyvis/types": "workspace:*",
-    "bcryptjs": "^2.4.3"
+    "bcryptjs": "^2.4.3",
+    "jose": "^6.2.12"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

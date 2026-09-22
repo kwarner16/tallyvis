@@ -17,7 +17,7 @@ import { INTENDED_PLAN_COOKIE_NAME } from "./constants";
 
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // matches services/api's session TTL
 
-async function setSessionCookie(token: string): Promise<void> {
+export async function setSessionCookie(token: string): Promise<void> {
   const store = await cookies();
   store.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,

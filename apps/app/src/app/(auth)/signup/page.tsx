@@ -6,6 +6,8 @@ import Link from "next/link";
 import { isPlanId } from "@tallyvis/config";
 import { buttonVariants } from "@tallyvis/ui";
 import { signUpAction, type AuthActionState } from "@/lib/authActions";
+import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { GoogleErrorBanner } from "@/components/auth/GoogleErrorBanner";
 
 const initialState: AuthActionState = {};
 
@@ -33,6 +35,16 @@ function SignUpForm() {
           Sets up your business&rsquo;s Tallyvis workspace, starting with a default rate card you can
           edit any time.
         </p>
+      </div>
+
+      <GoogleErrorBanner />
+
+      <GoogleSignInButton />
+
+      <div className="flex items-center gap-3 text-xs text-ink-faint">
+        <div className="h-px flex-1 bg-line" />
+        or
+        <div className="h-px flex-1 bg-line" />
       </div>
 
       <form action={formAction} className="flex flex-col gap-4">

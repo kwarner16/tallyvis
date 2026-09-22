@@ -128,3 +128,16 @@ export { handleStripeWebhook, WebhookVerificationError } from "./services/billin
 export { isWebhookConfigured } from "./billing";
 
 export { deleteAccount, AccountDeletionError } from "./services/accountDeletion";
+
+export {
+  generateRandomToken,
+  generatePkcePair,
+  buildGoogleAuthorizationUrl,
+  exchangeCodeForIdToken,
+  verifyGoogleIdToken,
+  GoogleAuthError,
+  type PkcePair,
+  type VerifiedGoogleIdentity,
+} from "./auth/googleOAuth";
+
+export { signInWithGoogle, GoogleSignInError, type GoogleAuthOutcome } from "./services/googleAuth";

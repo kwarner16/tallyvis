@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { buttonVariants } from "@tallyvis/ui";
 import { logInAction, type AuthActionState } from "@/lib/authActions";
+import { GoogleSignInButton } from "@/components/auth/GoogleSignInButton";
+import { GoogleErrorBanner } from "@/components/auth/GoogleErrorBanner";
 
 const initialState: AuthActionState = {};
 
@@ -34,6 +36,17 @@ export default function LoginPage() {
       <Suspense fallback={null}>
         <ResetSuccessBanner />
       </Suspense>
+      <Suspense fallback={null}>
+        <GoogleErrorBanner />
+      </Suspense>
+
+      <GoogleSignInButton />
+
+      <div className="flex items-center gap-3 text-xs text-ink-faint">
+        <div className="h-px flex-1 bg-line" />
+        or
+        <div className="h-px flex-1 bg-line" />
+      </div>
 
       <form action={formAction} className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">

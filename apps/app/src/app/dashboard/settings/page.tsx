@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { getPlan, TRIAL_DAYS } from "@tallyvis/config";
 import { getCurrentBusiness, getCurrentUser, getSubscription, resolveEffectiveStatus } from "@tallyvis/api";
@@ -6,6 +7,8 @@ import { requireContext } from "@/lib/session";
 import { SettingsPageClient } from "@/components/dashboard/SettingsPageClient";
 import { ManageBillingButton } from "@/components/dashboard/ManageBillingButton";
 import { DangerZoneClient } from "@/components/dashboard/DangerZoneClient";
+import { GoogleErrorBanner } from "@/components/auth/GoogleErrorBanner";
+import { GoogleLinkedBanner } from "@/components/auth/GoogleLinkedBanner";
 
 const STATUS_LABELS: Record<string, string> = {
   trialing: "Trialing",
@@ -64,6 +67,21 @@ export default async function SettingsPage() {
               </Link>
             </div>
           ) : null}
+          {!user.linkedProviders.includes("google") ? (
+            <div className="mt-1">
+              <a href="/api/auth/google/start" className="text-sm font-medium text-accent-strong hover:underline">
+                Connect Google
+              </a>
+            </div>
+          ) : null}
+        </div>
+        <div className="mt-3 flex flex-col gap-2">
+          <Suspense fallback={null}>
+            <GoogleErrorBanner />
+          </Suspense>
+          <Suspense fallback={null}>
+            <GoogleLinkedBanner />
+          </Suspense>
         </div>
       </div>
 
