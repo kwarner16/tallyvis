@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTestDb } from "../db/client";
 import { logIn, logOut, resolveSession, signUp } from "../services/auth";
 import { createBusiness } from "../repositories/businesses";
@@ -114,6 +114,24 @@ describe("logIn", () => {
     await expect(
       logIn(db, { email: "nobody@example.com", password: "whatever123" }),
     ).rejects.toThrow(/Invalid email or password/);
+  });
+
+  it("performs the same bcrypt comparison work for a nonexistent email as for a wrong password (timing-safe against account enumeration)", async () => {
+    const db = freshDb();
+    await signUp(db, { businessName: "A", ownerEmail: "owner@example.com", password: "correct-horse-battery" });
+
+    const password = await import("../auth/password");
+    const spy = vi.spyOn(password, "verifyPassword");
+
+    await expect(logIn(db, { email: "nobody@example.com", password: "whatever123" })).rejects.toThrow();
+    // Without the fix, a nonexistent email would short-circuit before ever
+    // calling verifyPassword — making that response measurably faster than
+    // a real wrong-password attempt and leaking account existence via
+    // timing even though the error message is identical.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![1]).toBe(password.DUMMY_PASSWORD_HASH_FOR_TIMING_SAFETY);
+
+    vi.restoreAllMocks();
   });
 });
 

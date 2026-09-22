@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { windowCleaningDefaultPricingRules } from "@tallyvis/config";
 import { createSession, revokeSession, validateSession, type AuthSession } from "../auth/session";
-import { hashPassword, verifyPassword } from "../auth/password";
+import { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH_FOR_TIMING_SAFETY } from "../auth/password";
 import { createBusiness } from "../repositories/businesses";
 import { createUser, getUserWithPasswordHashByEmail } from "../repositories/users";
 import { createInitialPricingConfiguration } from "../repositories/pricingConfigurations";
@@ -84,13 +84,21 @@ export interface LogInInput {
   password: string;
 }
 
-/** Deliberately the same error for "no such user" and "wrong password" — distinguishing them lets an attacker enumerate registered emails. */
+/**
+ * Deliberately the same error for "no such user" and "wrong password" —
+ * distinguishing them lets an attacker enumerate registered emails.
+ * `verifyPassword` is also called unconditionally, even when no account
+ * exists (against a fixed dummy hash in that case) — hardening against a
+ * timing side-channel: skipping the (deliberately slow, cost-12 bcrypt)
+ * comparison entirely for a nonexistent email would make that response
+ * measurably faster than a real wrong-password attempt, letting an
+ * attacker enumerate emails via response time even with an identical
+ * error message.
+ */
 export async function logIn(db: DatabaseSync, input: LogInInput): Promise<AuthResult> {
   const record = getUserWithPasswordHashByEmail(db, input.email.trim().toLowerCase());
-  if (!record) throw new Error("Invalid email or password.");
-
-  const valid = await verifyPassword(input.password, record.passwordHash);
-  if (!valid) throw new Error("Invalid email or password.");
+  const valid = await verifyPassword(input.password, record?.passwordHash ?? DUMMY_PASSWORD_HASH_FOR_TIMING_SAFETY);
+  if (!record || !valid) throw new Error("Invalid email or password.");
 
   const token = createSession(db, record.user.id, record.user.businessId);
   return { session: { userId: record.user.id, businessId: record.user.businessId }, token };

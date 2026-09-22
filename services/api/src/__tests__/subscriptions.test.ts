@@ -435,6 +435,56 @@ describe("createCheckoutSessionForPlan", () => {
       createCheckoutSessionForPlan(db, session, "starter", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
     ).rejects.toThrow(/rejected the configured credentials/);
   });
+
+  it("regression: a second concurrent call for the same business while the first is still awaiting Stripe is rejected, rather than creating a second real Checkout Session (a double-click could otherwise create two real Stripe subscriptions before either write lands locally)", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    let resolveFirst!: (value: { id: string; url: string }) => void;
+    const firstCallPending = new Promise<{ id: string; url: string }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    vi.spyOn(billing, "createCheckoutSession").mockReturnValueOnce(firstCallPending);
+
+    const firstCall = createCheckoutSessionForPlan(db, session, "growth", {
+      successUrl: "https://x/success",
+      cancelUrl: "https://x/cancel",
+    });
+
+    // The second attempt happens while the first is still awaiting Stripe — must be rejected immediately.
+    await expect(
+      createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+    ).rejects.toThrow(/already in progress/i);
+
+    resolveFirst({ id: "cs_test_race", url: "https://checkout.stripe.example/cs_test_race" });
+    await expect(firstCall).resolves.toEqual({ url: "https://checkout.stripe.example/cs_test_race" });
+
+    // The guard is released once the first call finishes — a later, non-concurrent attempt succeeds normally.
+    vi.spyOn(billing, "createCheckoutSession").mockResolvedValueOnce({
+      id: "cs_test_after",
+      url: "https://checkout.stripe.example/cs_test_after",
+    });
+    await expect(
+      createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+    ).resolves.toEqual({ url: "https://checkout.stripe.example/cs_test_after" });
+  });
+
+  it("releases the in-flight guard even when the provider call fails, so a failed attempt doesn't permanently lock out retries", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    vi.spyOn(billing, "createCheckoutSession").mockRejectedValueOnce(new Error("network blip"));
+
+    await expect(
+      createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+    ).rejects.toThrow();
+
+    vi.spyOn(billing, "createCheckoutSession").mockResolvedValueOnce({
+      id: "cs_test_retry",
+      url: "https://checkout.stripe.example/cs_test_retry",
+    });
+    await expect(
+      createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+    ).resolves.toEqual({ url: "https://checkout.stripe.example/cs_test_retry" });
+  });
 });
 
 describe("createInstallationCheckoutSession", () => {
@@ -512,6 +562,28 @@ describe("createInstallationCheckoutSession", () => {
     await expect(
       createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" }),
     ).rejects.toThrow(/already been resolved/i);
+  });
+
+  it("regression: a second concurrent installation-checkout attempt while the first is still awaiting Stripe is rejected, rather than creating a second pending $299 charge (billing_charges has no unique constraint on business_id+kind, so this could otherwise double-charge)", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    let resolveFirst!: (value: { id: string; url: string }) => void;
+    const firstCallPending = new Promise<{ id: string; url: string }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    vi.spyOn(billing, "createCheckoutSession").mockReturnValueOnce(firstCallPending);
+
+    const firstCall = createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" });
+
+    await expect(
+      createInstallationCheckoutSession(db, session, { successUrl: "https://x/s", cancelUrl: "https://x/c" }),
+    ).rejects.toThrow(/already in progress/i);
+
+    resolveFirst({ id: "cs_test_install_race", url: "https://checkout.stripe.example/cs_test_install_race" });
+    await firstCall;
+
+    // Only ONE billing_charges row exists — the concurrent attempt never got far enough to create a second one.
+    expect(listBillingCharges(db, session)).toHaveLength(1);
   });
 });
 

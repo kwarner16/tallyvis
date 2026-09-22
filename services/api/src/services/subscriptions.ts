@@ -18,6 +18,39 @@ export type { Subscription, SubscriptionStatus } from "../repositories/subscript
 export type { BillingCharge } from "../repositories/billingCharges";
 
 /**
+ * Best-effort, single-process in-flight guard against duplicate Stripe
+ * Checkout Sessions — the same documented-limitation pattern
+ * `passwordReset.ts`'s request cooldown already uses (not a distributed
+ * lock; sufficient for this single-instance deployment, not sufficient
+ * once this app runs as multiple concurrent serverless instances).
+ *
+ * Without this, `createCheckoutSessionForPlan`/`createInstallationCheckoutSession`
+ * each read existing state, then `await` a real Stripe API call, then
+ * write back — a second call for the same business landing in that
+ * `await` window sees the same stale "no checkout in progress" state and
+ * creates a SECOND real Stripe Checkout Session before either write
+ * lands. For the installation charge specifically, `billing_charges` has
+ * no unique constraint on `(business_id, kind)` (unlike `subscriptions`,
+ * which has `UNIQUE(business_id)`), so this could create two separate
+ * pending $299 charges — and if a business completed both real Stripe
+ * sessions, an actual double charge. Discovered during the Stripe V1
+ * hardening audit (see docs/decisions/0018-stripe-v1-hardening.md), not
+ * as a reported production incident.
+ */
+const inFlightCheckouts = new Set<string>();
+
+function beginCheckout(businessId: string): void {
+  if (inFlightCheckouts.has(businessId)) {
+    throw new Error("A checkout is already in progress for this business. Please wait a moment and try again.");
+  }
+  inFlightCheckouts.add(businessId);
+}
+
+function endCheckout(businessId: string): void {
+  inFlightCheckouts.delete(businessId);
+}
+
+/**
  * Phase 14 SaaS plan/trial/subscription foundation (see
  * docs/decisions/0016-onboarding-billing-embed.md), hardened for V1 in
  * docs/decisions/0018-stripe-v1-hardening.md.
@@ -159,27 +192,32 @@ export async function createCheckoutSessionForPlan(
   const business = getBusinessById(db, session.businessId);
   if (!business) throw new Error("Business not found.");
 
-  const priceId = resolveStripePriceId(plan.id);
-  const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+  beginCheckout(session.businessId);
+  try {
+    const priceId = resolveStripePriceId(plan.id);
+    const existing = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
 
-  const result = await providerCreateCheckoutSession({
-    mode: "subscription",
-    priceId,
-    customerId: existing?.billingCustomerId,
-    customerEmail: existing?.billingCustomerId ? undefined : business.email,
-    trialDays: TRIAL_DAYS,
-    successUrl: urls.successUrl,
-    cancelUrl: urls.cancelUrl,
-    metadata: { businessId: session.businessId, planId: plan.id },
-  });
+    const result = await providerCreateCheckoutSession({
+      mode: "subscription",
+      priceId,
+      customerId: existing?.billingCustomerId,
+      customerEmail: existing?.billingCustomerId ? undefined : business.email,
+      trialDays: TRIAL_DAYS,
+      successUrl: urls.successUrl,
+      cancelUrl: urls.cancelUrl,
+      metadata: { businessId: session.businessId, planId: plan.id },
+    });
 
-  subscriptionsRepo.upsertSubscription(db, session.businessId, {
-    planId: plan.id,
-    status: existing?.status ?? "incomplete",
-    providerCheckoutSessionId: result.id,
-  });
+    subscriptionsRepo.upsertSubscription(db, session.businessId, {
+      planId: plan.id,
+      status: existing?.status ?? "incomplete",
+      providerCheckoutSessionId: result.id,
+    });
 
-  return { url: result.url };
+    return { url: result.url };
+  } finally {
+    endCheckout(session.businessId);
+  }
 }
 
 /**
@@ -200,40 +238,45 @@ export async function createInstallationCheckoutSession(
   const business = getBusinessById(db, session.businessId);
   if (!business) throw new Error("Business not found.");
 
-  const existingCharge = billingChargesRepo.getBillingChargeByKind(
-    db,
-    session.businessId,
-    PROFESSIONAL_INSTALLATION_FEE.kind,
-  );
-  if (existingCharge && existingCharge.status !== "pending") {
-    throw new Error("Installation has already been resolved for this business.");
-  }
-  const charge =
-    existingCharge ??
-    billingChargesRepo.createBillingCharge(db, session.businessId, {
-      kind: PROFESSIONAL_INSTALLATION_FEE.kind,
-      amountCents: PROFESSIONAL_INSTALLATION_FEE.amountCents,
-      currency: PROFESSIONAL_INSTALLATION_FEE.currency,
+  beginCheckout(session.businessId);
+  try {
+    const existingCharge = billingChargesRepo.getBillingChargeByKind(
+      db,
+      session.businessId,
+      PROFESSIONAL_INSTALLATION_FEE.kind,
+    );
+    if (existingCharge && existingCharge.status !== "pending") {
+      throw new Error("Installation has already been resolved for this business.");
+    }
+    const charge =
+      existingCharge ??
+      billingChargesRepo.createBillingCharge(db, session.businessId, {
+        kind: PROFESSIONAL_INSTALLATION_FEE.kind,
+        amountCents: PROFESSIONAL_INSTALLATION_FEE.amountCents,
+        currency: PROFESSIONAL_INSTALLATION_FEE.currency,
+      });
+
+    const existingSubscription = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+
+    const result = await providerCreateCheckoutSession({
+      mode: "payment",
+      priceId: resolveInstallationPriceId(),
+      customerId: existingSubscription?.billingCustomerId,
+      customerEmail: existingSubscription?.billingCustomerId ? undefined : business.email,
+      successUrl: urls.successUrl,
+      cancelUrl: urls.cancelUrl,
+      // `kind` lets the webhook tell a subscription checkout apart from an
+      // installation checkout without depending on Stripe's `mode` field;
+      // `billingChargeId` is the trusted, unguessable reference the webhook
+      // uses to find and update the exact right charge — never trusting a
+      // client-suppliable businessId/amount at that point either.
+      metadata: { businessId: session.businessId, billingChargeId: charge.id, kind: PROFESSIONAL_INSTALLATION_FEE.kind },
     });
 
-  const existingSubscription = subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
-
-  const result = await providerCreateCheckoutSession({
-    mode: "payment",
-    priceId: resolveInstallationPriceId(),
-    customerId: existingSubscription?.billingCustomerId,
-    customerEmail: existingSubscription?.billingCustomerId ? undefined : business.email,
-    successUrl: urls.successUrl,
-    cancelUrl: urls.cancelUrl,
-    // `kind` lets the webhook tell a subscription checkout apart from an
-    // installation checkout without depending on Stripe's `mode` field;
-    // `billingChargeId` is the trusted, unguessable reference the webhook
-    // uses to find and update the exact right charge — never trusting a
-    // client-suppliable businessId/amount at that point either.
-    metadata: { businessId: session.businessId, billingChargeId: charge.id, kind: PROFESSIONAL_INSTALLATION_FEE.kind },
-  });
-
-  return { url: result.url };
+    return { url: result.url };
+  } finally {
+    endCheckout(session.businessId);
+  }
 }
 
 /**
