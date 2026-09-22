@@ -10,11 +10,14 @@ import { NotificationError } from "../types";
  * read exclusively in this file, never bundled to a browser, never logged.
  * See docs/decisions/0016-onboarding-billing-embed.md.
  *
- * No credentials exist in this development environment, so this path has
- * NOT been exercised against Resend's real API — only the request/response
- * shape has been written against their published contract. Do not treat a
- * passing test suite (which only exercises `devEmailProvider` and a local
- * fake HTTP server) as proof this integration works against the real API.
+ * Human-verified against the real Resend API in this environment (see
+ * docs/decisions/0016-onboarding-billing-embed.md and the recovery notes
+ * that followed it): a real password-reset email was successfully
+ * delivered with `EMAIL_PROVIDER=resend` and a real `RESEND_API_KEY`
+ * configured. Still, don't treat a passing test suite alone (which only
+ * exercises `devEmailProvider` and a local fake HTTP server) as proof this
+ * integration works — that proof is the human-confirmed real send above,
+ * not the unit tests.
  */
 
 export interface ResendProviderConfig {

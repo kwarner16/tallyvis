@@ -65,11 +65,15 @@ export default function PropertyStepPage() {
 
       <div className="flex flex-col gap-2">
         <label htmlFor="address" className="text-sm font-medium text-ink">
-          Property address <span className="font-normal text-ink-faint">(optional)</span>
+          Service address <span className="font-normal text-red-600">*</span>
         </label>
+        <p className="text-xs text-ink-faint">Where will the service be performed?</p>
         <input
           id="address"
           type="text"
+          required
+          autoComplete="street-address"
+          aria-required="true"
           value={input.property.address}
           onChange={(e) => updateProperty({ address: e.target.value })}
           placeholder="123 Main St, Springfield"
@@ -83,7 +87,7 @@ export default function PropertyStepPage() {
       />
       {!canContinue ? (
         <p className="-mt-6 text-xs text-ink-faint">
-          Select a property type and story count to continue.
+          Select a property type and story count, and enter the service address, to continue.
         </p>
       ) : null}
     </div>

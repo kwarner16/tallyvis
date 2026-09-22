@@ -225,7 +225,16 @@ export interface Customer extends CustomerInput {
 export interface Property {
   propertyType: PropertyType;
   stories: number;
-  address?: string;
+  /**
+   * The service/job address — where the work will actually be performed.
+   * Required as of the required-service-address change: every quote must
+   * carry the location the business needs to show up to. Snapshotted onto
+   * the quote at creation time and never mutated afterward, so a later
+   * change to `Customer.address` (a separate, optional default/contact
+   * address) never rewrites a historical quote's service location — see
+   * `Customer.address`'s own comment.
+   */
+  address: string;
 }
 
 export interface QuotePhoto {

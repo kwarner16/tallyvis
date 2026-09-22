@@ -43,6 +43,45 @@ export interface CreateQuoteInput {
   aiObservation?: RawPropertyObservation;
 }
 
+/**
+ * Generous enough for any real street address (including a long unit/
+ * building/floor qualifier) while still rejecting obvious abuse — not a
+ * meaningful business constraint, just a sanity ceiling.
+ */
+const MAX_SERVICE_ADDRESS_LENGTH = 300;
+
+/** Control characters (including newline/tab) have no legitimate place in a single-line address field — reject rather than silently strip, so the caller knows the input was rejected rather than silently mangled. */
+// eslint-disable-next-line no-control-regex -- deliberately matching control characters to reject them
+const CONTROL_CHARACTERS = /[\x00-\x1F\x7F]/;
+
+/**
+ * The one place a service address is validated, regardless of whether the
+ * quote is coming from the public estimator or the business's own "New
+ * quote" dashboard flow — both funnel through `persistPricedQuote` below.
+ * Deliberately permissive about content (real addresses use letters,
+ * digits, spaces, and punctuation like `.`, `,`, `-`, `'`, `#`, `/`) and
+ * strict only about shape: present, non-empty once trimmed, not absurdly
+ * long, no control characters. No format/geocoding validation — see
+ * docs/decisions/0020-required-service-address.md for why V1 deliberately
+ * doesn't verify the address is real.
+ */
+function validateServiceAddress(address: unknown): string {
+  if (typeof address !== "string") {
+    throw new Error("Service address is required.");
+  }
+  const trimmed = address.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Service address is required.");
+  }
+  if (trimmed.length > MAX_SERVICE_ADDRESS_LENGTH) {
+    throw new Error(`Service address must be ${MAX_SERVICE_ADDRESS_LENGTH} characters or fewer.`);
+  }
+  if (CONTROL_CHARACTERS.test(trimmed)) {
+    throw new Error("Service address contains characters that aren't allowed.");
+  }
+  return trimmed;
+}
+
 export function listQuotes(db: DatabaseSync, session: AuthSession): Quote[] {
   return quotesRepo.listQuotes(db, session.businessId);
 }
@@ -132,6 +171,7 @@ function persistPricedQuote(
   customerId: string,
   input: CreateQuoteInput,
 ): Quote {
+  const address = validateServiceAddress(input.property.address);
   const configuration = pricingService.getActiveConfigurationForBusiness(db, businessId);
   const pricingInput = reconcilePricingInput(input.servicePreferences, input.analysis.characteristics);
   const estimate = calculateEstimate(pricingInput, configuration, input.analysis.metadata.confidence);
@@ -139,7 +179,7 @@ function persistPricedQuote(
   return quotesRepo.createQuoteRecord(db, businessId, {
     customerId,
     pricingConfigId: configuration.id,
-    property: input.property,
+    property: { ...input.property, address },
     servicePreferences: input.servicePreferences,
     notes: input.notes,
     photos: input.photos,

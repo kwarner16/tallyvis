@@ -113,7 +113,7 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
   } | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
-  const propertyComplete = propertyType !== null && stories !== null;
+  const propertyComplete = propertyType !== null && stories !== null && address.trim().length > 0;
   const customerComplete = customer.name.trim().length > 0 && isValidEmail(customer.email);
   const canSave = propertyComplete && customerComplete;
 
@@ -145,7 +145,7 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
         property: {
           propertyType: propertyType!,
           stories: stories!,
-          address: address.trim() || undefined,
+          address: address.trim(),
         },
         servicePreferences,
         notes,
@@ -324,11 +324,15 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
             </fieldset>
             <div className="flex flex-col gap-2">
               <label htmlFor="property-address" className="text-sm font-medium text-ink">
-                Address <span className="font-normal text-ink-faint">(optional)</span>
+                Service address <span className="font-normal text-red-600">*</span>
               </label>
+              <p className="text-xs text-ink-faint">Where will the service be performed?</p>
               <input
                 id="property-address"
                 type="text"
+                required
+                autoComplete="street-address"
+                aria-required="true"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder="123 Main St, Springfield"
@@ -563,8 +567,8 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
           </button>
           {!canSave ? (
             <p className="text-xs text-ink-faint">
-              Add the customer&rsquo;s name and a valid email, and select a property type and story
-              count, to save this quote.
+              Add the customer&rsquo;s name and a valid email, and select a property type, story
+              count, and service address, to save this quote.
             </p>
           ) : null}
         </div>

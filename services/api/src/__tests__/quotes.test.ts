@@ -16,7 +16,7 @@ import type { AuthSession } from "../auth/session";
 
 const sampleInput = (windowCount = 18) => ({
   customer: { name: "Jordan Rivera", email: "jordan@example.com", phone: "(555) 000-1111" },
-  property: { propertyType: "single-family" as const, stories: 2 },
+  property: { propertyType: "single-family" as const, stories: 2, address: "1 Test St" },
   servicePreferences: {
     interiorCleaning: false,
     screens: true,
@@ -173,6 +173,72 @@ describe("updateQuoteStatus", () => {
     expect(() => updateQuoteStatus(db, session, quote.id, "approved")).toThrow(
       /Cannot move a quote from "declined" to "approved"/,
     );
+  });
+});
+
+describe("createQuote / createQuotePublic — required service address", () => {
+  it("rejects a missing address", async () => {
+    const { db, session } = await setUp();
+    const input = sampleInput();
+    // @ts-expect-error — deliberately simulating a caller (or a direct
+    // API/Server Action call bypassing the UI) that omits the field.
+    delete input.property.address;
+    expect(() => createQuote(db, session, input)).toThrow(/service address is required/i);
+  });
+
+  it("rejects an empty address", async () => {
+    const { db, session } = await setUp();
+    const input = sampleInput();
+    input.property = { ...input.property, address: "" };
+    expect(() => createQuote(db, session, input)).toThrow(/service address is required/i);
+  });
+
+  it("rejects a whitespace-only address", async () => {
+    const { db, session } = await setUp();
+    const input = sampleInput();
+    input.property = { ...input.property, address: "   \t  " };
+    expect(() => createQuote(db, session, input)).toThrow(/service address is required/i);
+  });
+
+  it("rejects an absurdly long address", async () => {
+    const { db, session } = await setUp();
+    const input = sampleInput();
+    input.property = { ...input.property, address: "A".repeat(301) };
+    expect(() => createQuote(db, session, input)).toThrow(/300 characters or fewer/i);
+  });
+
+  it("rejects an address containing control characters", async () => {
+    const { db, session } = await setUp();
+    const input = sampleInput();
+    input.property = { ...input.property, address: "123 Main St " };
+    expect(() => createQuote(db, session, input)).toThrow(/characters that aren't allowed/i);
+  });
+
+  it("accepts a valid address, trims it, and persists it on the quote", async () => {
+    const { db, session } = await setUp();
+    const input = sampleInput();
+    input.property = { ...input.property, address: "  456 Oak Ave, Unit #2  " };
+    const quote = createQuote(db, session, input);
+    expect(quote.property.address).toBe("456 Oak Ave, Unit #2");
+  });
+
+  it("allows real-world address punctuation (periods, commas, hyphens, apostrophes, unit markers)", async () => {
+    const { db, session } = await setUp();
+    const input = sampleInput();
+    input.property = { ...input.property, address: "12-B O'Malley St. Apt #4, Springfield" };
+    const quote = createQuote(db, session, input);
+    expect(quote.property.address).toBe("12-B O'Malley St. Apt #4, Springfield");
+  });
+
+  it("enforces the same requirement on the public estimator's createQuotePublic path", async () => {
+    const { db, session } = await setUp();
+    const input = sampleInput();
+    input.property = { ...input.property, address: "" };
+    const { getDefaultPublicBusiness } = await import("../services/business");
+    const business = getDefaultPublicBusiness(db)!;
+    expect(business.id).toBe(session.businessId);
+    const { createQuotePublic } = await import("../services/quotes");
+    expect(() => createQuotePublic(db, business.id, input)).toThrow(/service address is required/i);
   });
 });
 

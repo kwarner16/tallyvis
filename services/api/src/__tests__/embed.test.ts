@@ -107,7 +107,7 @@ describe("quote creation through the embedded estimator", () => {
 
     const quote = createQuotePublic(db, resolved.id, {
       customer: { name: "Embed Customer", email: "embed-customer@example.com" },
-      property: { propertyType: "single-family", stories: 1 },
+      property: { propertyType: "single-family", stories: 1, address: "1 Test St" },
       servicePreferences: { interiorCleaning: false, screens: false, tracks: false, hardWaterTreatment: "unsure" },
       notes: "",
       photos: [],

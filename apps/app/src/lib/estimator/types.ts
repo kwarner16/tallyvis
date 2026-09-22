@@ -20,7 +20,7 @@ export type StoriesInput = 1 | 2 | 3;
 export interface PropertyDetails {
   propertyType: PropertyType | null;
   stories: StoriesInput | null;
-  /** Optional — not required to get an estimate. */
+  /** The service/job address — required to get an estimate; see `isPropertyComplete`. */
   address: string;
 }
 
@@ -60,7 +60,7 @@ export const EMPTY_CUSTOMER_INPUT: CustomerInput = {
 };
 
 export function isPropertyComplete(property: PropertyDetails): boolean {
-  return property.propertyType !== null && property.stories !== null;
+  return property.propertyType !== null && property.stories !== null && property.address.trim().length > 0;
 }
 
 export function isContactComplete(contact: ContactDetails): boolean {

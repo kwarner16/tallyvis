@@ -58,7 +58,7 @@ describe("cross-tenant isolation", () => {
     const { db, sessionA, sessionB } = await setUpTwoBusinesses();
     const quoteA = createQuote(db, sessionA, {
       customer: { name: "Alice", email: "alice@example.com" },
-      property: { propertyType: "single-family", stories: 1 },
+      property: { propertyType: "single-family", stories: 1, address: "1 Test St" },
       servicePreferences: sampleServicePreferences,
       notes: "",
       photos: [],
@@ -95,7 +95,7 @@ describe("cross-tenant isolation", () => {
     const { db, sessionA, sessionB } = await setUpTwoBusinesses();
     createQuote(db, sessionA, {
       customer: { name: "Alice", email: "alice@example.com" },
-      property: { propertyType: "single-family", stories: 1 },
+      property: { propertyType: "single-family", stories: 1, address: "1 Test St" },
       servicePreferences: sampleServicePreferences,
       notes: "",
       photos: [],
@@ -103,7 +103,7 @@ describe("cross-tenant isolation", () => {
     });
     createQuote(db, sessionB, {
       customer: { name: "Bob", email: "bob@example.com" },
-      property: { propertyType: "single-family", stories: 1 },
+      property: { propertyType: "single-family", stories: 1, address: "1 Test St" },
       servicePreferences: sampleServicePreferences,
       notes: "",
       photos: [],

@@ -48,7 +48,7 @@ const servicePreferences = {
 
 const quoteInput = (email = "jane@example.com") => ({
   customer: { name: "Jane Smith", email, phone: "(555) 111-2222" },
-  property: { propertyType: "single-family" as const, stories: 1 },
+  property: { propertyType: "single-family" as const, stories: 1, address: "1 Test St" },
   servicePreferences,
   notes: "",
   photos: [],

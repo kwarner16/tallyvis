@@ -86,7 +86,13 @@ function toQuote(row: QuoteRow): Quote {
     property: {
       propertyType: row.property_type as Property["propertyType"],
       stories: row.property_stories,
-      address: row.property_address ?? undefined,
+      // `property_address` stays a nullable column (see the migration
+      // that added it) — required only going forward at the application
+      // layer, in `services/quotes.ts`'s `persistPricedQuote`, so a
+      // pre-existing NULL from before that requirement never breaks
+      // reading an old quote. Surfaced here as "" rather than left
+      // optional, matching `Property.address`'s now-required shape.
+      address: row.property_address ?? "",
     },
     servicePreferences: JSON.parse(row.service_preferences_json) as ServicePreferences,
     notes: row.notes,

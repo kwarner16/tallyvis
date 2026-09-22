@@ -17,7 +17,7 @@ import type { AuthSession } from "../auth/session";
 
 const sampleInput = () => ({
   customer: { name: "Jordan Rivera", email: "jordan@example.com" },
-  property: { propertyType: "single-family" as const, stories: 1 },
+  property: { propertyType: "single-family" as const, stories: 1, address: "1 Test St" },
   servicePreferences: { interiorCleaning: false, screens: false, tracks: false, hardWaterTreatment: "unsure" as const },
   notes: "Gate code is 1234 — internal note, never customer-facing.",
   photos: [],

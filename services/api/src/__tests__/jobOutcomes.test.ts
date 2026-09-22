@@ -35,7 +35,7 @@ const sampleObservation = (windowCount = 18): RawPropertyObservation => ({
 
 const sampleInput = (overrides?: { windowCount?: number; aiObservation?: RawPropertyObservation }) => ({
   customer: { name: "Jordan Rivera", email: "jordan@example.com", phone: "(555) 000-1111" },
-  property: { propertyType: "single-family" as const, stories: 2 },
+  property: { propertyType: "single-family" as const, stories: 2, address: "1 Test St" },
   servicePreferences: {
     interiorCleaning: false,
     screens: true,

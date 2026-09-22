@@ -42,7 +42,7 @@ const servicePreferences = {
 
 const publicSubmission = (customer: { name: string; email: string; phone?: string }) => ({
   customer,
-  property: { propertyType: "single-family" as const, stories: 1 },
+  property: { propertyType: "single-family" as const, stories: 1, address: "1 Test St" },
   servicePreferences,
   notes: "",
   photos: [],

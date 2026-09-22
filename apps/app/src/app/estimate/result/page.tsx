@@ -67,7 +67,7 @@ export default function ResultStepPage() {
         property: {
           propertyType: input.property.propertyType!,
           stories: input.property.stories!,
-          address: input.property.address || undefined,
+          address: input.property.address.trim(),
         },
         servicePreferences: input.services,
         notes: input.notes,
