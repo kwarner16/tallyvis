@@ -23,6 +23,7 @@ export {
   updateCurrentBusiness,
   getDefaultPublicBusiness,
   resolveEmbedBusiness,
+  resolvePublicBusinessSummary,
   type UpdateBusinessInput,
 } from "./services/business";
 

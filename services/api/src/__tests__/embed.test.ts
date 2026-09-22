@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createTestDb } from "../db/client";
 import { signUp } from "../services/auth";
-import { getCurrentBusiness, resolveEmbedBusiness } from "../services/business";
+import { getCurrentBusiness, resolveEmbedBusiness, resolvePublicBusinessSummary } from "../services/business";
 import { getActiveConfigurationForBusiness } from "../services/pricing";
 import { createQuotePublic } from "../services/quotes";
 
@@ -62,6 +62,39 @@ describe("resolveEmbedBusiness", () => {
 
     const after = getCurrentBusiness(db, sessionA);
     expect(after.embedLastSeenAt).toBeTruthy();
+  });
+});
+
+describe("resolvePublicBusinessSummary — over-exposure regression (same bug class as quoteSharing's PublicBusinessSummary, see docs/decisions/0012)", () => {
+  it("never includes the owner's email, internal id, or createdAt — only what the public estimator result page renders", async () => {
+    const { db, sessionA } = await setUpTwoBusinesses();
+    const businessA = getCurrentBusiness(db, sessionA);
+
+    const summary = resolvePublicBusinessSummary(db, businessA.publicEmbedId);
+
+    expect(summary).toEqual({
+      name: businessA.name,
+      phone: businessA.phone,
+      logoUrl: businessA.logoUrl,
+      brandColor: businessA.brandColor,
+    });
+    expect(summary).not.toHaveProperty("email");
+    expect(summary).not.toHaveProperty("id");
+    expect(summary).not.toHaveProperty("createdAt");
+    expect(summary).not.toHaveProperty("publicEmbedId");
+  });
+
+  it("falls back to the default public business (same non-exposure guarantee) when no embed id is given", async () => {
+    const { db } = await setUpTwoBusinesses();
+    const summary = resolvePublicBusinessSummary(db);
+    expect(summary).toBeTruthy();
+    expect(summary).not.toHaveProperty("email");
+    expect(summary).not.toHaveProperty("id");
+  });
+
+  it("resolves to undefined for an unknown embed id, never a fallback business's data", async () => {
+    const { db } = await setUpTwoBusinesses();
+    expect(resolvePublicBusinessSummary(db, "not-a-real-embed-id")).toBeUndefined();
   });
 });
 

@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Business, Estimate } from "@tallyvis/types";
+import type { Estimate } from "@tallyvis/types";
+import type { PublicBusinessSummary } from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { reconcilePricingInput, calculateEstimate } from "@tallyvis/pricing";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
@@ -20,7 +21,7 @@ export default function ResultStepPage() {
   const router = useRouter();
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [requested, setRequested] = useState(false);
-  const [business, setBusiness] = useState<Business | null>(null);
+  const [business, setBusiness] = useState<PublicBusinessSummary | null>(null);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const hasCreatedQuote = useRef(false);
 

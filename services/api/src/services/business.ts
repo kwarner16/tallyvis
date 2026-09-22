@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Business } from "@tallyvis/types";
 import type { AuthSession } from "../auth/session";
+import type { PublicBusinessSummary } from "./quoteSharing";
 import {
   getBusinessById,
   getBusinessByPublicEmbedId,
@@ -68,4 +69,26 @@ export function resolveEmbedBusiness(db: DatabaseSync, embedId: string): Busines
   const business = getBusinessByPublicEmbedId(db, embedId);
   if (business) touchEmbedLastSeen(db, business.id);
   return business;
+}
+
+/**
+ * Only what the public estimator's result page actually renders (name and
+ * branding) for a business resolved by embed id, or the default public
+ * business — deliberately NOT the full `Business` record. Same
+ * over-exposure bug class `quoteSharing.ts`'s `PublicBusinessSummary` was
+ * introduced to fix (see docs/decisions/0012), found recurring in this
+ * sibling public code path during the Stripe V1 hardening audit: the full
+ * record includes the owner's login email and internal database id,
+ * neither of which the public estimator has any legitimate need for, and
+ * because the caller (`apps/app`'s `getPublicBusinessAction`) crosses a
+ * client/server boundary as a Server Action, those fields were genuinely
+ * transmitted to the browser on every page load.
+ */
+export function resolvePublicBusinessSummary(
+  db: DatabaseSync,
+  embedId?: string,
+): PublicBusinessSummary | undefined {
+  const business = embedId ? resolveEmbedBusiness(db, embedId) : getDefaultPublicBusiness(db);
+  if (!business) return undefined;
+  return { name: business.name, phone: business.phone, logoUrl: business.logoUrl, brandColor: business.brandColor };
 }

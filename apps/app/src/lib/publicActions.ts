@@ -13,9 +13,11 @@ import {
   getQuoteByShareToken,
   requestQuoteChangesByToken,
   resolveEmbedBusiness,
+  resolvePublicBusinessSummary,
   type AnalyzePropertyInput,
   type AnalyzePropertyResult,
   type CreateQuoteInput,
+  type PublicBusinessSummary,
   type PublicQuoteView,
 } from "@tallyvis/api";
 import { describeAiErrorCategory } from "./aiErrorMessages";
@@ -47,8 +49,23 @@ async function requirePublicBusinessId(embedId?: string): Promise<string> {
   return (await requirePublicBusiness(embedId)).id;
 }
 
-export async function getPublicBusinessAction(embedId?: string): Promise<Business> {
-  return requirePublicBusiness(embedId);
+/**
+ * Only what the estimator result page actually renders (business name and
+ * branding) — deliberately NOT the full `Business` record `requirePublicBusiness`
+ * resolves internally. See `resolvePublicBusinessSummary`'s own comment
+ * for the over-exposure bug class this closes (found during the Stripe V1
+ * hardening audit, not a reported incident) — the full record includes
+ * the owner's login email and internal database id, and because this
+ * crosses a client/server boundary (a Server Action called from a client
+ * component), those fields were genuinely transmitted to the browser on
+ * every page load, not merely present in a server-side object.
+ */
+export async function getPublicBusinessAction(embedId?: string): Promise<PublicBusinessSummary> {
+  const summary = resolvePublicBusinessSummary(getDb(), embedId);
+  if (!summary) {
+    throw new Error(embedId ? "This estimator isn't set up correctly. Contact the business directly." : "No business is configured yet.");
+  }
+  return summary;
 }
 
 export async function getPublicActiveConfigurationAction(embedId?: string): Promise<PricingConfiguration> {
