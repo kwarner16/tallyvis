@@ -27,6 +27,7 @@ import {
 export async function GET(): Promise<NextResponse> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
+    console.warn("Google OAuth: GOOGLE_CLIENT_ID is not set — redirecting with error=google_not_configured.");
     return NextResponse.redirect(`${APP_URL}/login?error=google_not_configured`);
   }
 

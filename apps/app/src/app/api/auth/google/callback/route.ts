@@ -46,7 +46,10 @@ export async function GET(request: Request): Promise<NextResponse> {
   const currentSession = await getOptionalSession();
   const errorRedirectTarget = currentSession ? `${APP_URL}/dashboard/settings` : `${APP_URL}/login`;
 
-  if (url.searchParams.get("error")) {
+  const googleError = url.searchParams.get("error");
+  if (googleError) {
+    // Google's own error code (e.g. "access_denied") — not a secret.
+    console.warn(`Google OAuth: callback received error=${googleError} from Google.`);
     clearTransientCookies();
     return NextResponse.redirect(`${errorRedirectTarget}?error=google_denied`);
   }
@@ -59,15 +62,23 @@ export async function GET(request: Request): Promise<NextResponse> {
   clearTransientCookies();
 
   if (!code || !returnedState || !expectedState || !expectedNonce || !codeVerifier || returnedState !== expectedState) {
-    // Missing/expired cookies (the attempt took too long, or is a replay
-    // of an old callback URL) or a state mismatch (the CSRF case this
-    // whole dance exists to catch) — same generic outcome either way.
+    // Missing/expired cookies or a state mismatch (the CSRF case this
+    // dance exists to catch) — same generic outcome to the browser either
+    // way; the log names which condition failed (never the actual
+    // state/nonce/verifier values) for local debugging only.
+    const reason = !code
+      ? "missing code"
+      : !expectedState || !expectedNonce || !codeVerifier
+        ? "missing/expired oauth cookies (attempt took too long, or cookies were blocked)"
+        : "state mismatch";
+    console.warn(`Google OAuth: callback rejected — ${reason}.`);
     return NextResponse.redirect(`${errorRedirectTarget}?error=google_invalid_request`);
   }
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
+    console.warn("Google OAuth: GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set — redirecting with error=google_not_configured.");
     return NextResponse.redirect(`${errorRedirectTarget}?error=google_not_configured`);
   }
 
@@ -92,10 +103,10 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.redirect(`${APP_URL}/dashboard${outcome.kind === "signup" ? "?welcome=google" : ""}`);
   } catch (err) {
     if (err instanceof GoogleSignInError) {
-      // Carries a specific, already-safe-to-show message (e.g. "an
-      // account already exists for this email") — surfaced via a query
-      // param rather than baked into a redirect path, so both /login and
-      // /dashboard/settings can render it generically.
+      // A specific, already-safe-to-show message (e.g. "an account already
+      // exists for this email") — surfaced via a query param so both
+      // /login and /dashboard/settings can render it generically.
+      console.warn(`Google OAuth: sign-in policy rejected the attempt — ${err.message}`);
       return NextResponse.redirect(`${errorRedirectTarget}?error=${encodeURIComponent(err.message)}`);
     }
     if (err instanceof GoogleAuthError) {
