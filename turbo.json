@@ -3,11 +3,25 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": [".next/**", "!.next/cache/**", "dist/**"]
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      // Turbo 2's default envMode is "strict": a task's spawned process only
+      // sees env vars declared here (or inferred from a checked-in .env
+      // file, which this repo deliberately never has — see CLAUDE.md's
+      // "secrets never get committed"). Locally this was invisible because
+      // `next build`/`next dev` load apps/app/.env.local directly off disk
+      // themselves, entirely bypassing Turbo's passthrough — but Vercel
+      // injects these as real process env vars with no .env.local on disk,
+      // so without this declaration `turbo run build` silently stripped
+      // DATABASE_URL/DIRECT_URL/NEXT_PUBLIC_* before next build ever saw
+      // them (confirmed via `turbo run build --dry=json`, not assumed).
+      // NEXT_PUBLIC_* must be declared here because Next.js inlines them
+      // into the client bundle at build time, not read at request time.
+      "env": ["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_MARKETING_URL", "DATABASE_URL", "DIRECT_URL"]
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "env": ["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_MARKETING_URL", "DATABASE_URL", "DIRECT_URL"]
     },
     "lint": {
       "dependsOn": ["^build"]
