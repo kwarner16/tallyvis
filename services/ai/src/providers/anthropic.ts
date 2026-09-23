@@ -171,6 +171,26 @@ function describeFailure(err: unknown): AiProviderError {
   if (err instanceof Anthropic.AuthenticationError) {
     return new AiProviderError("The AI provider rejected the configured credentials.", "authentication");
   }
+  // Checked before the generic APIError fallback, using Anthropic's own
+  // documented `error.type` values (see @anthropic-ai/sdk's
+  // resources/shared.d.ts ErrorType union) — these are otherwise
+  // indistinguishable from any other 4xx/5xx and previously all collapsed
+  // into the same generic "provider-error" category.
+  if (err instanceof Anthropic.APIError && err.type === "not_found_error") {
+    return new AiProviderError(
+      "The AI provider doesn't recognize the configured model. This needs attention from Tallyvis, not a retry.",
+      "model-not-found",
+    );
+  }
+  if (err instanceof Anthropic.APIError && err.type === "billing_error") {
+    return new AiProviderError(
+      "The AI provider account needs billing attention. This needs attention from Tallyvis, not a retry.",
+      "billing",
+    );
+  }
+  if (err instanceof Anthropic.APIError && err.type === "overloaded_error") {
+    return new AiProviderError("The AI provider is temporarily at capacity. Please try again shortly.", "overloaded");
+  }
   if (err instanceof Anthropic.RateLimitError) {
     return new AiProviderError("The AI provider is rate-limiting requests right now. Please try again shortly.", "rate-limit");
   }

@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 import type { PropertyAnalysisResult } from "@tallyvis/types";
 import type { RawPropertyObservation } from "@tallyvis/api";
 import { compressImageFile, ImageCompressionError, MAX_SOURCE_FILE_BYTES } from "../imageCompression";
+import { verifyEmbedIdAction } from "../publicActions";
 import { windowCleaningEstimatorConfig } from "./industry-config";
 import {
   EMPTY_CUSTOMER_INPUT,
@@ -124,7 +125,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    queueMicrotask(() => {
+    queueMicrotask(async () => {
       try {
         const raw = window.localStorage.getItem(STORAGE_KEY);
         if (raw) {
@@ -132,7 +133,27 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           setInput((prev) => ({ ...prev, ...persisted }));
         }
         const storedEmbedId = window.localStorage.getItem(EMBED_ID_STORAGE_KEY);
-        if (storedEmbedId) setEmbedIdState(storedEmbedId);
+        if (storedEmbedId) {
+          // A cached embed id from an earlier session must be revalidated,
+          // not blindly trusted — the underlying business may have been
+          // deleted/recreated since it was cached (this key is deliberately
+          // never cleared by `reset()`, so it otherwise persists forever).
+          // Previously this went uncaught until the customer clicked
+          // Analyze at the end of the wizard, surfacing as "This estimator
+          // isn't set up correctly" after they'd already filled everything
+          // in — confirmed root cause, not a guess: business resolution
+          // itself was proven healthy for the business's real, current
+          // embed id and fails only for an id that no longer matches one.
+          // Clearing an invalid id falls back to the same bare-estimator
+          // behavior a visitor with no embed context already gets — it
+          // never substitutes a different business's identity.
+          const stillValid = await verifyEmbedIdAction(storedEmbedId);
+          if (stillValid) {
+            setEmbedIdState(storedEmbedId);
+          } else {
+            window.localStorage.removeItem(EMBED_ID_STORAGE_KEY);
+          }
+        }
       } catch {
         // Corrupt or unavailable storage — start fresh rather than block the flow.
       } finally {

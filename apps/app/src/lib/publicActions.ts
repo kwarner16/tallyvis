@@ -139,17 +139,57 @@ export async function analyzePublicPropertyAction(
   input: AnalyzePropertyInput,
   embedId?: string,
 ): Promise<ActionResult<AnalyzePropertyResult>> {
+  // Safe, non-secret stage trace for exactly this kind of failure — never
+  // the embed id itself, a photo, or any customer data, only presence/
+  // counts/categories. Existing @tallyvis/ai logging already covers the AI
+  // call itself (provider, model, latency, success); this covers the stage
+  // before it, which previously had no visibility at all — the customer-
+  // facing "isn't set up correctly" message could mean either "no embed id
+  // was ever present" or "one was present but stale," and only this log
+  // line can tell the two apart after the fact.
+  const approxEncodedBytes = input.images.reduce((sum, image) => sum + image.url.length, 0);
+  console.log(
+    JSON.stringify({
+      at: new Date().toISOString(),
+      event: "public-analyze-stage",
+      stage: "requested",
+      embedIdPresent: Boolean(embedId),
+      imageCount: input.images.length,
+      approxEncodedBytes,
+    }),
+  );
+
   let businessId: string;
   try {
     businessId = await requirePublicBusinessId(embedId);
   } catch (err) {
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        event: "public-analyze-stage",
+        stage: "business-resolution-failed",
+        embedIdPresent: Boolean(embedId),
+      }),
+    );
     return { ok: false, message: err instanceof Error ? err.message : NO_BUSINESS_CONFIGURED_MESSAGE };
   }
 
   try {
     const result = await analyzePropertyPublic(getDb(), businessId, input);
+    console.log(
+      JSON.stringify({ at: new Date().toISOString(), event: "public-analyze-stage", stage: "analysis-succeeded" }),
+    );
     return { ok: true, data: result };
   } catch (err) {
+    const errorCategory = err instanceof AiProviderError ? err.category : "unknown";
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        event: "public-analyze-stage",
+        stage: "analysis-failed",
+        errorCategory,
+      }),
+    );
     if (err instanceof AiProviderError) return { ok: false, message: describeAiErrorCategory(err.category) };
     logUnexpected("analyzePublicPropertyAction", err);
     return { ok: false, message: GENERIC_FAILURE_MESSAGE };

@@ -192,6 +192,41 @@ describe("createAnthropicProvider — provider failure modes", () => {
     await expectCategory(provider.analyzeProperty(images, metadata), "provider-error");
   });
 
+  it("distinguishes an invalid/unsupported model (404 not_found_error) from a generic provider error", async () => {
+    const baseURL = await listen((req, res) => {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "not_found_error", message: "model: claude-bogus-model not found" } }));
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+
+    await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/doesn't recognize the configured model/i);
+    // Never the raw provider message, which could echo the exact (possibly misconfigured) model string.
+    await expect(provider.analyzeProperty(images, metadata)).rejects.not.toThrow(/claude-bogus-model/);
+    await expectCategory(provider.analyzeProperty(images, metadata), "model-not-found");
+  });
+
+  it("distinguishes a billing/credit error from a generic provider error or rate-limit", async () => {
+    const baseURL = await listen((req, res) => {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "billing_error", message: "credit balance is too low" } }));
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+
+    await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/billing attention/i);
+    await expectCategory(provider.analyzeProperty(images, metadata), "billing");
+  });
+
+  it("distinguishes an overloaded-model error from this account being rate-limited", async () => {
+    const baseURL = await listen((req, res) => {
+      res.writeHead(529, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "Overloaded" } }));
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+
+    await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/temporarily at capacity/i);
+    await expectCategory(provider.analyzeProperty(images, metadata), "overloaded");
+  });
+
   it("times out rather than hanging forever when the provider never responds", async () => {
     const baseURL = await listen(() => {
       // Never respond.
