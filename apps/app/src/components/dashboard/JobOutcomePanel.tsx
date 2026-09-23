@@ -304,15 +304,14 @@ export function JobOutcomePanel({
   async function handleSave() {
     setSaving(true);
     setError(null);
-    try {
-      const saved = await recordJobOutcomeAction(quoteId, draftToInput(draft));
-      setOutcome(saved);
+    const result = await recordJobOutcomeAction(quoteId, draftToInput(draft));
+    if (result.ok) {
+      setOutcome(result.data);
       setEditing(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save this outcome.");
-    } finally {
-      setSaving(false);
+    } else {
+      setError(result.message);
     }
+    setSaving(false);
   }
 
   function startEditing() {

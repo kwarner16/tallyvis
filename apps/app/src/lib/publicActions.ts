@@ -22,15 +22,15 @@ import {
 } from "@tallyvis/api";
 import { describeAiErrorCategory } from "./aiErrorMessages";
 import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } from "./publicBusinessErrors";
-import type { PublicActionResult } from "./publicActionResult";
+import type { ActionResult } from "./actionResult";
 
 /**
  * Unauthenticated actions for the public `/estimate/*` customer wizard and
  * the `/quote/[token]` customer-facing quote view.
  *
- * Every exported function here returns a `PublicActionResult<T>` — never
+ * Every exported function here returns an `ActionResult<T>` — never
  * throws to the client — because Next.js strips a thrown error's real
- * message in a production build (see `publicActionResult.ts`'s own
+ * message in a production build (see `actionResult.ts`'s own
  * comment for how this was confirmed, not assumed). Anything unexpected
  * (a genuine bug, a transient database error) is caught here and logged
  * server-side via `console.error` — safe fields only, matching
@@ -81,7 +81,7 @@ async function requirePublicBusinessId(embedId?: string): Promise<string> {
  * component), those fields were genuinely transmitted to the browser on
  * every page load, not merely present in a server-side object.
  */
-export async function getPublicBusinessAction(embedId?: string): Promise<PublicActionResult<PublicBusinessSummary>> {
+export async function getPublicBusinessAction(embedId?: string): Promise<ActionResult<PublicBusinessSummary>> {
   try {
     const summary = await resolvePublicBusinessSummary(getDb(), embedId);
     if (!summary) {
@@ -94,7 +94,7 @@ export async function getPublicBusinessAction(embedId?: string): Promise<PublicA
   }
 }
 
-export async function getPublicActiveConfigurationAction(embedId?: string): Promise<PublicActionResult<PricingConfiguration>> {
+export async function getPublicActiveConfigurationAction(embedId?: string): Promise<ActionResult<PricingConfiguration>> {
   try {
     const businessId = await requirePublicBusinessId(embedId);
     const configuration = await getActiveConfigurationForBusiness(getDb(), businessId);
@@ -138,7 +138,7 @@ export async function verifyEmbedIdAction(embedId: string): Promise<boolean> {
 export async function analyzePublicPropertyAction(
   input: AnalyzePropertyInput,
   embedId?: string,
-): Promise<PublicActionResult<AnalyzePropertyResult>> {
+): Promise<ActionResult<AnalyzePropertyResult>> {
   let businessId: string;
   try {
     businessId = await requirePublicBusinessId(embedId);
@@ -180,7 +180,7 @@ export async function isUsingMockAiProviderAction(): Promise<boolean> {
 export async function createPublicQuoteAction(
   input: CreateQuoteInput,
   embedId?: string,
-): Promise<PublicActionResult<{ id: string }>> {
+): Promise<ActionResult<{ id: string }>> {
   try {
     const businessId = await requirePublicBusinessId(embedId);
     const quote = await createQuotePublic(getDb(), businessId, input);
@@ -228,7 +228,7 @@ const QUOTE_ACTION_GENERIC_MESSAGES = {
 } as const;
 
 /** Customer action: accept. Operates only on whatever quote `token` resolves to — see `getQuoteByShareToken`'s comment. */
-export async function acceptPublicQuoteAction(token: string): Promise<PublicActionResult<Quote>> {
+export async function acceptPublicQuoteAction(token: string): Promise<ActionResult<Quote>> {
   try {
     return { ok: true, data: await acceptQuoteByToken(getDb(), token) };
   } catch (err) {
@@ -238,7 +238,7 @@ export async function acceptPublicQuoteAction(token: string): Promise<PublicActi
 }
 
 /** Customer action: decline. Same token-only authorization as accept. */
-export async function declinePublicQuoteAction(token: string): Promise<PublicActionResult<Quote>> {
+export async function declinePublicQuoteAction(token: string): Promise<ActionResult<Quote>> {
   try {
     return { ok: true, data: await declineQuoteByToken(getDb(), token) };
   } catch (err) {
@@ -248,7 +248,7 @@ export async function declinePublicQuoteAction(token: string): Promise<PublicAct
 }
 
 /** Customer action: request changes / contact the business — persisted as a note, not a status change. */
-export async function requestPublicQuoteChangesAction(token: string, note: string): Promise<PublicActionResult<Quote>> {
+export async function requestPublicQuoteChangesAction(token: string, note: string): Promise<ActionResult<Quote>> {
   try {
     return { ok: true, data: await requestQuoteChangesByToken(getDb(), token, note) };
   } catch (err) {

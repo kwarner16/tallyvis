@@ -91,7 +91,7 @@ export default function AnalyzingStepPage() {
         // specific, safe message (Phase 12 — see
         // docs/decisions/0014-ai-real-world-refinement.md) and returns it as
         // data rather than throwing — a thrown error's real message is
-        // stripped in a production build (see publicActionResult.ts).
+        // stripped in a production build (see actionResult.ts).
         setAnalysisError(result.message);
       })
       .catch((err: unknown) => {

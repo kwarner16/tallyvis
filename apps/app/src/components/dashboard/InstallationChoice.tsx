@@ -23,11 +23,11 @@ export function InstallationChoice() {
   async function handleProfessional() {
     setPending("professional");
     setError(null);
-    try {
-      const { url } = await createInstallationCheckoutSessionAction();
-      window.location.href = url;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start installation checkout.");
+    const result = await createInstallationCheckoutSessionAction();
+    if (result.ok) {
+      window.location.href = result.data.url;
+    } else {
+      setError(result.message);
       setPending(null);
     }
   }
@@ -35,11 +35,11 @@ export function InstallationChoice() {
   async function handleSelfInstall() {
     setPending("self");
     setError(null);
-    try {
-      await chooseSelfInstallAction();
+    const result = await chooseSelfInstallAction();
+    if (result.ok) {
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not record your installation choice.");
+    } else {
+      setError(result.message);
       setPending(null);
     }
   }

@@ -15,6 +15,7 @@ import {
 import { requireContext } from "./session";
 import { APP_URL } from "./urls";
 import { INTENDED_PLAN_COOKIE_NAME } from "./constants";
+import type { ActionResult } from "./actionResult";
 
 /**
  * Phase 14 SaaS plan/trial/subscription foundation (see
@@ -33,12 +34,15 @@ import { INTENDED_PLAN_COOKIE_NAME } from "./constants";
  * never in `/dashboard/onboarding`'s own render (see that page's comment
  * for the bug this fixes).
  *
- * Error handling: only a small, deliberately-safe set of messages ever
- * reaches the browser — `BillingProviderError`'s own message (already
- * hand-written to be safe, e.g. "Billing isn't configured...") or the
- * handful of validation messages the service layer throws (e.g. "Unknown
- * plan", "Installation has already been resolved..."). Anything else (a
- * database error, a network failure, any unexpected exception) is logged
+ * Error handling: every action returns an `ActionResult` (see
+ * actionResult.ts) rather than throwing — a thrown error's real message is
+ * stripped in a production build, which these actions used to hit before
+ * this fix. Only a small, deliberately-safe set of messages ever reaches
+ * the browser — `BillingProviderError`'s own message (already hand-written
+ * to be safe, e.g. "Billing isn't configured...") or the handful of
+ * validation messages the service layer throws (e.g. "Unknown plan",
+ * "Installation has already been resolved..."). Anything else (a database
+ * error, a network failure, any unexpected exception) is logged
  * server-side with full detail and replaced with one generic, safe
  * message — the browser never sees a stack trace, a SQL error, or a raw
  * provider exception.
@@ -58,18 +62,18 @@ const SAFE_MESSAGE_PATTERN = /^(Unknown plan "|Installation has already been res
  * Stripe V1 hardening pass (see `services/subscriptions.ts`'s `startTrial`
  * comment and docs/decisions/0018). Retained for tests/internal use only.
  */
-export async function startTrialAction(planId: string): Promise<Subscription> {
+export async function startTrialAction(planId: string): Promise<ActionResult<Subscription>> {
   const { db, session } = await requireContext();
   try {
     const subscription = await apiStartTrial(db, session, planId);
     (await cookies()).delete(INTENDED_PLAN_COOKIE_NAME);
     revalidatePath("/dashboard");
     revalidatePath("/dashboard/billing");
-    return subscription;
+    return { ok: true, data: subscription };
   } catch (err) {
-    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
+    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) return { ok: false, message: err.message };
     console.error("startTrialAction failed:", err);
-    throw new Error(GENERIC_TRIAL_ERROR);
+    return { ok: false, message: GENERIC_TRIAL_ERROR };
   }
 }
 
@@ -80,7 +84,7 @@ export async function startTrialAction(planId: string): Promise<Subscription> {
  * (`STRIPE_SECRET_KEY` and that plan's Price id both set); throws a plain,
  * safe-to-display message otherwise rather than a raw provider error.
  */
-export async function createCheckoutSessionAction(planId: string): Promise<{ url: string }> {
+export async function createCheckoutSessionAction(planId: string): Promise<ActionResult<{ url: string }>> {
   const { db, session } = await requireContext();
   try {
     const result = await createCheckoutSessionForPlan(db, session, planId, {
@@ -88,54 +92,56 @@ export async function createCheckoutSessionAction(planId: string): Promise<{ url
       cancelUrl: `${APP_URL}/dashboard/billing?checkout=canceled`,
     });
     (await cookies()).delete(INTENDED_PLAN_COOKIE_NAME);
-    return result;
+    return { ok: true, data: result };
   } catch (err) {
-    if (err instanceof BillingProviderError) throw new Error(err.message);
-    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
+    if (err instanceof BillingProviderError) return { ok: false, message: err.message };
+    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) return { ok: false, message: err.message };
     console.error("createCheckoutSessionAction failed:", err);
-    throw new Error(GENERIC_CHECKOUT_ERROR);
+    return { ok: false, message: GENERIC_CHECKOUT_ERROR };
   }
 }
 
 /** Creates a real Stripe Checkout session (mode: payment, one-time) for the optional $299 professional installation fee. */
-export async function createInstallationCheckoutSessionAction(): Promise<{ url: string }> {
+export async function createInstallationCheckoutSessionAction(): Promise<ActionResult<{ url: string }>> {
   const { db, session } = await requireContext();
   try {
-    return await createInstallationCheckoutSession(db, session, {
+    const result = await createInstallationCheckoutSession(db, session, {
       successUrl: `${APP_URL}/dashboard/billing?installation=success`,
       cancelUrl: `${APP_URL}/dashboard/billing?installation=canceled`,
     });
+    return { ok: true, data: result };
   } catch (err) {
-    if (err instanceof BillingProviderError) throw new Error(err.message);
-    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
+    if (err instanceof BillingProviderError) return { ok: false, message: err.message };
+    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) return { ok: false, message: err.message };
     console.error("createInstallationCheckoutSessionAction failed:", err);
-    throw new Error(GENERIC_INSTALLATION_ERROR);
+    return { ok: false, message: GENERIC_INSTALLATION_ERROR };
   }
 }
 
 /** Records a self-install choice (free, no Stripe interaction). */
-export async function chooseSelfInstallAction(): Promise<BillingCharge> {
+export async function chooseSelfInstallAction(): Promise<ActionResult<BillingCharge>> {
   const { db, session } = await requireContext();
   try {
     const charge = await chooseSelfInstall(db, session);
     revalidatePath("/dashboard/billing");
-    return charge;
+    return { ok: true, data: charge };
   } catch (err) {
-    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
+    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) return { ok: false, message: err.message };
     console.error("chooseSelfInstallAction failed:", err);
-    throw new Error(GENERIC_SELF_INSTALL_ERROR);
+    return { ok: false, message: GENERIC_SELF_INSTALL_ERROR };
   }
 }
 
 /** Creates a Stripe Customer Portal session so the business can manage its own billing, and returns the URL to redirect to. */
-export async function createBillingPortalSessionAction(): Promise<{ url: string }> {
+export async function createBillingPortalSessionAction(): Promise<ActionResult<{ url: string }>> {
   const { db, session } = await requireContext();
   try {
-    return await createBillingPortalSession(db, session, `${APP_URL}/dashboard/billing`);
+    const result = await createBillingPortalSession(db, session, `${APP_URL}/dashboard/billing`);
+    return { ok: true, data: result };
   } catch (err) {
-    if (err instanceof BillingProviderError) throw new Error(err.message);
-    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) throw err;
+    if (err instanceof BillingProviderError) return { ok: false, message: err.message };
+    if (err instanceof Error && SAFE_MESSAGE_PATTERN.test(err.message)) return { ok: false, message: err.message };
     console.error("createBillingPortalSessionAction failed:", err);
-    throw new Error(GENERIC_PORTAL_ERROR);
+    return { ok: false, message: GENERIC_PORTAL_ERROR };
   }
 }

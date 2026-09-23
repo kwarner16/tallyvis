@@ -47,49 +47,48 @@ export function QuoteDetailClient({
   async function handleSaveAnalysis(updated: WindowCleaningCharacteristics) {
     setPreviousTotal(quote.estimate.total);
     setActionError(null);
-    try {
-      const next = await updateQuoteAnalysisAction(quote.id, updated);
-      setQuote(next);
+    const result = await updateQuoteAnalysisAction(quote.id, updated);
+    if (result.ok) {
+      setQuote(result.data);
       setIsEditing(false);
       setActionMessage(null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not save this change.");
+    } else {
+      setActionError(result.message);
     }
   }
 
   async function handleSaveCustomer(updated: CustomerInput) {
     setActionError(null);
-    try {
-      const next = await updateQuoteCustomerAction(quote.id, updated);
-      setQuote(next);
+    const result = await updateQuoteCustomerAction(quote.id, updated);
+    if (result.ok) {
+      setQuote(result.data);
       setIsEditingCustomer(false);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not save this change.");
+    } else {
+      setActionError(result.message);
     }
   }
 
   async function handleRecalculate() {
     setPreviousTotal(quote.estimate.total);
     setActionError(null);
-    try {
-      const { quote: next, pricingConfiguration: nextConfiguration } =
-        await recalculateQuoteEstimateAction(quote.id);
-      setQuote(next);
-      setPricingConfiguration(nextConfiguration);
+    const result = await recalculateQuoteEstimateAction(quote.id);
+    if (result.ok) {
+      setQuote(result.data.quote);
+      setPricingConfiguration(result.data.pricingConfiguration);
       setActionMessage(null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not recalculate this quote.");
+    } else {
+      setActionError(result.message);
     }
   }
 
   async function handleTransition(target: QuoteStatus) {
     setActionError(null);
-    try {
-      const next = await updateQuoteStatusAction(quote.id, target);
-      setQuote(next);
+    const result = await updateQuoteStatusAction(quote.id, target);
+    if (result.ok) {
+      setQuote(result.data);
       setActionMessage(target === "sent" ? "Estimate marked as sent." : null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not update this quote's status.");
+    } else {
+      setActionError(result.message);
     }
   }
 

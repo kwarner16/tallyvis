@@ -10,7 +10,7 @@ function formatSize(bytes: number): string {
 }
 
 export function PhotoUpload() {
-  const { input, addPhotos, removePhoto } = useEstimator();
+  const { input, addPhotos, removePhoto, isProcessingPhotos } = useEstimator();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [rejections, setRejections] = useState<string[]>([]);
@@ -19,9 +19,9 @@ export function PhotoUpload() {
   const count = input.photos.length;
   const atMax = count >= maxPhotos;
 
-  function handleFiles(fileList: FileList | null) {
+  async function handleFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
-    const rejected = addPhotos(Array.from(fileList));
+    const rejected = await addPhotos(Array.from(fileList));
     setRejections(rejected.map((r) => `${r.name}: ${r.reason}`));
   }
 
@@ -36,12 +36,12 @@ export function PhotoUpload() {
         onDrop={(e) => {
           e.preventDefault();
           setIsDragging(false);
-          handleFiles(e.dataTransfer.files);
+          void handleFiles(e.dataTransfer.files);
         }}
         className={cn(
           "flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-10 text-center transition-colors",
           isDragging ? "border-accent-strong bg-accent-soft" : "border-line bg-paper-alt",
-          atMax && "opacity-50",
+          (atMax || isProcessingPhotos) && "opacity-50",
         )}
       >
         <svg
@@ -60,14 +60,16 @@ export function PhotoUpload() {
         </svg>
         <button
           type="button"
-          disabled={atMax}
+          disabled={atMax || isProcessingPhotos}
           onClick={() => inputRef.current?.click()}
           className="rounded-lg bg-accent-strong px-4 py-2 text-sm font-semibold text-paper transition-colors hover:bg-accent-strong-hover disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {atMax ? "Maximum photos added" : "Add photos"}
+          {isProcessingPhotos ? "Processing…" : atMax ? "Maximum photos added" : "Add photos"}
         </button>
         <p className="text-xs text-ink-faint">
-          Drag and drop, or tap to use your camera or photo library.
+          {isProcessingPhotos
+            ? "Optimizing your photo for upload — this only takes a moment."
+            : "Drag and drop, or tap to use your camera or photo library."}
         </p>
         <input
           ref={inputRef}
@@ -75,9 +77,10 @@ export function PhotoUpload() {
           accept="image/*"
           multiple
           capture="environment"
+          disabled={isProcessingPhotos}
           className="sr-only"
           onChange={(e) => {
-            handleFiles(e.target.files);
+            void handleFiles(e.target.files);
             e.target.value = "";
           }}
         />

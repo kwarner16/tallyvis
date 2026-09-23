@@ -17,15 +17,23 @@ import { calculateEstimate, reconcilePricingInput } from "@tallyvis/pricing";
 import { buttonVariants } from "@tallyvis/ui";
 import { analyzePropertyAction, createQuoteAction } from "@/lib/quoteActions";
 import { windowCleaningEstimatorConfig } from "@/lib/estimator/industry-config";
-import { fileToDataUrl } from "@/lib/imageEncoding";
 import { AI_UNAVAILABLE_CONTINUE_MANUALLY } from "@/lib/aiErrorMessages";
 import { defaultWindowCleaningCharacteristics } from "@/lib/defaultCharacteristics";
+import { compressImageFile, ImageCompressionError, MAX_SOURCE_FILE_BYTES } from "@/lib/imageCompression";
 import { OptionButton } from "@/components/OptionButton";
 import { JobCharacteristicsFields } from "@/components/dashboard/JobCharacteristicsFields";
 import { AiObservationSummary } from "@/components/dashboard/AiObservationSummary";
 
-const MAX_ANALYSIS_PHOTOS = 8;
-const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
+/**
+ * Mirrors the public estimator's own windowCleaningEstimatorConfig.maxPhotos
+ * (6) — this dashboard "New quote" AI panel sends photos through the same
+ * analyzePropertyAction -> @tallyvis/ai pipeline and is subject to the
+ * exact same Vercel Functions 4.5MB hard request-body limit (see
+ * next.config.ts's own comment), so it needs the same client-side
+ * compression (imageCompression.ts) rather than a second, inconsistent
+ * limit.
+ */
+const MAX_ANALYSIS_PHOTOS = windowCleaningEstimatorConfig.maxPhotos;
 
 interface AnalysisPhoto {
   id: string;
@@ -96,6 +104,7 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const [analysisPhotos, setAnalysisPhotos] = useState<AnalysisPhoto[]>([]);
+  const [processingPhotos, setProcessingPhotos] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [observation, setObservation] = useState<RawPropertyObservation | null>(null);
@@ -135,60 +144,72 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
     if (!canSave) return;
     setSaving(true);
     setSaveError(null);
-    try {
-      const quote = await createQuoteAction({
-        customer: {
-          name: customer.name.trim(),
-          email: customer.email.trim(),
-          phone: customer.phone?.trim() || undefined,
-        },
-        property: {
-          propertyType: propertyType!,
-          stories: stories!,
-          address: address.trim(),
-        },
-        servicePreferences,
-        notes,
-        photos: [],
-        analysis: {
-          characteristics: effectiveCharacteristics,
-          // Whatever is on screen when "Save quote" is clicked — whether typed
-          // directly or pre-filled by AI analysis below — has been reviewed
-          // and (implicitly, by saving) confirmed by the business, so this
-          // is recorded as a confident, human-backed value either way. AI
-          // uncertainty never reaches the saved quote un-reviewed.
-          metadata: { confidence: "high" },
-        },
-        // Preserved alongside the quote for later comparison against
-        // whatever's actually confirmed above (Phase 13 — see
-        // docs/decisions/0015-job-outcome-tracking.md) — `undefined` when
-        // AI was never used for this quote, never fabricated after the
-        // fact. Reflects the most recent analysis result regardless of
-        // whether "Apply to form" was clicked: even a suggestion the
-        // business looked at and typed over is a genuine AI-observed vs.
-        // human-confirmed data point.
-        aiObservation: observation ?? undefined,
-      });
-      router.push(`/dashboard/quotes/${quote.id}`);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Could not save this quote.");
+    const result = await createQuoteAction({
+      customer: {
+        name: customer.name.trim(),
+        email: customer.email.trim(),
+        phone: customer.phone?.trim() || undefined,
+      },
+      property: {
+        propertyType: propertyType!,
+        stories: stories!,
+        address: address.trim(),
+      },
+      servicePreferences,
+      notes,
+      photos: [],
+      analysis: {
+        characteristics: effectiveCharacteristics,
+        // Whatever is on screen when "Save quote" is clicked — whether typed
+        // directly or pre-filled by AI analysis below — has been reviewed
+        // and (implicitly, by saving) confirmed by the business, so this
+        // is recorded as a confident, human-backed value either way. AI
+        // uncertainty never reaches the saved quote un-reviewed.
+        metadata: { confidence: "high" },
+      },
+      // Preserved alongside the quote for later comparison against
+      // whatever's actually confirmed above (Phase 13 — see
+      // docs/decisions/0015-job-outcome-tracking.md) — `undefined` when
+      // AI was never used for this quote, never fabricated after the
+      // fact. Reflects the most recent analysis result regardless of
+      // whether "Apply to form" was clicked: even a suggestion the
+      // business looked at and typed over is a genuine AI-observed vs.
+      // human-confirmed data point.
+      aiObservation: observation ?? undefined,
+    });
+    if (result.ok) {
+      router.push(`/dashboard/quotes/${result.data.id}`);
+    } else {
+      setSaveError(result.message);
       setSaving(false);
     }
   }
 
+  /** Compresses each file client-side (see imageCompression.ts) before adding it — the real, uncompressed phone photo is never sent through analyzePropertyAction directly; see MAX_ANALYSIS_PHOTOS's own comment for why. */
   async function handleAddPhotos(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     setAnalyzeError(null);
     const remainingSlots = MAX_ANALYSIS_PHOTOS - analysisPhotos.length;
-    const accepted: AnalysisPhoto[] = [];
+    const toProcess = Array.from(fileList).slice(0, remainingSlots).filter((file) => file.type.startsWith("image/"));
+    if (toProcess.length === 0) return;
 
-    for (const file of Array.from(fileList).slice(0, remainingSlots)) {
-      if (!file.type.startsWith("image/")) continue;
-      if (file.size > MAX_PHOTO_BYTES) {
-        setAnalyzeError(`${file.name} is larger than 10 MB and was skipped.`);
-        continue;
+    setProcessingPhotos(true);
+    const accepted: AnalysisPhoto[] = [];
+    try {
+      for (const file of toProcess) {
+        if (file.size > MAX_SOURCE_FILE_BYTES) {
+          setAnalyzeError(`${file.name} is too large to process and was skipped.`);
+          continue;
+        }
+        try {
+          const { dataUrl } = await compressImageFile(file);
+          accepted.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name: file.name, dataUrl });
+        } catch (err) {
+          setAnalyzeError(err instanceof ImageCompressionError ? err.message : `${file.name} couldn't be processed.`);
+        }
       }
-      accepted.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name: file.name, dataUrl: await fileToDataUrl(file) });
+    } finally {
+      setProcessingPhotos(false);
     }
 
     if (accepted.length > 0) setAnalysisPhotos((prev) => [...prev, ...accepted]);
@@ -202,23 +223,21 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
     if (analysisPhotos.length === 0) return;
     setAnalyzing(true);
     setAnalyzeError(null);
-    try {
-      const { analysis, observation: newObservation } = await analyzePropertyAction({
-        images: analysisPhotos.map((p) => ({ url: p.dataUrl })),
-        property: { stories: stories ?? undefined, address: address.trim() || undefined },
-      });
-      setObservation(newObservation);
+    const result = await analyzePropertyAction({
+      images: analysisPhotos.map((p) => ({ url: p.dataUrl })),
+      property: { stories: stories ?? undefined, address: address.trim() || undefined },
+    });
+    if (result.ok) {
+      setObservation(result.data.observation);
       // Never applied automatically — see `pendingSuggestion`'s comment.
       setPendingSuggestion({
-        characteristics: analysis.characteristics,
-        stories: analysis.characteristics.stories as (typeof STORY_OPTIONS)[number],
+        characteristics: result.data.analysis.characteristics,
+        stories: result.data.analysis.characteristics.stories as (typeof STORY_OPTIONS)[number],
       });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not analyze these photos.";
-      setAnalyzeError(`${message} ${AI_UNAVAILABLE_CONTINUE_MANUALLY}`);
-    } finally {
-      setAnalyzing(false);
+    } else {
+      setAnalyzeError(`${result.message} ${AI_UNAVAILABLE_CONTINUE_MANUALLY}`);
     }
+    setAnalyzing(false);
   }
 
   function handleApplySuggestion() {
@@ -388,15 +407,19 @@ export function NewQuoteClient({ configuration }: { configuration: PricingConfig
               <button
                 type="button"
                 onClick={() => photoInputRef.current?.click()}
-                disabled={analysisPhotos.length >= MAX_ANALYSIS_PHOTOS}
+                disabled={analysisPhotos.length >= MAX_ANALYSIS_PHOTOS || processingPhotos}
                 className={buttonVariants({ variant: "outline" })}
               >
-                {analysisPhotos.length >= MAX_ANALYSIS_PHOTOS ? "Maximum photos added" : "Add photos"}
+                {processingPhotos
+                  ? "Processing…"
+                  : analysisPhotos.length >= MAX_ANALYSIS_PHOTOS
+                    ? "Maximum photos added"
+                    : "Add photos"}
               </button>
               <button
                 type="button"
                 onClick={handleAnalyze}
-                disabled={analysisPhotos.length === 0 || analyzing}
+                disabled={analysisPhotos.length === 0 || analyzing || processingPhotos}
                 className={buttonVariants({ variant: "primary" })}
               >
                 {analyzing ? "Analyzing…" : "Analyze with AI"}

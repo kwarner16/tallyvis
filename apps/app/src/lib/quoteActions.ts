@@ -35,6 +35,7 @@ import { requireContext } from "./session";
 import { buildQuoteShareUrl } from "./urls";
 import { describeNotificationErrorCategory } from "./notificationErrorMessages";
 import { describeAiErrorCategory } from "./aiErrorMessages";
+import type { ActionResult } from "./actionResult";
 
 /**
  * Thin server-side wrappers: every one of these re-derives the business
@@ -44,14 +45,34 @@ import { describeAiErrorCategory } from "./aiErrorMessages";
  * touching `@tallyvis/api` directly, which they can't anyway (it imports
  * `node:sqlite`, so pulling it into a "use client" file would fail to
  * bundle for the browser).
+ *
+ * Every action returns an `ActionResult` rather than throwing (see
+ * actionResult.ts) — a thrown error's real message is stripped in a
+ * production build, which every one of these actions used to hit before
+ * this fix (React error #441, first found and fixed in the public
+ * estimator's publicActions.ts). The underlying `@tallyvis/api` service
+ * functions here only ever throw their own hand-written, safe-to-display
+ * validation/not-found/state messages (verified against each one's own
+ * source — never a raw Postgres/Stripe/Resend/Anthropic error), so
+ * `err.message` is trusted directly; a defensive catch-all still exists
+ * for anything genuinely unexpected, logged server-side and replaced with
+ * a generic message rather than ever reaching the client raw.
  */
 
-export async function createQuoteAction(input: CreateQuoteInput): Promise<Quote> {
+function logUnexpected(action: string, err: unknown): void {
+  console.error(`[quoteActions] ${action} failed unexpectedly:`, err instanceof Error ? err.message : "non-Error thrown");
+}
+
+export async function createQuoteAction(input: CreateQuoteInput): Promise<ActionResult<Quote>> {
   const { db, session } = await requireContext();
-  const quote = await apiCreateQuote(db, session, input);
-  revalidatePath("/dashboard/quotes");
-  revalidatePath("/dashboard");
-  return quote;
+  try {
+    const quote = await apiCreateQuote(db, session, input);
+    revalidatePath("/dashboard/quotes");
+    revalidatePath("/dashboard");
+    return { ok: true, data: quote };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not save this quote." };
+  }
 }
 
 /**
@@ -65,27 +86,32 @@ export async function createQuoteAction(input: CreateQuoteInput): Promise<Quote>
  * before the business confirms/edits and saves — the public estimator's
  * counterpart (`analyzePublicPropertyAction`) deliberately returns less.
  */
-export async function analyzePropertyAction(input: AnalyzePropertyInput): Promise<AnalyzePropertyResult> {
+export async function analyzePropertyAction(input: AnalyzePropertyInput): Promise<ActionResult<AnalyzePropertyResult>> {
   const { db, session } = await requireContext();
   try {
-    return await analyzePropertyForBusiness(db, session, input);
+    const result = await analyzePropertyForBusiness(db, session, input);
+    return { ok: true, data: result };
   } catch (err) {
-    // A Server Action can only hand a plain Error's `message` back across
-    // the server/client boundary — the category is resolved to its
-    // user-facing text here so `NewQuoteClient` can display it (Phase 12).
-    if (err instanceof AiProviderError) throw new Error(describeAiErrorCategory(err.category));
-    throw err;
+    // The category is resolved to its user-facing text here (Phase 12) —
+    // never the raw provider error.
+    if (err instanceof AiProviderError) return { ok: false, message: describeAiErrorCategory(err.category) };
+    logUnexpected("analyzePropertyAction", err);
+    return { ok: false, message: describeAiErrorCategory("unknown") };
   }
 }
 
 export async function updateQuoteAnalysisAction(
   quoteId: string,
   characteristics: WindowCleaningCharacteristics,
-): Promise<Quote> {
+): Promise<ActionResult<Quote>> {
   const { db, session } = await requireContext();
-  const quote = await apiUpdateQuoteAnalysis(db, session, quoteId, characteristics);
-  revalidatePath(`/dashboard/quotes/${quoteId}`);
-  return quote;
+  try {
+    const quote = await apiUpdateQuoteAnalysis(db, session, quoteId, characteristics);
+    revalidatePath(`/dashboard/quotes/${quoteId}`);
+    return { ok: true, data: quote };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not save this change." };
+  }
 }
 
 /**
@@ -96,28 +122,40 @@ export async function updateQuoteAnalysisAction(
  */
 export async function recalculateQuoteEstimateAction(
   quoteId: string,
-): Promise<{ quote: Quote; pricingConfiguration: PricingConfiguration | undefined }> {
+): Promise<ActionResult<{ quote: Quote; pricingConfiguration: PricingConfiguration | undefined }>> {
   const { db, session } = await requireContext();
-  const quote = await apiRecalculateQuoteEstimate(db, session, quoteId);
-  const pricingConfiguration = await getConfigurationById(db, session, quote.pricingConfigId);
-  revalidatePath(`/dashboard/quotes/${quoteId}`);
-  return { quote, pricingConfiguration };
+  try {
+    const quote = await apiRecalculateQuoteEstimate(db, session, quoteId);
+    const pricingConfiguration = await getConfigurationById(db, session, quote.pricingConfigId);
+    revalidatePath(`/dashboard/quotes/${quoteId}`);
+    return { ok: true, data: { quote, pricingConfiguration } };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not recalculate this quote." };
+  }
 }
 
-export async function updateQuoteCustomerAction(quoteId: string, customer: CustomerInput): Promise<Quote> {
+export async function updateQuoteCustomerAction(quoteId: string, customer: CustomerInput): Promise<ActionResult<Quote>> {
   const { db, session } = await requireContext();
-  const quote = await apiUpdateQuoteCustomer(db, session, quoteId, customer);
-  revalidatePath(`/dashboard/quotes/${quoteId}`);
-  return quote;
+  try {
+    const quote = await apiUpdateQuoteCustomer(db, session, quoteId, customer);
+    revalidatePath(`/dashboard/quotes/${quoteId}`);
+    return { ok: true, data: quote };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not save this change." };
+  }
 }
 
-export async function updateQuoteStatusAction(quoteId: string, status: QuoteStatus): Promise<Quote> {
+export async function updateQuoteStatusAction(quoteId: string, status: QuoteStatus): Promise<ActionResult<Quote>> {
   const { db, session } = await requireContext();
-  const quote = await apiUpdateQuoteStatus(db, session, quoteId, status);
-  revalidatePath(`/dashboard/quotes/${quoteId}`);
-  revalidatePath("/dashboard/quotes");
-  revalidatePath("/dashboard");
-  return quote;
+  try {
+    const quote = await apiUpdateQuoteStatus(db, session, quoteId, status);
+    revalidatePath(`/dashboard/quotes/${quoteId}`);
+    revalidatePath("/dashboard/quotes");
+    revalidatePath("/dashboard");
+    return { ok: true, data: quote };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not update this quote's status." };
+  }
 }
 
 /**
@@ -134,23 +172,40 @@ export interface ShareLinkView extends ShareLinkStatus {
   url?: string;
 }
 
-export async function getQuoteShareLinkStatusAction(quoteId: string): Promise<ShareLinkView> {
+export async function getQuoteShareLinkStatusAction(quoteId: string): Promise<ActionResult<ShareLinkView>> {
   const { db, session } = await requireContext();
-  return await getShareLinkStatus(db, session, quoteId);
+  try {
+    const status = await getShareLinkStatus(db, session, quoteId);
+    return { ok: true, data: status };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not load this quote's customer link." };
+  }
 }
 
 /** Generates (or regenerates, revoking any existing link first) a share link and returns the full customer-facing URL — the one and only time the raw token is available to show/copy. */
-export async function generateQuoteShareLinkAction(quoteId: string): Promise<ShareLinkView> {
+export async function generateQuoteShareLinkAction(quoteId: string): Promise<ActionResult<ShareLinkView>> {
   const { db, session } = await requireContext();
-  const result = await generateShareLink(db, session, quoteId);
-  revalidatePath(`/dashboard/quotes/${quoteId}`);
-  return { active: true, createdAt: result.createdAt, expiresAt: result.expiresAt, url: buildQuoteShareUrl(result.token) };
+  try {
+    const result = await generateShareLink(db, session, quoteId);
+    revalidatePath(`/dashboard/quotes/${quoteId}`);
+    return {
+      ok: true,
+      data: { active: true, createdAt: result.createdAt, expiresAt: result.expiresAt, url: buildQuoteShareUrl(result.token) },
+    };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not create a customer link." };
+  }
 }
 
-export async function revokeQuoteShareLinkAction(quoteId: string): Promise<void> {
+export async function revokeQuoteShareLinkAction(quoteId: string): Promise<ActionResult<null>> {
   const { db, session } = await requireContext();
-  await revokeShareLink(db, session, quoteId);
-  revalidatePath(`/dashboard/quotes/${quoteId}`);
+  try {
+    await revokeShareLink(db, session, quoteId);
+    revalidatePath(`/dashboard/quotes/${quoteId}`);
+    return { ok: true, data: null };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not revoke this link." };
+  }
 }
 
 /**
@@ -160,12 +215,16 @@ export async function revokeQuoteShareLinkAction(quoteId: string): Promise<void>
  * mutation in this file — this never touches the quote's own historical
  * `analysis`/`estimate`/`pricingConfigId`.
  */
-export async function recordJobOutcomeAction(quoteId: string, input: SaveJobOutcomeInput): Promise<JobOutcome> {
+export async function recordJobOutcomeAction(quoteId: string, input: SaveJobOutcomeInput): Promise<ActionResult<JobOutcome>> {
   const { db, session } = await requireContext();
-  const outcome = await apiRecordJobOutcome(db, session, quoteId, input);
-  revalidatePath(`/dashboard/quotes/${quoteId}`);
-  revalidatePath("/dashboard/job-outcomes");
-  return outcome;
+  try {
+    const outcome = await apiRecordJobOutcome(db, session, quoteId, input);
+    revalidatePath(`/dashboard/quotes/${quoteId}`);
+    revalidatePath("/dashboard/job-outcomes");
+    return { ok: true, data: outcome };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not save this outcome." };
+  }
 }
 
 /**
@@ -175,14 +234,15 @@ export async function recordJobOutcomeAction(quoteId: string, input: SaveJobOutc
  * Regenerates the share link as part of sending — any previously copied
  * link becomes invalid, the same behavior "Regenerate" already has.
  */
-export async function sendQuoteEmailAction(quoteId: string): Promise<QuoteEmailResult> {
+export async function sendQuoteEmailAction(quoteId: string): Promise<ActionResult<QuoteEmailResult>> {
   const { db, session } = await requireContext();
   try {
     const result = await sendQuoteEmail(db, session, quoteId, buildQuoteShareUrl);
     revalidatePath(`/dashboard/quotes/${quoteId}`);
-    return result;
+    return { ok: true, data: result };
   } catch (err) {
-    if (err instanceof NotificationError) throw new Error(describeNotificationErrorCategory(err.category));
-    throw err;
+    if (err instanceof NotificationError) return { ok: false, message: describeNotificationErrorCategory(err.category) };
+    logUnexpected("sendQuoteEmailAction", err);
+    return { ok: false, message: "Could not email this quote. Please try again." };
   }
 }

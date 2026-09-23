@@ -48,58 +48,57 @@ export function ShareQuotePanel({ quote }: { quote: Quote }) {
   const [emailResult, setEmailResult] = useState<{ sentAt: string } | null>(null);
 
   useEffect(() => {
-    getQuoteShareLinkStatusAction(quoteId)
-      .then(setStatus)
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : "Could not load this quote's customer link.");
+    getQuoteShareLinkStatusAction(quoteId).then((result) => {
+      if (result.ok) {
+        setStatus(result.data);
+      } else {
+        setError(result.message);
         setStatus({ active: false });
-      });
+      }
+    });
   }, [quoteId]);
 
   async function handleGenerate() {
     setBusy("generate");
     setError(null);
-    try {
-      const result = await generateQuoteShareLinkAction(quoteId);
-      setStatus(result);
-      setFreshUrl(result.url ?? null);
+    const result = await generateQuoteShareLinkAction(quoteId);
+    if (result.ok) {
+      setStatus(result.data);
+      setFreshUrl(result.data.url ?? null);
       setCopied(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create a customer link.");
-    } finally {
-      setBusy(null);
+    } else {
+      setError(result.message);
     }
+    setBusy(null);
   }
 
   async function handleRevoke() {
     setBusy("revoke");
     setError(null);
-    try {
-      await revokeQuoteShareLinkAction(quoteId);
+    const result = await revokeQuoteShareLinkAction(quoteId);
+    if (result.ok) {
       setStatus({ active: false });
       setFreshUrl(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not revoke this link.");
-    } finally {
-      setBusy(null);
+    } else {
+      setError(result.message);
     }
+    setBusy(null);
   }
 
   async function handleSendEmail() {
     setBusy("email");
     setError(null);
     setEmailResult(null);
-    try {
-      const result = await sendQuoteEmailAction(quoteId);
-      setEmailResult({ sentAt: result.sentAt });
+    const result = await sendQuoteEmailAction(quoteId);
+    if (result.ok) {
+      setEmailResult({ sentAt: result.data.sentAt });
       const refreshed = await getQuoteShareLinkStatusAction(quoteId);
-      setStatus(refreshed);
+      if (refreshed.ok) setStatus(refreshed.data);
       setFreshUrl(null); // the token went directly into the email — never shown here for a business-triggered send
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not email this quote.");
-    } finally {
-      setBusy(null);
+    } else {
+      setError(result.message);
     }
+    setBusy(null);
   }
 
   async function handleCopy() {

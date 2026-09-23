@@ -17,11 +17,11 @@ export function ManageBillingButton() {
   async function handleManageBilling() {
     setStarting(true);
     setError(null);
-    try {
-      const { url } = await createBillingPortalSessionAction();
-      window.location.href = url;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open your billing portal.");
+    const result = await createBillingPortalSessionAction();
+    if (result.ok) {
+      window.location.href = result.data.url;
+    } else {
+      setError(result.message);
       setStarting(false);
     }
   }

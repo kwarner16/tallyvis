@@ -12,6 +12,7 @@ import {
 import type { ReactNode } from "react";
 import type { PropertyAnalysisResult } from "@tallyvis/types";
 import type { RawPropertyObservation } from "@tallyvis/api";
+import { compressImageFile, ImageCompressionError, MAX_SOURCE_FILE_BYTES } from "../imageCompression";
 import { windowCleaningEstimatorConfig } from "./industry-config";
 import {
   EMPTY_CUSTOMER_INPUT,
@@ -36,20 +37,6 @@ const STORAGE_KEY = "tallyvis-estimator-draft-v1";
  * transition; localStorage does.
  */
 const EMBED_ID_STORAGE_KEY = "tallyvis-estimator-embed-id";
-/**
- * Mirrors services/api/src/services/aiAnalysis.ts's own MAX_IMAGE_BYTES
- * (the authoritative server-side limit — this one is UX guidance only,
- * rejecting an oversized photo before it's even added rather than after a
- * round trip). Lowered from 10MB — a photo is sent to the AI provider as a
- * base64 data URI (see imageEncoding.ts), which is ~4/3 the size of the
- * original file, and Vercel Functions have a hard 4.5MB total request body
- * limit enforced before this app's own code ever runs. 6 photos at the old
- * 10MB limit could total well over 100MB base64-encoded — nowhere close to
- * deployable. See windowCleaningEstimatorConfig's own comment on maxPhotos
- * for the full accounting, and next.config.ts for the matching
- * `bodySizeLimit`.
- */
-const MAX_PHOTO_SIZE_BYTES = 500 * 1024;
 
 /**
  * Only property/service/contact answers persist across a reload — uploaded
@@ -97,11 +84,14 @@ interface EstimatorContextValue {
   quoteId: string | null;
   /** Which business's embed this session belongs to, if any — `null` for the marketing site's own bare `/estimate/*` wizard. See `EMBED_ID_STORAGE_KEY`'s comment. */
   embedId: string | null;
+  /** True while `addPhotos` is still compressing a batch — see imageCompression.ts. Lets PhotoUpload show "Processing…" instead of leaving the customer wondering why their photo hasn't appeared yet. */
+  isProcessingPhotos: boolean;
   updateProperty: (patch: Partial<PropertyDetails>) => void;
   updateServices: (patch: Partial<ServicePreferences>) => void;
   updateContact: (patch: Partial<ContactDetails>) => void;
   setNotes: (notes: string) => void;
-  addPhotos: (files: File[]) => PhotoRejection[];
+  /** Compresses each file client-side (see imageCompression.ts) before adding it — never trusts the original, potentially multi-megabyte phone photo directly. */
+  addPhotos: (files: File[]) => Promise<PhotoRejection[]>;
   removePhoto: (id: string) => void;
   setAnalysis: (result: PropertyAnalysisResult | null, observation?: RawPropertyObservation | null) => void;
   setAnalysisError: (message: string | null) => void;
@@ -119,6 +109,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [quoteId, setQuoteId] = useState<string | null>(null);
   const [embedId, setEmbedIdState] = useState<string | null>(null);
+  const [isProcessingPhotos, setIsProcessingPhotos] = useState(false);
   const hydrated = useRef(false);
 
   /** `observation` defaults to `null` (not "leave whatever was there") — every caller sets both explicitly, so a stale AI observation can never survive a manual re-entry or a fresh analysis. */
@@ -181,15 +172,26 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
     setInput((prev) => ({ ...prev, notes }));
   }, []);
 
-  const addPhotos = useCallback((files: File[]): PhotoRejection[] => {
-    const rejections: PhotoRejection[] = [];
-    const accepted: UploadedPhoto[] = [];
-
-    setInput((prev) => {
-      const remainingSlots = windowCleaningEstimatorConfig.maxPhotos - prev.photos.length;
+  /**
+   * Compresses every accepted file client-side (see imageCompression.ts)
+   * before it ever becomes a photo this session holds — a real, uncompressed
+   * phone photo is commonly 3-12MB, and Vercel Functions enforce a hard
+   * 4.5MB total request body limit (see next.config.ts's own comment), so
+   * sending the original file directly was never viable. The synchronous
+   * gate (count, MIME type, an absurdly large source file) still runs
+   * first and fast, exactly as before; only actually-accepted files pay
+   * for compression, and a failure compressing one file never blocks the
+   * others (each is caught and reported individually, matching this
+   * function's existing per-file rejection reporting).
+   */
+  const addPhotos = useCallback(
+    async (files: File[]): Promise<PhotoRejection[]> => {
+      const rejections: PhotoRejection[] = [];
+      const remainingSlots = windowCleaningEstimatorConfig.maxPhotos - input.photos.length;
+      const toProcess: File[] = [];
 
       for (const file of files) {
-        if (accepted.length >= remainingSlots) {
+        if (toProcess.length >= remainingSlots) {
           rejections.push({ name: file.name, reason: "Maximum number of photos reached." });
           continue;
         }
@@ -197,24 +199,46 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           rejections.push({ name: file.name, reason: "Not a supported image file." });
           continue;
         }
-        if (file.size > MAX_PHOTO_SIZE_BYTES) {
-          rejections.push({ name: file.name, reason: "File is larger than 500 KB — try a smaller or more compressed photo." });
+        if (file.size > MAX_SOURCE_FILE_BYTES) {
+          rejections.push({ name: file.name, reason: "File is larger than 20 MB — try a different photo." });
           continue;
         }
-
-        accepted.push({
-          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          previewUrl: URL.createObjectURL(file),
-          name: file.name,
-          sizeBytes: file.size,
-        });
+        toProcess.push(file);
       }
 
-      return accepted.length > 0 ? { ...prev, photos: [...prev.photos, ...accepted] } : prev;
-    });
+      if (toProcess.length === 0) return rejections;
 
-    return rejections;
-  }, []);
+      setIsProcessingPhotos(true);
+      const accepted: UploadedPhoto[] = [];
+      try {
+        for (const file of toProcess) {
+          try {
+            const { blob, sizeBytes } = await compressImageFile(file);
+            accepted.push({
+              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              previewUrl: URL.createObjectURL(blob),
+              name: file.name,
+              sizeBytes,
+            });
+          } catch (err) {
+            rejections.push({
+              name: file.name,
+              reason: err instanceof ImageCompressionError ? err.message : "This photo couldn't be processed.",
+            });
+          }
+        }
+      } finally {
+        setIsProcessingPhotos(false);
+      }
+
+      if (accepted.length > 0) {
+        setInput((prev) => ({ ...prev, photos: [...prev.photos, ...accepted] }));
+      }
+
+      return rejections;
+    },
+    [input.photos.length],
+  );
 
   const removePhoto = useCallback((id: string) => {
     setInput((prev) => {
@@ -248,6 +272,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       analysisError,
       quoteId,
       embedId,
+      isProcessingPhotos,
       updateProperty,
       updateServices,
       updateContact,
@@ -267,6 +292,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       analysisError,
       quoteId,
       embedId,
+      isProcessingPhotos,
       updateProperty,
       updateServices,
       updateContact,

@@ -35,11 +35,11 @@ export function PlanSelector({
   async function handleStartCheckout() {
     setStarting(true);
     setError(null);
-    try {
-      const { url } = await createCheckoutSessionAction(selected);
-      window.location.href = url;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start checkout.");
+    const result = await createCheckoutSessionAction(selected);
+    if (result.ok) {
+      window.location.href = result.data.url;
+    } else {
+      setError(result.message);
       setStarting(false);
     }
   }

@@ -35,18 +35,17 @@ export function PricingPageClient({ initialConfiguration }: { initialConfigurati
   async function handleSave() {
     if (!validation.valid) return;
     setSaving(true);
-    try {
-      const saved = await savePricingRulesAction(rules);
-      setSavedRules(saved.rules);
-      setConfiguration(saved);
-      setJustSavedVersion(saved.version);
+    const result = await savePricingRulesAction(rules);
+    if (result.ok) {
+      setSavedRules(result.data.rules);
+      setConfiguration(result.data);
+      setJustSavedVersion(result.data.version);
       setSaveError(null);
       setTimeout(() => setJustSavedVersion(null), 2500);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Could not save pricing rules.");
-    } finally {
-      setSaving(false);
+    } else {
+      setSaveError(result.message);
     }
+    setSaving(false);
   }
 
   return (

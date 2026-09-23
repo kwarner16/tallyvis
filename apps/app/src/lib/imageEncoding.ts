@@ -19,7 +19,8 @@ export function fileToDataUrl(file: File): Promise<string> {
   return blobToDataUrl(file);
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
+/** Exported for imageCompression.ts, which produces an already-compressed Blob and needs the same encoding step — kept in one place rather than duplicated. */
+export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);

@@ -20,23 +20,22 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
   async function handleSave() {
     setSaving(true);
     setSaveError(null);
-    try {
-      const saved = await updateBusinessAction({
-        name: business.name,
-        email: business.email,
-        phone: business.phone,
-        serviceArea: business.serviceArea,
-        logoUrl: business.logoUrl?.trim() || undefined,
-        brandColor: business.brandColor?.trim() || undefined,
-      });
-      setBusiness(saved);
+    const result = await updateBusinessAction({
+      name: business.name,
+      email: business.email,
+      phone: business.phone,
+      serviceArea: business.serviceArea,
+      logoUrl: business.logoUrl?.trim() || undefined,
+      brandColor: business.brandColor?.trim() || undefined,
+    });
+    if (result.ok) {
+      setBusiness(result.data);
       setJustSaved(true);
       setTimeout(() => setJustSaved(false), 2500);
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Could not save settings.");
-    } finally {
-      setSaving(false);
+    } else {
+      setSaveError(result.message);
     }
+    setSaving(false);
   }
 
   return (

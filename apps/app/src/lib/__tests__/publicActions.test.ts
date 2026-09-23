@@ -4,11 +4,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
  * Regression coverage for the production bug this exists to catch: Next.js
  * strips a thrown error's real message in a production build before it
  * reaches the client (confirmed against this repo's installed Next.js
- * version — see publicActionResult.ts's own comment), which surfaced as a
+ * version — see actionResult.ts's own comment), which surfaced as a
  * minified React error #441 on the deployed public estimator instead of
  * the intended "This estimator isn't set up correctly..." / AI-failure-
  * category message. Every exported action in publicActions.ts must return
- * a `PublicActionResult` — never throw — so this file exists specifically
+ * a `ActionResult` — never throw — so this file exists specifically
  * to catch a regression back to `throw`.
  *
  * `@tallyvis/api` is mocked entirely: this file tests publicActions.ts's
