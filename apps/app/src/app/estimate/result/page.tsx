@@ -40,17 +40,20 @@ export default function ResultStepPage() {
     Promise.all([
       getPublicBusinessAction(embedId ?? undefined),
       getPublicActiveConfigurationAction(embedId ?? undefined),
-    ])
-      .then(([loadedBusiness, configuration]) => {
-        if (cancelled) return;
-        setBusiness(loadedBusiness);
-        const pricingInput = reconcilePricingInput(input.services, analysis.characteristics);
-        setEstimate(calculateEstimate(pricingInput, configuration, analysis.metadata.confidence));
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        setLoadError(err instanceof Error ? err.message : "Something went wrong preparing your estimate.");
-      });
+    ]).then(([businessResult, configResult]) => {
+      if (cancelled) return;
+      if (!businessResult.ok) {
+        setLoadError(businessResult.message);
+        return;
+      }
+      if (!configResult.ok) {
+        setLoadError(configResult.message);
+        return;
+      }
+      setBusiness(businessResult.data);
+      const pricingInput = reconcilePricingInput(input.services, analysis.characteristics);
+      setEstimate(calculateEstimate(pricingInput, configResult.data, analysis.metadata.confidence));
+    });
     return () => {
       cancelled = true;
     };
@@ -82,15 +85,17 @@ export default function ResultStepPage() {
         aiObservation: aiObservation ?? undefined,
       },
       embedId ?? undefined,
-    )
-      .then(({ id }) => setQuoteId(id))
-      .catch(() => {
-        // The customer still sees their price either way (that's the whole
-        // point of showing it from client-side pricing above, not waiting on
-        // this) — only the business-visible record failed to save. Surfaced
-        // as a small non-blocking notice below, not a page-level failure.
-        setQuoteSaveFailed(true);
-      });
+    ).then((result) => {
+      if (result.ok) {
+        setQuoteId(result.data.id);
+        return;
+      }
+      // The customer still sees their price either way (that's the whole
+      // point of showing it from client-side pricing above, not waiting on
+      // this) — only the business-visible record failed to save. Surfaced
+      // as a small non-blocking notice below, not a page-level failure.
+      setQuoteSaveFailed(true);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis]);
 

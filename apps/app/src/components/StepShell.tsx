@@ -65,14 +65,12 @@ function useEstimatorBrandTheme(embedId: string | null): CSSProperties | undefin
 
   useEffect(() => {
     let cancelled = false;
-    getPublicBusinessAction(embedId ?? undefined)
-      .then((business) => {
-        if (!cancelled) setBrandColor(business.brandColor ?? null);
-      })
-      .catch(() => {
-        // Left to whichever step actually needs the business (analyze,
-        // create-quote, ...) to show a real, actionable error.
-      });
+    getPublicBusinessAction(embedId ?? undefined).then((result) => {
+      // A failed resolution is left to whichever step actually needs the
+      // business (analyze, create-quote, ...) to show a real, actionable
+      // error — this hook only ever affects cosmetic theming.
+      if (!cancelled && result.ok) setBrandColor(result.data.brandColor ?? null);
+    });
     return () => {
       cancelled = true;
     };

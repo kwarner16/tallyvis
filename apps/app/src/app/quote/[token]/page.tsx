@@ -40,40 +40,37 @@ export default function CustomerQuotePage() {
   async function handleAccept() {
     setPending("accept");
     setActionError(null);
-    try {
-      const quote = await acceptPublicQuoteAction(token);
-      setData((current) => (current ? { ...current, quote } : current));
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not accept this quote.");
-    } finally {
-      setPending(null);
+    const result = await acceptPublicQuoteAction(token);
+    if (result.ok) {
+      setData((current) => (current ? { ...current, quote: result.data } : current));
+    } else {
+      setActionError(result.message);
     }
+    setPending(null);
   }
 
   async function handleDecline() {
     setPending("decline");
     setActionError(null);
-    try {
-      const quote = await declinePublicQuoteAction(token);
-      setData((current) => (current ? { ...current, quote } : current));
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not decline this quote.");
-    } finally {
-      setPending(null);
+    const result = await declinePublicQuoteAction(token);
+    if (result.ok) {
+      setData((current) => (current ? { ...current, quote: result.data } : current));
+    } else {
+      setActionError(result.message);
     }
+    setPending(null);
   }
 
   async function handleRequestChanges(note: string) {
     setPending("request-changes");
     setActionError(null);
-    try {
-      const quote = await requestPublicQuoteChangesAction(token, note);
-      setData((current) => (current ? { ...current, quote } : current));
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not send your request.");
-    } finally {
-      setPending(null);
+    const result = await requestPublicQuoteChangesAction(token, note);
+    if (result.ok) {
+      setData((current) => (current ? { ...current, quote: result.data } : current));
+    } else {
+      setActionError(result.message);
     }
+    setPending(null);
   }
 
   if (data === undefined) return null;

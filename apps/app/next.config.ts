@@ -10,15 +10,20 @@ const nextConfig: NextConfig = {
   ],
   experimental: {
     serverActions: {
-      // The estimator sends up to 8 uncompressed photos (as base64 data
-      // URLs, per apps/app/src/lib/imageEncoding.ts) through a single
-      // Server Action to the AI provider — Next's 1MB default would reject
-      // a real customer's real smartphone photos almost immediately.
-      // Raising it is a stopgap, not a full fix: client-side image
-      // compression/resizing before upload (there is currently none) is
-      // the real fix and remains a follow-up — found during the Stripe V1
-      // hardening audit's file-upload review, not as a reported incident.
-      bodySizeLimit: "15mb",
+      // The estimator sends up to 6 photos (as base64 data URLs, per
+      // apps/app/src/lib/imageEncoding.ts) through a single Server Action
+      // to the AI provider. This used to be 15mb, but Vercel Functions
+      // enforce a hard 4.5MB total request body limit at the platform
+      // level — confirmed against Vercel's current docs — which no
+      // next.config.ts setting can raise; a request over that ceiling
+      // never reaches this app's code at all, just a raw platform 413.
+      // 4.3mb sits just under that ceiling: 6 photos * 500KB raw (see
+      // EstimatorContext.tsx's MAX_PHOTO_SIZE_BYTES) is ~4MB once
+      // base64-encoded, leaving headroom for the rest of the request
+      // while still catching an oversized request inside Next's own
+      // Server Actions handling (a clean, catchable error) rather than
+      // letting Vercel's infrastructure reject it first.
+      bodySizeLimit: "4.3mb",
     },
   },
 };

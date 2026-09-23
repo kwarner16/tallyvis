@@ -82,19 +82,25 @@ export default function AnalyzingStepPage() {
       .then(([result]) => {
         if (cancelled) return;
         clearInterval(stageTimer);
-        setAnalysis(result.analysis, result.observation);
-        router.push("/estimate/result");
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        clearInterval(stageTimer);
+        if (result.ok) {
+          setAnalysis(result.data.analysis, result.data.observation);
+          router.push("/estimate/result");
+          return;
+        }
         // The Server Action already resolves the failure's category to a
         // specific, safe message (Phase 12 — see
-        // docs/decisions/0014-ai-real-world-refinement.md); fall back to a
-        // generic one only if something unexpected reached here.
-        setAnalysisError(
-          err instanceof Error ? err.message : "Something went wrong while analyzing your photos.",
-        );
+        // docs/decisions/0014-ai-real-world-refinement.md) and returns it as
+        // data rather than throwing — a thrown error's real message is
+        // stripped in a production build (see publicActionResult.ts).
+        setAnalysisError(result.message);
+      })
+      .catch((err: unknown) => {
+        // Only reachable from blobUrlToDataUrl's own client-side conversion
+        // (the Server Action itself no longer throws) — a corrupt/expired
+        // blob: URL, not a server-side failure.
+        if (cancelled) return;
+        clearInterval(stageTimer);
+        setAnalysisError(err instanceof Error ? err.message : "Something went wrong while preparing your photos.");
       });
 
     return () => {

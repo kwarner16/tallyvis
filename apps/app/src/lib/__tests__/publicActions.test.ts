@@ -1,0 +1,203 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+/**
+ * Regression coverage for the production bug this exists to catch: Next.js
+ * strips a thrown error's real message in a production build before it
+ * reaches the client (confirmed against this repo's installed Next.js
+ * version — see publicActionResult.ts's own comment), which surfaced as a
+ * minified React error #441 on the deployed public estimator instead of
+ * the intended "This estimator isn't set up correctly..." / AI-failure-
+ * category message. Every exported action in publicActions.ts must return
+ * a `PublicActionResult` — never throw — so this file exists specifically
+ * to catch a regression back to `throw`.
+ *
+ * `@tallyvis/api` is mocked entirely: this file tests publicActions.ts's
+ * own error-handling/wrapping logic, not business resolution or database
+ * behavior (already covered by services/api's own test suite against real
+ * Postgres).
+ */
+
+const mocks = vi.hoisted(() => ({
+  resolveEmbedBusiness: vi.fn(),
+  getDefaultPublicBusiness: vi.fn(),
+  resolvePublicBusinessSummary: vi.fn(),
+  getActiveConfigurationForBusiness: vi.fn(),
+  analyzePropertyPublic: vi.fn(),
+  createQuotePublic: vi.fn(),
+  getQuoteByShareToken: vi.fn(),
+  acceptQuoteByToken: vi.fn(),
+  declineQuoteByToken: vi.fn(),
+  requestQuoteChangesByToken: vi.fn(),
+}));
+
+class FakeAiProviderError extends Error {
+  category: string;
+  constructor(message: string, category: string) {
+    super(message);
+    this.category = category;
+  }
+}
+
+vi.mock("@tallyvis/api", () => ({
+  getDb: vi.fn(() => ({})),
+  AiProviderError: FakeAiProviderError,
+  resolveEmbedBusiness: mocks.resolveEmbedBusiness,
+  getDefaultPublicBusiness: mocks.getDefaultPublicBusiness,
+  resolvePublicBusinessSummary: mocks.resolvePublicBusinessSummary,
+  getActiveConfigurationForBusiness: mocks.getActiveConfigurationForBusiness,
+  analyzePropertyPublic: mocks.analyzePropertyPublic,
+  createQuotePublic: mocks.createQuotePublic,
+  getQuoteByShareToken: mocks.getQuoteByShareToken,
+  acceptQuoteByToken: mocks.acceptQuoteByToken,
+  declineQuoteByToken: mocks.declineQuoteByToken,
+  requestQuoteChangesByToken: mocks.requestQuoteChangesByToken,
+}));
+
+const {
+  getPublicBusinessAction,
+  getPublicActiveConfigurationAction,
+  verifyEmbedIdAction,
+  analyzePublicPropertyAction,
+  createPublicQuoteAction,
+  getPublicQuoteByTokenAction,
+  acceptPublicQuoteAction,
+  declinePublicQuoteAction,
+  requestPublicQuoteChangesAction,
+} = await import("../publicActions");
+const { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } = await import("../publicBusinessErrors");
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("getPublicBusinessAction", () => {
+  it("returns ok:true with the resolved summary", async () => {
+    mocks.resolvePublicBusinessSummary.mockResolvedValue({ name: "Acme", brandColor: "#0057B8" });
+    const result = await getPublicBusinessAction("embed-123");
+    expect(result).toEqual({ ok: true, data: { name: "Acme", brandColor: "#0057B8" } });
+  });
+
+  it("returns ok:false with a safe message when the embed id doesn't resolve — never throws", async () => {
+    mocks.resolvePublicBusinessSummary.mockResolvedValue(undefined);
+    const result = await getPublicBusinessAction("bad-embed-id");
+    expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
+  });
+
+  it("returns ok:false instead of throwing when the underlying lookup throws unexpectedly", async () => {
+    mocks.resolvePublicBusinessSummary.mockRejectedValue(new Error("connection terminated unexpectedly"));
+    const result = await getPublicBusinessAction("embed-123");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // Never the raw internal error message (could echo connection/DB internals).
+      expect(result.message).not.toContain("connection terminated");
+    }
+  });
+});
+
+describe("getPublicActiveConfigurationAction", () => {
+  it("returns ok:true with the configuration", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.getActiveConfigurationForBusiness.mockResolvedValue({ id: "config_1" });
+    const result = await getPublicActiveConfigurationAction("embed-123");
+    expect(result).toEqual({ ok: true, data: { id: "config_1" } });
+  });
+
+  it("returns ok:false when the business can't be resolved", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue(undefined);
+    const result = await getPublicActiveConfigurationAction("bad-id");
+    expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
+  });
+});
+
+describe("verifyEmbedIdAction", () => {
+  it("resolves to false (not a thrown error) when the lookup itself throws", async () => {
+    mocks.resolveEmbedBusiness.mockRejectedValue(new Error("db unavailable"));
+    await expect(verifyEmbedIdAction("any-id")).resolves.toBe(false);
+  });
+});
+
+describe("analyzePublicPropertyAction", () => {
+  it("returns ok:true with the analysis result on success", async () => {
+    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.analyzePropertyPublic.mockResolvedValue({ analysis: { characteristics: {}, metadata: {} }, observation: {} });
+    const result = await analyzePublicPropertyAction({ images: [], property: {} });
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns ok:false with the business-not-configured message when the business can't be resolved — never throws", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue(undefined);
+    const result = await analyzePublicPropertyAction({ images: [], property: {} }, "bad-embed-id");
+    expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
+  });
+
+  it("returns ok:false with the no-business message when there's no embed id and no default business", async () => {
+    mocks.getDefaultPublicBusiness.mockResolvedValue(undefined);
+    const result = await analyzePublicPropertyAction({ images: [], property: {} });
+    expect(result).toEqual({ ok: false, message: NO_BUSINESS_CONFIGURED_MESSAGE });
+  });
+
+  it("returns ok:false with the categorized AI failure message — never throws — for an AiProviderError", async () => {
+    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.analyzePropertyPublic.mockRejectedValue(new FakeAiProviderError("raw provider detail", "rate-limit"));
+    const result = await analyzePublicPropertyAction({ images: [], property: {} });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toBe("The AI provider is busy right now — please try again in a moment.");
+      // The category message, never the raw provider-supplied text.
+      expect(result.message).not.toContain("raw provider detail");
+    }
+  });
+
+  it("returns a generic safe message — never throws — for a genuinely unexpected error", async () => {
+    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.analyzePropertyPublic.mockRejectedValue(new Error("ECONNREFUSED 10.0.0.5:5432"));
+    const result = await analyzePublicPropertyAction({ images: [], property: {} });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).not.toContain("ECONNREFUSED");
+      expect(result.message).not.toContain("10.0.0.5");
+    }
+  });
+});
+
+describe("createPublicQuoteAction", () => {
+  it("returns ok:true with only the new quote's id", async () => {
+    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.createQuotePublic.mockResolvedValue({ id: "quote_1", businessId: "biz_1", customerId: "cust_1" });
+    const result = await createPublicQuoteAction({} as never);
+    expect(result).toEqual({ ok: true, data: { id: "quote_1" } });
+  });
+
+  it("returns ok:false instead of throwing when business resolution fails", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue(undefined);
+    const result = await createPublicQuoteAction({} as never, "bad-id");
+    expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
+  });
+});
+
+describe("getPublicQuoteByTokenAction", () => {
+  it("resolves to null (not a thrown error) when the lookup throws unexpectedly", async () => {
+    mocks.getQuoteByShareToken.mockRejectedValue(new Error("db unavailable"));
+    await expect(getPublicQuoteByTokenAction("some-token")).resolves.toBeNull();
+  });
+});
+
+describe("customer quote-response actions never throw", () => {
+  it("acceptPublicQuoteAction returns ok:false with the service's own safe message on failure", async () => {
+    mocks.acceptQuoteByToken.mockRejectedValue(new Error("This quote link is invalid or has expired."));
+    const result = await acceptPublicQuoteAction("bad-token");
+    expect(result).toEqual({ ok: false, message: "This quote link is invalid or has expired." });
+  });
+
+  it("declinePublicQuoteAction returns ok:true with the updated quote", async () => {
+    mocks.declineQuoteByToken.mockResolvedValue({ id: "quote_1", status: "declined" });
+    const result = await declinePublicQuoteAction("good-token");
+    expect(result).toEqual({ ok: true, data: { id: "quote_1", status: "declined" } });
+  });
+
+  it("requestPublicQuoteChangesAction returns ok:false rather than throwing", async () => {
+    mocks.requestQuoteChangesByToken.mockRejectedValue(new Error("Please describe what you'd like changed."));
+    const result = await requestPublicQuoteChangesAction("good-token", "");
+    expect(result).toEqual({ ok: false, message: "Please describe what you'd like changed." });
+  });
+});

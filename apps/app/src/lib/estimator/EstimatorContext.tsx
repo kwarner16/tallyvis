@@ -36,7 +36,20 @@ const STORAGE_KEY = "tallyvis-estimator-draft-v1";
  * transition; localStorage does.
  */
 const EMBED_ID_STORAGE_KEY = "tallyvis-estimator-embed-id";
-const MAX_PHOTO_SIZE_BYTES = 10 * 1024 * 1024;
+/**
+ * Mirrors services/api/src/services/aiAnalysis.ts's own MAX_IMAGE_BYTES
+ * (the authoritative server-side limit — this one is UX guidance only,
+ * rejecting an oversized photo before it's even added rather than after a
+ * round trip). Lowered from 10MB — a photo is sent to the AI provider as a
+ * base64 data URI (see imageEncoding.ts), which is ~4/3 the size of the
+ * original file, and Vercel Functions have a hard 4.5MB total request body
+ * limit enforced before this app's own code ever runs. 6 photos at the old
+ * 10MB limit could total well over 100MB base64-encoded — nowhere close to
+ * deployable. See windowCleaningEstimatorConfig's own comment on maxPhotos
+ * for the full accounting, and next.config.ts for the matching
+ * `bodySizeLimit`.
+ */
+const MAX_PHOTO_SIZE_BYTES = 500 * 1024;
 
 /**
  * Only property/service/contact answers persist across a reload — uploaded
@@ -185,7 +198,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           continue;
         }
         if (file.size > MAX_PHOTO_SIZE_BYTES) {
-          rejections.push({ name: file.name, reason: "File is larger than 10 MB." });
+          rejections.push({ name: file.name, reason: "File is larger than 500 KB — try a smaller or more compressed photo." });
           continue;
         }
 

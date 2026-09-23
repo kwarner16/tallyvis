@@ -22,9 +22,21 @@ import {
 } from "@tallyvis/api";
 import { describeAiErrorCategory } from "./aiErrorMessages";
 import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } from "./publicBusinessErrors";
+import type { PublicActionResult } from "./publicActionResult";
 
 /**
- * Unauthenticated actions for the public `/estimate/*` customer wizard.
+ * Unauthenticated actions for the public `/estimate/*` customer wizard and
+ * the `/quote/[token]` customer-facing quote view.
+ *
+ * Every exported function here returns a `PublicActionResult<T>` — never
+ * throws to the client — because Next.js strips a thrown error's real
+ * message in a production build (see `publicActionResult.ts`'s own
+ * comment for how this was confirmed, not assumed). Anything unexpected
+ * (a genuine bug, a transient database error) is caught here and logged
+ * server-side via `console.error` — safe fields only, matching
+ * `@tallyvis/ai`'s own logging convention — then converted to one of the
+ * same safe, categorized messages a deliberately-thrown error would have
+ * used, never the raw error itself.
  *
  * "Which business" is resolved one of two ways: an `embedId` (Phase 14 —
  * see docs/decisions/0016-onboarding-billing-embed.md), the PUBLIC,
@@ -37,6 +49,14 @@ import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } from
  * for why that particular case remains a stated simplification rather
  * than real multi-business routing.
  */
+
+const GENERIC_FAILURE_MESSAGE = describeAiErrorCategory("unknown");
+
+function logUnexpected(action: string, err: unknown): void {
+  // Never the raw error object (could carry request/connection internals) —
+  // only its own message, and only server-side.
+  console.error(`[publicActions] ${action} failed unexpectedly:`, err instanceof Error ? err.message : "non-Error thrown");
+}
 
 async function requirePublicBusiness(embedId?: string): Promise<Business> {
   const business = embedId ? await resolveEmbedBusiness(getDb(), embedId) : await getDefaultPublicBusiness(getDb());
@@ -61,22 +81,41 @@ async function requirePublicBusinessId(embedId?: string): Promise<string> {
  * component), those fields were genuinely transmitted to the browser on
  * every page load, not merely present in a server-side object.
  */
-export async function getPublicBusinessAction(embedId?: string): Promise<PublicBusinessSummary> {
-  const summary = await resolvePublicBusinessSummary(getDb(), embedId);
-  if (!summary) {
-    throw new Error(embedId ? "This estimator isn't set up correctly. Contact the business directly." : "No business is configured yet.");
+export async function getPublicBusinessAction(embedId?: string): Promise<PublicActionResult<PublicBusinessSummary>> {
+  try {
+    const summary = await resolvePublicBusinessSummary(getDb(), embedId);
+    if (!summary) {
+      return { ok: false, message: embedId ? ESTIMATOR_NOT_CONFIGURED_MESSAGE : NO_BUSINESS_CONFIGURED_MESSAGE };
+    }
+    return { ok: true, data: summary };
+  } catch (err) {
+    logUnexpected("getPublicBusinessAction", err);
+    return { ok: false, message: GENERIC_FAILURE_MESSAGE };
   }
-  return summary;
 }
 
-export async function getPublicActiveConfigurationAction(embedId?: string): Promise<PricingConfiguration> {
-  const businessId = await requirePublicBusinessId(embedId);
-  return await getActiveConfigurationForBusiness(getDb(), businessId);
+export async function getPublicActiveConfigurationAction(embedId?: string): Promise<PublicActionResult<PricingConfiguration>> {
+  try {
+    const businessId = await requirePublicBusinessId(embedId);
+    const configuration = await getActiveConfigurationForBusiness(getDb(), businessId);
+    return { ok: true, data: configuration };
+  } catch (err) {
+    if (err instanceof Error && (err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE || err.message === NO_BUSINESS_CONFIGURED_MESSAGE)) {
+      return { ok: false, message: err.message };
+    }
+    logUnexpected("getPublicActiveConfigurationAction", err);
+    return { ok: false, message: GENERIC_FAILURE_MESSAGE };
+  }
 }
 
-/** Used by `/embed/[embedId]`'s landing page to verify the id is real BEFORE redirecting into the wizard, so an invalid/typo'd embed snippet fails fast with a clear message instead of silently breaking several steps later. */
+/** Used by `/embed/[embedId]`'s landing page to verify the id is real BEFORE redirecting into the wizard, so an invalid/typo'd embed snippet fails fast with a clear message instead of silently breaking several steps later. Any unexpected failure resolves to `false` (the same "invalid" UI a genuinely bad id shows) rather than crashing that page. */
 export async function verifyEmbedIdAction(embedId: string): Promise<boolean> {
-  return Boolean(await resolveEmbedBusiness(getDb(), embedId));
+  try {
+    return Boolean(await resolveEmbedBusiness(getDb(), embedId));
+  } catch (err) {
+    logUnexpected("verifyEmbedIdAction", err);
+    return false;
+  }
 }
 
 /**
@@ -99,16 +138,21 @@ export async function verifyEmbedIdAction(embedId: string): Promise<boolean> {
 export async function analyzePublicPropertyAction(
   input: AnalyzePropertyInput,
   embedId?: string,
-): Promise<AnalyzePropertyResult> {
-  const businessId = await requirePublicBusinessId(embedId);
+): Promise<PublicActionResult<AnalyzePropertyResult>> {
+  let businessId: string;
   try {
-    return await analyzePropertyPublic(getDb(), businessId, input);
+    businessId = await requirePublicBusinessId(embedId);
   } catch (err) {
-    // See analyzePropertyAction's twin in quoteActions.ts — a Server Action
-    // can only hand back a plain Error's `message`, so the category's
-    // user-facing text is resolved here (Phase 12).
-    if (err instanceof AiProviderError) throw new Error(describeAiErrorCategory(err.category));
-    throw err;
+    return { ok: false, message: err instanceof Error ? err.message : NO_BUSINESS_CONFIGURED_MESSAGE };
+  }
+
+  try {
+    const result = await analyzePropertyPublic(getDb(), businessId, input);
+    return { ok: true, data: result };
+  } catch (err) {
+    if (err instanceof AiProviderError) return { ok: false, message: describeAiErrorCategory(err.category) };
+    logUnexpected("analyzePublicPropertyAction", err);
+    return { ok: false, message: GENERIC_FAILURE_MESSAGE };
   }
 }
 
@@ -133,10 +177,27 @@ export async function isUsingMockAiProviderAction(): Promise<boolean> {
  * server-side estimate) would be more than the browser needs and more than
  * an anonymous caller should see.
  */
-export async function createPublicQuoteAction(input: CreateQuoteInput, embedId?: string): Promise<{ id: string }> {
-  const businessId = await requirePublicBusinessId(embedId);
-  const quote = await createQuotePublic(getDb(), businessId, input);
-  return { id: quote.id };
+export async function createPublicQuoteAction(
+  input: CreateQuoteInput,
+  embedId?: string,
+): Promise<PublicActionResult<{ id: string }>> {
+  try {
+    const businessId = await requirePublicBusinessId(embedId);
+    const quote = await createQuotePublic(getDb(), businessId, input);
+    return { ok: true, data: { id: quote.id } };
+  } catch (err) {
+    if (err instanceof Error && (err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE || err.message === NO_BUSINESS_CONFIGURED_MESSAGE)) {
+      return { ok: false, message: err.message };
+    }
+    // Anything else here is either a real validation error (e.g. the
+    // required-service-address check in services/quotes.ts) — safe and
+    // meant to be shown verbatim — or genuinely unexpected. There is no
+    // provider/DB-internal error path in createQuotePublic itself, unlike
+    // the AI path above, so err.message is trusted directly rather than
+    // requiring an AiProviderError-style allowlist.
+    logUnexpected("createPublicQuoteAction", err);
+    return { ok: false, message: err instanceof Error ? err.message : "Could not save this request. Please try again." };
+  }
 }
 
 /**
@@ -144,24 +205,54 @@ export async function createPublicQuoteAction(input: CreateQuoteInput, embedId?:
  * docs/decisions/0012-secure-quote-sharing.md). The raw share token IS the
  * authorization: `getQuoteByShareToken` resolves it server-side to exactly
  * one quote and its owning business, or nothing at all. There is no id
- * parameter here for a caller to substitute — only the token.
+ * parameter here for a caller to substitute — only the token. Resolves to
+ * `null` for an unknown/revoked/expired token AND for an unexpected
+ * failure alike — the page already treats `null` as "we couldn't find
+ * this estimate," which is also the safest thing to show for a failure a
+ * customer has no way to act on anyway.
  */
 export async function getPublicQuoteByTokenAction(token: string): Promise<PublicQuoteView | null> {
-  const result = await getQuoteByShareToken(getDb(), token);
-  return result ?? null;
+  try {
+    const result = await getQuoteByShareToken(getDb(), token);
+    return result ?? null;
+  } catch (err) {
+    logUnexpected("getPublicQuoteByTokenAction", err);
+    return null;
+  }
 }
 
+const QUOTE_ACTION_GENERIC_MESSAGES = {
+  accept: "Could not accept this quote. Please try again.",
+  decline: "Could not decline this quote. Please try again.",
+  "request-changes": "Could not send your request. Please try again.",
+} as const;
+
 /** Customer action: accept. Operates only on whatever quote `token` resolves to — see `getQuoteByShareToken`'s comment. */
-export async function acceptPublicQuoteAction(token: string): Promise<Quote> {
-  return await acceptQuoteByToken(getDb(), token);
+export async function acceptPublicQuoteAction(token: string): Promise<PublicActionResult<Quote>> {
+  try {
+    return { ok: true, data: await acceptQuoteByToken(getDb(), token) };
+  } catch (err) {
+    logUnexpected("acceptPublicQuoteAction", err);
+    return { ok: false, message: err instanceof Error ? err.message : QUOTE_ACTION_GENERIC_MESSAGES.accept };
+  }
 }
 
 /** Customer action: decline. Same token-only authorization as accept. */
-export async function declinePublicQuoteAction(token: string): Promise<Quote> {
-  return await declineQuoteByToken(getDb(), token);
+export async function declinePublicQuoteAction(token: string): Promise<PublicActionResult<Quote>> {
+  try {
+    return { ok: true, data: await declineQuoteByToken(getDb(), token) };
+  } catch (err) {
+    logUnexpected("declinePublicQuoteAction", err);
+    return { ok: false, message: err instanceof Error ? err.message : QUOTE_ACTION_GENERIC_MESSAGES.decline };
+  }
 }
 
 /** Customer action: request changes / contact the business — persisted as a note, not a status change. */
-export async function requestPublicQuoteChangesAction(token: string, note: string): Promise<Quote> {
-  return await requestQuoteChangesByToken(getDb(), token, note);
+export async function requestPublicQuoteChangesAction(token: string, note: string): Promise<PublicActionResult<Quote>> {
+  try {
+    return { ok: true, data: await requestQuoteChangesByToken(getDb(), token, note) };
+  } catch (err) {
+    logUnexpected("requestPublicQuoteChangesAction", err);
+    return { ok: false, message: err instanceof Error ? err.message : QUOTE_ACTION_GENERIC_MESSAGES["request-changes"] };
+  }
 }

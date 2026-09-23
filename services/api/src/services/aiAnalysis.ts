@@ -26,14 +26,35 @@ export interface AnalyzePropertyInput {
 
 /**
  * Mirrors `apps/app/src/lib/estimator/industry-config.ts`'s `maxPhotos`
- * (8) — not imported from it, since `services/api` can never depend on an
+ * (6) — not imported from it, since `services/api` can never depend on an
  * app (see CLAUDE.md's module boundary rules). This is the authoritative
  * bound either way: a client-side limit is UX guidance only, never
- * trusted as the real enforcement.
+ * trusted as the real enforcement. Lowered from 8 alongside `MAX_IMAGE_BYTES`
+ * below — see that constant's own comment for why: this check alone can't
+ * prevent a Vercel-platform-level request rejection (that happens before
+ * this code ever runs), but it's still real defense-in-depth against a
+ * client that skips its own (also-lowered) limit.
  */
-const MAX_IMAGES = 8;
-/** Mirrors the client-side cap `EstimatorContext.tsx` already enforces — re-checked here because a client-side limit is never authoritative. */
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGES = 6;
+/**
+ * Mirrors the client-side cap `EstimatorContext.tsx` already enforces —
+ * re-checked here because a client-side limit is never authoritative.
+ * Lowered from 10MB after confirming Vercel Functions have a hard 4.5MB
+ * total request body limit, platform-enforced before this app's own code
+ * (or even Next.js's own, more generous `bodySizeLimit` config in
+ * next.config.ts) ever sees the request. A base64 data URI (how a photo
+ * reaches this function — see imageEncoding.ts) is ~4/3 the size of the
+ * original file, so `MAX_IMAGES` photos at the old 10MB limit could total
+ * well over 100MB base64-encoded, guaranteeing a raw platform 413 this
+ * code has no chance to intercept or explain. 6 * 500KB raw ≈ 4MB
+ * base64-encoded, leaving headroom under the 4.5MB ceiling for the rest of
+ * the request. Real client-side photo compression before upload — flagged
+ * as a known gap since Phase 11, still not built — is what actually
+ * resolves the tension between "let a customer submit a real, useful
+ * photo" and this hard platform ceiling; this is a correctness fix
+ * (matching limits to what the platform can actually transport), not that.
+ */
+const MAX_IMAGE_BYTES = 500 * 1024;
 
 function approxDecodedBytes(base64: string): number {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
@@ -59,7 +80,7 @@ function validateAnalyzeInput(input: AnalyzePropertyInput): void {
       throw new AiProviderError("Each photo must be a valid image.", "invalid-image");
     }
     if (approxDecodedBytes(match[1]) > MAX_IMAGE_BYTES) {
-      throw new AiProviderError("Each photo must be smaller than 10 MB.", "image-too-large");
+      throw new AiProviderError("Each photo must be smaller than 500 KB.", "image-too-large");
     }
   }
 }

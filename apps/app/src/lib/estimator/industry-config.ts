@@ -27,7 +27,19 @@ export const windowCleaningEstimatorConfig: IndustryConfig = {
   vertical: "window-cleaning",
   displayName: "Window Cleaning",
   minPhotos: 3,
-  maxPhotos: 8,
+  /**
+   * Mirrors services/api/src/services/aiAnalysis.ts's own MAX_IMAGES (the
+   * authoritative server-side limit — this one is UX guidance only). Both
+   * were lowered from 8 together with each photo's own size limit (see
+   * EstimatorContext.tsx's MAX_PHOTO_SIZE_BYTES) after confirming Vercel
+   * Functions have a hard 4.5MB total request body limit, platform-enforced
+   * before this app's own code (or its own, more generous
+   * `bodySizeLimit` config) ever sees the request — a base64 data URI is
+   * ~4/3 the size of the original photo, so the old 8-photo/10MB-each
+   * limits could total over 100MB, guaranteeing a raw platform-level 413
+   * this app has no way to intercept or explain. See next.config.ts.
+   */
+  maxPhotos: 6,
   photoIntro: "Show us the windows. We'll handle the rest.",
   photoGuidance: [
     "Take photos from outside the home.",
