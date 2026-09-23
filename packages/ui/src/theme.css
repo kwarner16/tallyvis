@@ -24,6 +24,8 @@
   --color-accent-strong: #b8480a;
   --color-accent-strong-hover: #8f3907;
   --color-accent-soft: #fbeadb;
+  /** Text/icon color drawn on top of an accent-strong surface (e.g. a primary button). Defaults to the same paper color those surfaces have always used — only a business-branded subtree (see @tallyvis/config's deriveEstimatorTheme) overrides it, and only to whichever of white/near-black gives better contrast against that business's own accent color. */
+  --color-accent-foreground: var(--color-paper);
 }
 
 @theme inline {
@@ -44,6 +46,7 @@
   --color-accent-strong: var(--color-accent-strong);
   --color-accent-strong-hover: var(--color-accent-strong-hover);
   --color-accent-soft: var(--color-accent-soft);
+  --color-accent-foreground: var(--color-accent-foreground);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);

@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { cn } from "@tallyvis/ui";
+import { deriveEstimatorTheme } from "@tallyvis/config";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
+import { getPublicBusinessAction } from "@/lib/publicActions";
 
 const STEPS = [
   { key: "property", label: "Property", href: "/estimate/property" },
@@ -48,16 +50,50 @@ function useReportHeightToParent(): React.RefObject<HTMLDivElement | null> {
   return rootRef;
 }
 
+/**
+ * Business-controlled estimator branding (docs/decisions/0016, extended by
+ * the branding work in this pass) — fetched once per mount/embed and
+ * applied as CSS custom-property overrides on the whole step tree below, so
+ * every step (not just /estimate/result, which used to be the only one)
+ * reflects the resolved business's brand color. Best-effort: a failure here
+ * (e.g. a stale/invalid embedId) is left for the step itself to surface its
+ * own real error — this hook silently keeps the default Tallyvis theme
+ * rather than duplicating that error handling.
+ */
+function useEstimatorBrandTheme(embedId: string | null): CSSProperties | undefined {
+  const [brandColor, setBrandColor] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPublicBusinessAction(embedId ?? undefined)
+      .then((business) => {
+        if (!cancelled) setBrandColor(business.brandColor ?? null);
+      })
+      .catch(() => {
+        // Left to whichever step actually needs the business (analyze,
+        // create-quote, ...) to show a real, actionable error.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [embedId]);
+
+  const theme = deriveEstimatorTheme(brandColor);
+  return theme ? (theme as CSSProperties) : undefined;
+}
+
 /** Shared chrome for every /estimate/* step: wordmark + progress indicator. */
 export function StepShell({ children }: StepShellProps) {
   const pathname = usePathname();
   const { embedId } = useEstimator();
   const currentIndex = STEPS.findIndex((step) => pathname?.startsWith(step.href));
   const rootRef = useReportHeightToParent();
+  const brandStyle = useEstimatorBrandTheme(embedId);
 
   return (
     <div
       ref={rootRef}
+      style={brandStyle}
       className={cn(
         "mx-auto flex w-full max-w-2xl flex-col px-5 py-8 sm:px-6 sm:py-14",
         // Full-viewport height standalone; natural content height inside an
@@ -81,7 +117,7 @@ export function StepShell({ children }: StepShellProps) {
                     className={cn(
                       "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-medium",
                       i < currentIndex && "border-accent bg-accent-soft text-accent-strong",
-                      i === currentIndex && "border-accent-strong bg-accent-strong text-paper",
+                      i === currentIndex && "border-accent-strong bg-accent-strong text-accent-foreground",
                       i > currentIndex && "border-line text-ink-faint",
                     )}
                   >

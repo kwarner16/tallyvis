@@ -64,4 +64,55 @@ describe("updateCurrentBusiness", () => {
 
     expect(await getCurrentBusiness(db, session)).toEqual(before);
   });
+
+  it("normalizes a valid brand color to uppercase", async () => {
+    const { db, session } = await setUp();
+    const updated = await updateCurrentBusiness(db, session, {
+      name: "Sparkle Windows",
+      email: "hello@sparkle.example",
+      phone: "",
+      serviceArea: "",
+      brandColor: "#0057b8",
+    });
+    expect(updated.brandColor).toBe("#0057B8");
+  });
+
+  it("rejects a malformed brand color", async () => {
+    const { db, session } = await setUp();
+    await expect(
+      updateCurrentBusiness(db, session, {
+        name: "Sparkle Windows",
+        email: "hello@sparkle.example",
+        phone: "",
+        serviceArea: "",
+        brandColor: "blue",
+      }),
+    ).rejects.toThrow(/six-digit hex/);
+  });
+
+  it("rejects a brand color carrying more than a color, e.g. an attempted CSS/script injection", async () => {
+    const { db, session } = await setUp();
+    await expect(
+      updateCurrentBusiness(db, session, {
+        name: "Sparkle Windows",
+        email: "hello@sparkle.example",
+        phone: "",
+        serviceArea: "",
+        brandColor: "#000000; } body { background: url(javascript:alert(1))",
+      }),
+    ).rejects.toThrow(/six-digit hex/);
+  });
+
+  it("rejects a non-http(s) logo URL", async () => {
+    const { db, session } = await setUp();
+    await expect(
+      updateCurrentBusiness(db, session, {
+        name: "Sparkle Windows",
+        email: "hello@sparkle.example",
+        phone: "",
+        serviceArea: "",
+        logoUrl: "javascript:alert(1)",
+      }),
+    ).rejects.toThrow(/http/);
+  });
 });

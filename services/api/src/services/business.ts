@@ -1,4 +1,5 @@
 import type { Business } from "@tallyvis/types";
+import { normalizeHexColor } from "@tallyvis/config";
 import type { AuthSession } from "../auth/session";
 import type { Queryable } from "../db/pg/client";
 import type { PublicBusinessSummary } from "./quoteSharing";
@@ -14,13 +15,37 @@ export type { UpdateBusinessInput };
 
 const EMAIL_PATTERN = /\S+@\S+\.\S+/;
 
-function validateUpdateBusinessInput(input: UpdateBusinessInput): void {
+/**
+ * Validates and normalizes in one pass — `brandColor` in particular must
+ * come out as a canonical uppercase six-digit hex or not at all, never an
+ * arbitrary string, since it's later interpolated as a CSS custom property
+ * value for the public estimator (Part 14/24 of the branding work: "never
+ * allow arbitrary CSS to be stored"). Throws with a message safe to show
+ * the business owner directly (this only ever runs for an authenticated
+ * caller updating their own settings).
+ */
+function normalizeUpdateBusinessInput(input: UpdateBusinessInput): UpdateBusinessInput {
   if (input.name.trim().length === 0) {
     throw new Error("Business name is required.");
   }
   if (!EMAIL_PATTERN.test(input.email)) {
     throw new Error("A valid business email is required.");
   }
+
+  let brandColor = input.brandColor;
+  if (brandColor !== undefined) {
+    const normalized = normalizeHexColor(brandColor);
+    if (!normalized) {
+      throw new Error("Brand color must be a six-digit hex value, like #0057B8.");
+    }
+    brandColor = normalized;
+  }
+
+  if (input.logoUrl !== undefined && !/^https?:\/\/\S+$/i.test(input.logoUrl)) {
+    throw new Error("Logo URL must be a valid http:// or https:// address.");
+  }
+
+  return { ...input, brandColor };
 }
 
 /**
@@ -52,8 +77,7 @@ export async function updateCurrentBusiness(
   session: AuthSession,
   input: UpdateBusinessInput,
 ): Promise<Business> {
-  validateUpdateBusinessInput(input);
-  return updateBusiness(db, session.businessId, input);
+  return updateBusiness(db, session.businessId, normalizeUpdateBusinessInput(input));
 }
 
 /**

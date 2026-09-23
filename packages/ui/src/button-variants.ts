@@ -13,7 +13,7 @@ const base =
   "focus-visible:ring-offset-2 focus-visible:ring-offset-paper disabled:pointer-events-none disabled:opacity-50";
 
 const variants: Record<ButtonVariant, string> = {
-  primary: "bg-accent-strong text-paper hover:bg-accent-strong-hover",
+  primary: "bg-accent-strong text-accent-foreground hover:bg-accent-strong-hover",
   secondary: "bg-ink text-paper hover:bg-charcoal-900",
   outline: "border border-line bg-transparent text-ink hover:border-ink",
   "outline-dark": "border border-charcoal-line bg-transparent text-paper hover:border-paper/60",

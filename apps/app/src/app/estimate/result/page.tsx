@@ -23,6 +23,9 @@ export default function ResultStepPage() {
   const [requested, setRequested] = useState(false);
   const [business, setBusiness] = useState<PublicBusinessSummary | null>(null);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
+  /** Distinct from `analysisError` (the earlier /estimate/analyzing step) — this can fail even for the manual-entry path, which never goes through that step at all. Without this, a rejected promise here previously just left the page spinning forever with no feedback. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [quoteSaveFailed, setQuoteSaveFailed] = useState(false);
   const hasCreatedQuote = useRef(false);
 
   useEffect(() => {
@@ -37,14 +40,17 @@ export default function ResultStepPage() {
     Promise.all([
       getPublicBusinessAction(embedId ?? undefined),
       getPublicActiveConfigurationAction(embedId ?? undefined),
-    ]).then(
-      ([loadedBusiness, configuration]) => {
+    ])
+      .then(([loadedBusiness, configuration]) => {
         if (cancelled) return;
         setBusiness(loadedBusiness);
         const pricingInput = reconcilePricingInput(input.services, analysis.characteristics);
         setEstimate(calculateEstimate(pricingInput, configuration, analysis.metadata.confidence));
-      },
-    );
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : "Something went wrong preparing your estimate.");
+      });
     return () => {
       cancelled = true;
     };
@@ -76,11 +82,38 @@ export default function ResultStepPage() {
         aiObservation: aiObservation ?? undefined,
       },
       embedId ?? undefined,
-    ).then(({ id }) => setQuoteId(id));
+    )
+      .then(({ id }) => setQuoteId(id))
+      .catch(() => {
+        // The customer still sees their price either way (that's the whole
+        // point of showing it from client-side pricing above, not waiting on
+        // this) — only the business-visible record failed to save. Surfaced
+        // as a small non-blocking notice below, not a page-level failure.
+        setQuoteSaveFailed(true);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis]);
 
-  if (!analysis || !estimate || !business) return null;
+  if (!analysis) return null;
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center gap-6 py-16 text-center">
+        <div
+          aria-hidden="true"
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-xl font-semibold text-accent-strong"
+        >
+          !
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold text-ink">This estimator isn&rsquo;t available</h1>
+          <p className="mt-2 max-w-xs text-sm text-ink-soft">{loadError}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!estimate || !business) return null;
 
   const display = getEstimateDisplay(estimate);
   const { characteristics, metadata } = analysis;
@@ -119,15 +152,11 @@ export default function ResultStepPage() {
     );
   }
 
-  // Phase 14 branding (see docs/decisions/0016-onboarding-billing-embed.md)
-  // — a single CSS custom-property override, not a theme system.
-  const brandStyle =
-    business.brandColor && /^#[0-9a-fA-F]{6}$/.test(business.brandColor)
-      ? ({ "--color-accent-strong": business.brandColor } as React.CSSProperties)
-      : undefined;
-
+  // The full brand theme (buttons, focus rings, progress indicator, links)
+  // is applied once, for every /estimate/* step, by StepShell — see
+  // useEstimatorBrandTheme there. Nothing left to apply here.
   return (
-    <div className="flex flex-col gap-8" style={brandStyle}>
+    <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
         {business.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- an arbitrary business-hosted URL, not an optimizable local/remote asset Next.js knows about
@@ -216,6 +245,12 @@ export default function ResultStepPage() {
           Final pricing may change if the actual property differs significantly from what was
           submitted.
         </p>
+        {quoteSaveFailed ? (
+          <p className="text-accent-strong">
+            We couldn&rsquo;t save this request for {business.name} to follow up on automatically —
+            please use &ldquo;Talk to the business&rdquo; below instead.
+          </p>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-3 border-t border-line pt-6 sm:flex-row">

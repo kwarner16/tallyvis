@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { deriveEstimatorTheme } from "@tallyvis/config";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
-import { getCurrentBusiness, resolveEmbedBusiness, resolvePublicBusinessSummary } from "../services/business";
+import {
+  getCurrentBusiness,
+  resolveEmbedBusiness,
+  resolvePublicBusinessSummary,
+  updateCurrentBusiness,
+} from "../services/business";
 import { getActiveConfigurationForBusiness } from "../services/pricing";
 import { createQuotePublic, listQuotes } from "../services/quotes";
 
@@ -97,6 +103,80 @@ describe("resolvePublicBusinessSummary — over-exposure regression (same bug cl
   it("resolves to undefined for an unknown embed id, never a fallback business's data", async () => {
     const { db } = await setUpTwoBusinesses();
     expect(await resolvePublicBusinessSummary(db, "not-a-real-embed-id")).toBeUndefined();
+  });
+});
+
+describe("estimator branding — per-business brand color through the embed (Part 20 scenario: a blue-branded business alongside an orange-branded one)", () => {
+  it("resolves each business's own brand color, isolated from the other tenant", async () => {
+    const { db, sessionA, sessionB } = await setUpTwoBusinesses();
+
+    const blueBusiness = await updateCurrentBusiness(db, sessionA, {
+      name: "Business A",
+      email: "a@example.com",
+      phone: "",
+      serviceArea: "",
+      brandColor: "#0057b8",
+    });
+    const orangeBusiness = await updateCurrentBusiness(db, sessionB, {
+      name: "Business B",
+      email: "b@example.com",
+      phone: "",
+      serviceArea: "",
+      brandColor: "#F97316",
+    });
+
+    const blueSummary = await resolvePublicBusinessSummary(db, blueBusiness.publicEmbedId);
+    const orangeSummary = await resolvePublicBusinessSummary(db, orangeBusiness.publicEmbedId);
+
+    expect(blueSummary?.brandColor).toBe("#0057B8");
+    expect(orangeSummary?.brandColor).toBe("#F97316");
+
+    // Resolving one business's embed id never leaks the other's branding.
+    expect(blueSummary?.brandColor).not.toBe(orangeSummary?.brandColor);
+    expect(blueSummary?.name).not.toBe(orangeSummary?.name);
+  });
+
+  it("derives visually distinct, correctly-contrasted estimator themes for each business's brand color", async () => {
+    const { db, sessionA, sessionB } = await setUpTwoBusinesses();
+
+    const blueBusiness = await updateCurrentBusiness(db, sessionA, {
+      name: "Business A",
+      email: "a@example.com",
+      phone: "",
+      serviceArea: "",
+      brandColor: "#0057b8",
+    });
+    const orangeBusiness = await updateCurrentBusiness(db, sessionB, {
+      name: "Business B",
+      email: "b@example.com",
+      phone: "",
+      serviceArea: "",
+      brandColor: "#F97316",
+    });
+
+    const blueSummary = await resolvePublicBusinessSummary(db, blueBusiness.publicEmbedId);
+    const orangeSummary = await resolvePublicBusinessSummary(db, orangeBusiness.publicEmbedId);
+
+    const blueTheme = deriveEstimatorTheme(blueSummary?.brandColor);
+    const orangeTheme = deriveEstimatorTheme(orangeSummary?.brandColor);
+
+    expect(blueTheme).not.toBeNull();
+    expect(orangeTheme).not.toBeNull();
+    expect(blueTheme!["--color-accent-strong"]).toBe("#0057B8");
+    expect(orangeTheme!["--color-accent-strong"]).toBe("#F97316");
+    expect(blueTheme!["--color-accent-strong"]).not.toBe(orangeTheme!["--color-accent-strong"]);
+    // A dark, saturated blue and a mid-tone orange land on opposite sides of the white/near-black foreground choice.
+    expect(blueTheme!["--color-accent-foreground"]).toBe("#FFFFFF");
+    expect(orangeTheme!["--color-accent-foreground"]).toBe("#111111");
+  });
+
+  it("a business with no brand color set falls back to the default (undefined) theme, not a broken one", async () => {
+    const { db, sessionA } = await setUpTwoBusinesses();
+    const business = await getCurrentBusiness(db, sessionA);
+    expect(business.brandColor).toBeUndefined();
+
+    const summary = await resolvePublicBusinessSummary(db, business.publicEmbedId);
+    expect(deriveEstimatorTheme(summary?.brandColor)).toBeNull();
   });
 });
 

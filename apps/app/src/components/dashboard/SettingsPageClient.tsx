@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import type { Business } from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
+import { deriveEstimatorTheme, normalizeHexColor } from "@tallyvis/config";
 import { updateBusinessAction } from "@/lib/businessActions";
 
 export function SettingsPageClient({ initialBusiness }: { initialBusiness: Business }) {
@@ -10,6 +12,10 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  /** Live, unsaved preview of the estimator theme this brand color would produce — see @tallyvis/config's deriveEstimatorTheme, the same function the estimator itself uses. `null` while the typed value isn't yet a valid six-digit hex, so the preview falls back to the neutral default rather than showing something misleading. */
+  const previewTheme = useMemo(() => deriveEstimatorTheme(business.brandColor), [business.brandColor]);
+  const isValidBrandColor = normalizeHexColor(business.brandColor) !== null;
 
   async function handleSave() {
     setSaving(true);
@@ -124,6 +130,36 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
               className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
             />
           </div>
+          {business.brandColor && !isValidBrandColor ? (
+            <span className="text-xs text-red-600">
+              Enter a six-digit hex value, like #0057B8 — this won&rsquo;t save until it&rsquo;s valid.
+            </span>
+          ) : (
+            <span className="text-xs text-ink-faint">
+              Used to theme your public estimator — buttons, progress steps, and links. Leave blank for
+              the default Tallyvis look.
+            </span>
+          )}
+          {previewTheme ? (
+            <div
+              style={previewTheme as CSSProperties}
+              className="mt-1 flex items-center gap-3 rounded-xl border border-line bg-paper-alt p-3"
+            >
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-strong text-[11px] font-medium text-accent-foreground">
+                1
+              </span>
+              <button
+                type="button"
+                tabIndex={-1}
+                className={buttonVariants({ variant: "primary", className: "pointer-events-none px-4 py-2 text-xs" })}
+              >
+                Get an estimate
+              </button>
+              <span className="text-xs font-medium text-accent-strong underline underline-offset-2">
+                Preview link
+              </span>
+            </div>
+          ) : null}
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-sm font-medium text-ink">Default industry</span>

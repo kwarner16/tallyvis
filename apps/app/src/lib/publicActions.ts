@@ -21,6 +21,7 @@ import {
   type PublicQuoteView,
 } from "@tallyvis/api";
 import { describeAiErrorCategory } from "./aiErrorMessages";
+import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } from "./publicBusinessErrors";
 
 /**
  * Unauthenticated actions for the public `/estimate/*` customer wizard.
@@ -40,7 +41,7 @@ import { describeAiErrorCategory } from "./aiErrorMessages";
 async function requirePublicBusiness(embedId?: string): Promise<Business> {
   const business = embedId ? await resolveEmbedBusiness(getDb(), embedId) : await getDefaultPublicBusiness(getDb());
   if (!business) {
-    throw new Error(embedId ? "This estimator isn't set up correctly. Contact the business directly." : "No business is configured yet.");
+    throw new Error(embedId ? ESTIMATOR_NOT_CONFIGURED_MESSAGE : NO_BUSINESS_CONFIGURED_MESSAGE);
   }
   return business;
 }

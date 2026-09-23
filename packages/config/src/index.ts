@@ -10,6 +10,13 @@ export {
   type PlanId,
 } from "./plans";
 
+export {
+  normalizeHexColor,
+  getContrastForeground,
+  deriveEstimatorTheme,
+  type EstimatorThemeVars,
+} from "./branding";
+
 /**
  * Default pricing rules for the window-cleaning vertical.
  *

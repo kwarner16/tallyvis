@@ -8,6 +8,10 @@ import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { isPropertyComplete } from "@/lib/estimator/types";
 import { blobUrlToDataUrl } from "@/lib/imageEncoding";
 import { analyzePublicPropertyAction, isUsingMockAiProviderAction } from "@/lib/publicActions";
+import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } from "@/lib/publicBusinessErrors";
+
+/** These mean the business itself can't be resolved — retrying or falling back to manual entry hits the exact same wall, since both need the same business lookup to succeed. Only the business owner can fix this. */
+const UNRECOVERABLE_MESSAGES: string[] = [ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE];
 
 const STAGES = [
   "Analyzing your property...",
@@ -101,6 +105,7 @@ export default function AnalyzingStepPage() {
   }, [retryToken]);
 
   if (analysisError) {
+    const unrecoverable = UNRECOVERABLE_MESSAGES.includes(analysisError);
     return (
       <div className="flex flex-col items-center gap-6 py-16 text-center">
         <div
@@ -110,30 +115,40 @@ export default function AnalyzingStepPage() {
           !
         </div>
         <div>
-          <h1 className="text-xl font-semibold text-ink">Analysis failed</h1>
+          <h1 className="text-xl font-semibold text-ink">
+            {unrecoverable ? "This estimator isn't available" : "Analysis failed"}
+          </h1>
           <p className="mt-2 max-w-xs text-sm text-ink-soft">{analysisError}</p>
         </div>
-        <div className="flex flex-wrap justify-center gap-3">
-          <button
-            type="button"
-            onClick={() => setRetryToken((t) => t + 1)}
-            className={buttonVariants({ variant: "primary" })}
-          >
-            Try again
-          </button>
-          <Link href="/estimate/photos" className={buttonVariants({ variant: "outline" })}>
-            Back to photos
-          </Link>
-        </div>
-        {/*
-          Phase 13 (see docs/decisions/0015-job-outcome-tracking.md) — an
-          AI failure must never be a dead end for the customer. This is the
-          real manual-entry path Phase 12's "continue manually" language
-          promised but the public estimator didn't yet have.
-        */}
-        <Link href="/estimate/manual" className="text-sm font-medium text-accent-strong hover:text-accent">
-          Continue without AI — enter details manually
-        </Link>
+        {unrecoverable ? null : (
+          <>
+            <div className="flex flex-wrap justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setRetryToken((t) => t + 1)}
+                className={buttonVariants({ variant: "primary" })}
+              >
+                Try again
+              </button>
+              <Link href="/estimate/photos" className={buttonVariants({ variant: "outline" })}>
+                Back to photos
+              </Link>
+            </div>
+            {/*
+              Phase 13 (see docs/decisions/0015-job-outcome-tracking.md) — an
+              AI failure must never be a dead end for the customer. This is the
+              real manual-entry path Phase 12's "continue manually" language
+              promised but the public estimator didn't yet have. Only shown
+              when the business itself resolved fine and it's the AI call
+              specifically that failed — manual entry needs the same business
+              resolution the retry button does, so it's no more recoverable
+              than "Try again" when that's what failed.
+            */}
+            <Link href="/estimate/manual" className="text-sm font-medium text-accent-strong hover:text-accent">
+              Continue without AI — enter details manually
+            </Link>
+          </>
+        )}
       </div>
     );
   }
