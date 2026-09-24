@@ -96,71 +96,6 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-ink">
-            Logo URL <span className="font-normal text-ink-faint">(optional)</span>
-          </span>
-          <input
-            type="url"
-            value={business.logoUrl ?? ""}
-            onChange={(e) => setBusiness({ ...business, logoUrl: e.target.value })}
-            placeholder="https://yourwebsite.com/logo.png"
-            className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
-          />
-          <span className="text-xs text-ink-faint">
-            A hosted image URL — shown on your public estimator and quote pages.
-          </span>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-ink">
-            Brand color <span className="font-normal text-ink-faint">(optional)</span>
-          </span>
-          <div className="flex items-center gap-2">
-            <input
-              type="color"
-              value={/^#[0-9a-fA-F]{6}$/.test(business.brandColor ?? "") ? business.brandColor! : "#2563eb"}
-              onChange={(e) => setBusiness({ ...business, brandColor: e.target.value })}
-              className="h-9 w-12 rounded border border-line bg-paper"
-            />
-            <input
-              type="text"
-              value={business.brandColor ?? ""}
-              onChange={(e) => setBusiness({ ...business, brandColor: e.target.value })}
-              placeholder="#2563eb"
-              className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
-            />
-          </div>
-          {business.brandColor && !isValidBrandColor ? (
-            <span className="text-xs text-red-600">
-              Enter a six-digit hex value, like #0057B8 — this won&rsquo;t save until it&rsquo;s valid.
-            </span>
-          ) : (
-            <span className="text-xs text-ink-faint">
-              Used to theme your public estimator — buttons, progress steps, and links. Leave blank for
-              the default Tallyvis look.
-            </span>
-          )}
-          {previewTheme ? (
-            <div
-              style={previewTheme as CSSProperties}
-              className="mt-1 flex items-center gap-3 rounded-xl border border-line bg-paper-alt p-3"
-            >
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-strong text-[11px] font-medium text-accent-foreground">
-                1
-              </span>
-              <button
-                type="button"
-                tabIndex={-1}
-                className={buttonVariants({ variant: "primary", className: "pointer-events-none px-4 py-2 text-xs" })}
-              >
-                Get an estimate
-              </button>
-              <span className="text-xs font-medium text-accent-strong underline underline-offset-2">
-                Preview link
-              </span>
-            </div>
-          ) : null}
-        </label>
-        <label className="flex flex-col gap-1">
           <span className="text-sm font-medium text-ink">Default industry</span>
           <input
             type="text"
@@ -180,6 +115,103 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
           className={buttonVariants({ variant: "primary", className: "self-start" })}
         >
           {saving ? "Saving…" : "Save settings"}
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-paper p-6 sm:max-w-lg">
+        <div>
+          <h2 className="text-lg font-semibold text-ink">Estimator branding</h2>
+          <p className="text-sm text-ink-soft">
+            Customize how the Tallyvis estimator appears when embedded on your website.
+          </p>
+        </div>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-ink">
+            Logo <span className="font-normal text-ink-faint">(optional)</span>
+          </span>
+          <input
+            type="url"
+            value={business.logoUrl ?? ""}
+            onChange={(e) => setBusiness({ ...business, logoUrl: e.target.value })}
+            placeholder="https://yourwebsite.com/logo.png"
+            className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+          />
+          <span className="text-xs text-ink-faint">
+            A hosted image URL — shown on your public estimator and quote pages.
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-ink">
+            Primary color <span className="font-normal text-ink-faint">(optional)</span>
+          </span>
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={/^#[0-9a-fA-F]{6}$/.test(business.brandColor ?? "") ? business.brandColor! : "#2563eb"}
+              onChange={(e) => setBusiness({ ...business, brandColor: e.target.value })}
+              className="h-9 w-12 rounded border border-line bg-paper"
+            />
+            <input
+              type="text"
+              value={business.brandColor ?? ""}
+              onChange={(e) => setBusiness({ ...business, brandColor: e.target.value })}
+              placeholder="#2563eb"
+              className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+            />
+            {business.brandColor ? (
+              <button
+                type="button"
+                onClick={() => setBusiness({ ...business, brandColor: undefined })}
+                className="text-xs font-medium text-ink-faint underline underline-offset-2 hover:text-ink-soft"
+              >
+                Restore Tallyvis default
+              </button>
+            ) : null}
+          </div>
+          {business.brandColor && !isValidBrandColor ? (
+            <span className="text-xs text-red-600">
+              Enter a six-digit hex value, like #0057B8 — this won&rsquo;t save until it&rsquo;s valid.
+            </span>
+          ) : (
+            <span className="text-xs text-ink-faint">
+              Used to theme your public estimator — buttons, progress steps, and links, ONLY when a
+              customer reaches it through your embedded widget. The direct Tallyvis estimator (and a
+              business with no color set here) always uses Tallyvis&rsquo;s own default look.
+            </span>
+          )}
+        </label>
+
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-ink">Preview</span>
+          <div
+            style={(previewTheme ?? undefined) as CSSProperties}
+            className="flex items-center gap-3 rounded-xl border border-line bg-paper-alt p-3"
+          >
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-strong text-[11px] font-medium text-accent-foreground">
+              1
+            </span>
+            <button
+              type="button"
+              tabIndex={-1}
+              className={buttonVariants({ variant: "primary", className: "pointer-events-none px-4 py-2 text-xs" })}
+            >
+              Get an estimate
+            </button>
+            <span className="text-xs font-medium text-accent-strong underline underline-offset-2">
+              Preview link
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className={buttonVariants({ variant: "primary", className: "self-start" })}
+        >
+          {saving ? "Saving…" : "Save branding"}
         </button>
       </div>
     </div>

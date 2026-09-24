@@ -60,13 +60,24 @@ function useReportHeightToParent(): React.RefObject<HTMLDivElement | null> {
  * (e.g. a stale/invalid embedId) is left for the step itself to surface its
  * own real error — this hook silently keeps the default Tallyvis theme
  * rather than duplicating that error handling.
+ *
+ * Deliberately does NOT call `getPublicBusinessAction` at all when
+ * `embedId` is falsy — a production bug (confirmed 2026-09-24) had the
+ * direct, unembedded `/estimate` wizard picking up an arbitrary business's
+ * brand color anyway, because `getPublicBusinessAction(undefined)` falls
+ * back to `getDefaultPublicBusiness` (the stated Phase 9 single-business
+ * simplification — see CLAUDE.md), and that fallback's business's color
+ * was being applied as if it were real embed branding. Tenant branding
+ * must only ever apply to an ACTUAL embed (`embedId` genuinely set); the
+ * standalone estimator always gets Tallyvis's own default theme.
  */
 function useEstimatorBrandTheme(embedId: string | null): CSSProperties | undefined {
   const [brandColor, setBrandColor] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!embedId) return;
     let cancelled = false;
-    getPublicBusinessAction(embedId ?? undefined).then((result) => {
+    getPublicBusinessAction(embedId).then((result) => {
       // A failed resolution is left to whichever step actually needs the
       // business (analyze, create-quote, ...) to show a real, actionable
       // error — this hook only ever affects cosmetic theming.
@@ -77,7 +88,11 @@ function useEstimatorBrandTheme(embedId: string | null): CSSProperties | undefin
     };
   }, [embedId]);
 
-  const theme = deriveEstimatorTheme(brandColor);
+  // Never apply a fetched brand color once `embedId` is gone, even if a
+  // fetch from a previous embed is still resolving/resolved in state —
+  // `embedId` (not `brandColor`) is the single source of truth for
+  // whether ANY tenant branding should apply at all.
+  const theme = embedId ? deriveEstimatorTheme(brandColor) : null;
   return theme ? (theme as CSSProperties) : undefined;
 }
 

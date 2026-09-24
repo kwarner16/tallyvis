@@ -145,6 +145,52 @@ describe("createAnthropicProvider — successful response", () => {
       expect(receivedBody!.toLowerCase()).not.toContain(forbidden);
     }
   });
+
+  /**
+   * Regression (confirmed in production, 2026-09-24): Anthropic's strict
+   * tool-use validation rejects an empty `{}` JSON Schema — the shape
+   * `report_property_observation`'s `value` field used, meant as "accepts
+   * any JSON value" — with `invalid_request_error: "Empty schema ({})
+   * that accepts any JSON value is not supported. Please specify a
+   * concrete type."` No existing test caught this because the fake server
+   * above never validates the schema it's sent, only what it's told to
+   * respond with — this test instead inspects the actual tool definition
+   * bytes going out over the wire for exactly the shape Anthropic rejects.
+   */
+  it("never sends a bare empty-object ({}) JSON Schema for any tool input property — Anthropic's strict tool-use validation rejects that shape outright", async () => {
+    let receivedBody: string | undefined;
+    const baseURL = await listen((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        receivedBody = Buffer.concat(chunks).toString("utf-8");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(validToolResponse()));
+      });
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+    await provider.analyzeProperty(images, metadata);
+
+    const body = JSON.parse(receivedBody!);
+    const tool = body.tools[0];
+    expect(tool.name).toBe("report_property_observation");
+
+    function assertNoEmptySchema(schema: unknown, path: string): void {
+      if (typeof schema !== "object" || schema === null) return;
+      const record = schema as Record<string, unknown>;
+      if (Object.keys(record).length === 0) {
+        expect.unreachable(`Empty {} JSON Schema at ${path} — Anthropic rejects this; specify a concrete "type".`);
+      }
+      const properties = record.properties as Record<string, unknown> | undefined;
+      if (properties) {
+        for (const [key, value] of Object.entries(properties)) {
+          assertNoEmptySchema(value, `${path}.properties.${key}`);
+        }
+      }
+    }
+
+    assertNoEmptySchema(tool.input_schema, "input_schema");
+  });
 });
 
 /** Resolves the rejection and asserts it's an `AiProviderError` tagged with `category` — the signal Phase 12's dev logging and UI error messages both key off of (docs/decisions/0014-ai-real-world-refinement.md). */

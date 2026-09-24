@@ -43,7 +43,18 @@ const OBSERVED_VALUE_SCHEMA = {
   type: "object",
   properties: {
     status: { type: "string", enum: ["observed", "uncertain", "unknown"] },
-    value: {},
+    // Confirmed in production (2026-09-24): an empty `{}` schema here — the
+    // original, deliberately loose "accepts any JSON value" shape this
+    // file's own module comment describes — is rejected outright by
+    // Anthropic's strict tool-use validation: "Empty schema ({}) that
+    // accepts any JSON value is not supported. Please specify a concrete
+    // type." `RawPropertyObservation`'s `ObservedValue<T>` only ever needs
+    // `value` to hold a number (stories/windowCount/screens/tracks), a
+    // string enum (windowType/accessibility/condition), or a boolean
+    // (hardWaterStaining) — listing exactly those three JSON types is
+    // still schema-shared across every field using this object (not a
+    // per-field schema), just no longer an unconstrained empty object.
+    value: { type: ["string", "number", "boolean"] },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
   },
   required: ["status"],

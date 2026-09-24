@@ -132,21 +132,35 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           const persisted = JSON.parse(raw) as PersistedInput;
           setInput((prev) => ({ ...prev, ...persisted }));
         }
-        const storedEmbedId = window.localStorage.getItem(EMBED_ID_STORAGE_KEY);
+        // Only ever rehydrate a persisted embed id while this page is
+        // ACTUALLY still running inside someone's embed iframe right now
+        // (`window.self !== window.top`) — never for a genuinely top-level
+        // page view. `EMBED_ID_STORAGE_KEY` is deliberately never cleared
+        // by `reset()` (see its own comment: it must survive "start a new
+        // estimate" within the SAME embedded iframe session), which means
+        // without this guard it also survives indefinitely into any LATER,
+        // completely unrelated top-level visit to the bare `/estimate`
+        // wizard in the same browser — a confirmed production bug
+        // (2026-09-24) where the standalone estimator inherited a
+        // business's branding purely because that browser had previously
+        // visited that business's embed. A same-tab in-iframe reload/new
+        // estimate keeps `window.top !== window.self` throughout, so the
+        // legitimate "same embedded session" case this key exists for is
+        // unaffected.
+        const storedEmbedId = window.self !== window.top ? window.localStorage.getItem(EMBED_ID_STORAGE_KEY) : null;
         if (storedEmbedId) {
           // A cached embed id from an earlier session must be revalidated,
           // not blindly trusted — the underlying business may have been
-          // deleted/recreated since it was cached (this key is deliberately
-          // never cleared by `reset()`, so it otherwise persists forever).
-          // Previously this went uncaught until the customer clicked
-          // Analyze at the end of the wizard, surfacing as "This estimator
-          // isn't set up correctly" after they'd already filled everything
-          // in — confirmed root cause, not a guess: business resolution
-          // itself was proven healthy for the business's real, current
-          // embed id and fails only for an id that no longer matches one.
-          // Clearing an invalid id falls back to the same bare-estimator
-          // behavior a visitor with no embed context already gets — it
-          // never substitutes a different business's identity.
+          // deleted/recreated since it was cached. Previously this went
+          // uncaught until the customer clicked Analyze at the end of the
+          // wizard, surfacing as "This estimator isn't set up correctly"
+          // after they'd already filled everything in — confirmed root
+          // cause, not a guess: business resolution itself was proven
+          // healthy for the business's real, current embed id and fails
+          // only for an id that no longer matches one. Clearing an invalid
+          // id falls back to the same bare-estimator behavior a visitor
+          // with no embed context already gets — it never substitutes a
+          // different business's identity.
           const stillValid = await verifyEmbedIdAction(storedEmbedId);
           if (stillValid) {
             setEmbedIdState(storedEmbedId);
