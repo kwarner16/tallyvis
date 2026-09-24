@@ -1,6 +1,7 @@
 import type { ConfidenceLevel, Estimate, JobCharacteristics, PricingConfiguration } from "@tallyvis/types";
 import { calculateWindowCleaningEstimate } from "./windowCleaning";
 import { validatePricingConfiguration } from "./validatePricingConfiguration";
+import { validateCharacteristics } from "./validateCharacteristics";
 
 /**
  * The single canonical entry point for turning structured job
@@ -30,6 +31,19 @@ export function calculateEstimate(
   if (characteristics.vertical !== configuration.industry) {
     throw new Error(
       `Pricing configuration industry "${configuration.industry}" does not match characteristics vertical "${characteristics.vertical}".`,
+    );
+  }
+
+  // Defense-in-depth (Vision V1.1 — docs/decisions/0023-guided-capture-
+  // evidence-confidence.md): characteristics may now originate from a
+  // customer's own edits in the public estimator's confirmation step, not
+  // only from `reconcileObservation()`'s always-sane output — reject an
+  // absurd or malformed value before it reaches pricing math, the same way
+  // an invalid `configuration` is rejected above.
+  const characteristicsValidation = validateCharacteristics(characteristics);
+  if (!characteristicsValidation.valid) {
+    throw new Error(
+      `Cannot calculate an estimate from invalid characteristics: ${characteristicsValidation.errors.join(" ")}`,
     );
   }
 
