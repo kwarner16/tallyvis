@@ -159,6 +159,45 @@ export async function createQuotePublic(db: Queryable, businessId: string, input
 }
 
 /**
+ * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+ * — "AI → customer resolves uncertainty → deterministic pricing →
+ * automatic estimate; business owner is the EXCEPTION path, not the
+ * default." `needs_review` and its full dashboard workflow (badge, filter,
+ * `QuoteActions`' approve/send/request-more-info/reject buttons) already
+ * existed but were unreachable — every quote was hardcoded to `"new"`
+ * regardless of how uncertain its analysis was. This is the one place
+ * that decides which a new quote gets, from data every caller already
+ * provides — no new input field needed.
+ *
+ * Escalates to `"needs_review"` when the confirmed characteristics still
+ * carry real pricing-relevant doubt: the reconciled confidence is anything
+ * short of "high" (this already accounts for unresolved core fields AND
+ * `reconcile.ts`'s evidence-driven downgrade — see
+ * docs/decisions/0022/0023), or the AI's own evidence assessment flagged
+ * the photo coverage itself as insufficient even if confidence math didn't
+ * separately catch it (belt-and-suspenders: confidence is derived FROM
+ * evidence today, but this function does not assume that always stays
+ * true). A quote with no AI observation at all (manual entry) has already
+ * been reviewed by whoever typed it in, so it's never escalated here.
+ *
+ * V1 default, deliberately conservative rather than configurable: every
+ * business gets this behavior uniformly today. A future per-business
+ * "automatically send" vs. "always review" setting (mission Part 11) can
+ * call this same function conditionally without changing its logic —
+ * intentionally kept as one small, pure, independently testable function
+ * for exactly that reason, rather than inlined into `persistPricedQuote`.
+ */
+export function determineInitialQuoteStatus(
+  analysis: PropertyAnalysisResult,
+  aiObservation: RawPropertyObservation | undefined,
+): QuoteStatus {
+  if (!aiObservation) return "new";
+  if (analysis.metadata.confidence !== "high") return "needs_review";
+  if (aiObservation.evidence.overallEvidence !== "sufficient") return "needs_review";
+  return "new";
+}
+
+/**
  * Shared tail of both creation paths. Takes a `businessId` the caller has
  * already resolved server-side (from a session, or from
  * `getDefaultPublicBusiness`) — never one the browser supplied. The
@@ -185,7 +224,7 @@ async function persistPricedQuote(
     photos: input.photos,
     analysis: input.analysis,
     estimate,
-    status: "new",
+    status: determineInitialQuoteStatus(input.analysis, input.aiObservation),
     aiObservation: input.aiObservation,
   });
 }

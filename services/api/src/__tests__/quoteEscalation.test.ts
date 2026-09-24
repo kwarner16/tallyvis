@@ -1,0 +1,142 @@
+import { describe, expect, it } from "vitest";
+import type { PropertyAnalysisResult } from "@tallyvis/types";
+import type { RawPropertyObservation } from "@tallyvis/ai";
+import { useTestDb } from "./testHarness";
+import { signUp } from "../services/auth";
+import { createQuote, createQuotePublic, determineInitialQuoteStatus } from "../services/quotes";
+import { getDefaultPublicBusiness } from "../services/business";
+
+/**
+ * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+ * — "business owner review is the exception path, not the default."
+ * `needs_review` already existed as a `QuoteStatus` with a full dashboard
+ * workflow (badge, filter, approve/send/request-more-info/reject actions);
+ * these tests cover the actual escalation POLICY newly wired into
+ * `persistPricedQuote` — the thing that decides whether a new quote lands
+ * there or in the normal "new" queue.
+ */
+
+const getDb = useTestDb();
+
+function observation(overrides: Partial<RawPropertyObservation> = {}): RawPropertyObservation {
+  return {
+    vertical: "window-cleaning",
+    stories: { status: "observed", value: 2, confidence: "high" },
+    windowCount: { status: "observed", value: 18, confidence: "high" },
+    windowType: { status: "observed", value: "double-hung", confidence: "high" },
+    screens: { status: "observed", value: 8, confidence: "high" },
+    tracks: { status: "observed", value: 8, confidence: "high" },
+    accessibility: { status: "observed", value: "moderate", confidence: "high" },
+    condition: { status: "observed", value: "good", confidence: "high" },
+    hardWaterStaining: { status: "observed", value: false, confidence: "high" },
+    overallConfidence: "high",
+    warnings: [],
+    evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
+    ...overrides,
+  };
+}
+
+function analysisWith(confidence: PropertyAnalysisResult["metadata"]["confidence"]): PropertyAnalysisResult {
+  return {
+    characteristics: {
+      vertical: "window-cleaning",
+      windowCount: 18,
+      windowType: "double-hung",
+      paneCount: 0,
+      stories: 2,
+      screens: 6,
+      tracks: 0,
+      accessibility: "moderate",
+      condition: "good",
+      hardWaterStaining: false,
+      estimatedLaborHours: 2.2,
+      interiorCleaning: false,
+    },
+    metadata: { confidence },
+  };
+}
+
+describe("determineInitialQuoteStatus — pure policy", () => {
+  it("stays 'new' when there is no AI observation at all (manual entry, already human-reviewed)", () => {
+    expect(determineInitialQuoteStatus(analysisWith("low"), undefined)).toBe("new");
+  });
+
+  it("stays 'new' when confidence is high and evidence is sufficient", () => {
+    expect(determineInitialQuoteStatus(analysisWith("high"), observation())).toBe("new");
+  });
+
+  it("escalates to 'needs_review' when confidence is anything short of high", () => {
+    expect(determineInitialQuoteStatus(analysisWith("medium"), observation())).toBe("needs_review");
+    expect(determineInitialQuoteStatus(analysisWith("low"), observation())).toBe("needs_review");
+  });
+
+  it("escalates to 'needs_review' when evidence itself is insufficient, even if confidence claims high", () => {
+    const highConfidenceButBadEvidence = observation({
+      evidence: { coverage: "insufficient", overallEvidence: "insufficient", issues: ["distance", "vegetation"] },
+    });
+    expect(determineInitialQuoteStatus(analysisWith("high"), highConfidenceButBadEvidence)).toBe("needs_review");
+  });
+});
+
+async function setUp() {
+  const db = getDb();
+  const { session } = await signUp(db, {
+    businessName: "Sparkle Windows",
+    ownerEmail: "owner@sparkle.example",
+    password: "correct-horse-battery",
+  });
+  return { db, session };
+}
+
+function sampleInput(aiObservation: RawPropertyObservation | undefined, confidence: PropertyAnalysisResult["metadata"]["confidence"]) {
+  return {
+    customer: { name: "Jordan Rivera", email: "jordan@example.com", phone: "(555) 000-1111" },
+    property: { propertyType: "single-family" as const, stories: 2, address: "1 Test St" },
+    servicePreferences: { interiorCleaning: false, screens: true, tracks: false, hardWaterTreatment: "unsure" as const },
+    notes: "",
+    photos: [],
+    analysis: analysisWith(confidence),
+    aiObservation,
+  };
+}
+
+describe("createQuotePublic — escalation wired end-to-end", () => {
+  it("saves a high-confidence, sufficient-evidence quote as 'new'", async () => {
+    const { db } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    const quote = await createQuotePublic(db, business.id, sampleInput(observation(), "high"));
+    expect(quote.status).toBe("new");
+  });
+
+  it("saves a low-confidence quote as 'needs_review' rather than 'new'", async () => {
+    const { db } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    const quote = await createQuotePublic(db, business.id, sampleInput(observation(), "low"));
+    expect(quote.status).toBe("needs_review");
+  });
+
+  it("saves a quote with insufficient photo evidence as 'needs_review' even when the model claims high confidence", async () => {
+    const { db } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    const badEvidence = observation({
+      evidence: { coverage: "insufficient", overallEvidence: "insufficient", issues: ["distance"] },
+    });
+    const quote = await createQuotePublic(db, business.id, sampleInput(badEvidence, "high"));
+    expect(quote.status).toBe("needs_review");
+  });
+
+  it("saves a manually-entered quote (no AI observation) as 'new' regardless of confidence", async () => {
+    const { db } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    const quote = await createQuotePublic(db, business.id, sampleInput(undefined, "low"));
+    expect(quote.status).toBe("new");
+  });
+});
+
+describe("createQuote (business dashboard path) — same escalation policy applies", () => {
+  it("escalates a low-confidence AI-assisted quote the business saves without full review", async () => {
+    const { db, session } = await setUp();
+    const quote = await createQuote(db, session, sampleInput(observation(), "medium"));
+    expect(quote.status).toBe("needs_review");
+  });
+});

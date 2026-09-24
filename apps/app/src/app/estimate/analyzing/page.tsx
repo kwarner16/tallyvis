@@ -83,8 +83,13 @@ export default function AnalyzingStepPage() {
         if (cancelled) return;
         clearInterval(stageTimer);
         if (result.ok) {
-          setAnalysis(result.data.analysis, result.data.observation);
-          router.push("/estimate/result");
+          setAnalysis(result.data.analysis, result.data.observation, result.data.evidenceMessages);
+          // Vision V1.1 (docs/decisions/0023-guided-capture-evidence-
+          // confidence.md) — a successful AI analysis always has an
+          // observation to confirm; the manual-entry path never reaches
+          // this page at all (see /estimate/manual, which sets `analysis`
+          // itself and goes straight to /estimate/result).
+          router.push("/estimate/confirm");
           return;
         }
         // The Server Action already resolves the failure's category to a

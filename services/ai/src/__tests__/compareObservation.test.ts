@@ -24,6 +24,7 @@ function observation(overrides: Partial<RawPropertyObservation> = {}): RawProper
     hardWaterStaining: { status: "observed", value: false, confidence: "high" },
     overallConfidence: "high",
     warnings: [],
+    evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
     ...overrides,
   };
 }

@@ -26,6 +26,7 @@ function fullyObserved(overrides: Partial<RawPropertyObservation> = {}): RawProp
     hardWaterStaining: { status: "observed", value: true, confidence: "high" },
     overallConfidence: "high",
     warnings: [],
+    evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
     ...overrides,
   };
 }
@@ -143,5 +144,46 @@ describe("reconcileObservation — confidence is downgraded, not just copied", (
     const observation = fullyObserved({ overallConfidence: "low" });
     const result = reconcileObservation(observation, metadata);
     expect(result.metadata.confidence).toBe("low");
+  });
+});
+
+describe("reconcileObservation — evidence-driven downgrade (Vision V1.1, the 6-vs-14 production case)", () => {
+  it("forces confidence to low when evidence is insufficient, even if every field was individually observed with high confidence", () => {
+    const observation = fullyObserved({
+      overallConfidence: "high",
+      evidence: { coverage: "insufficient", overallEvidence: "insufficient", issues: ["distance", "vegetation"] },
+    });
+    const result = reconcileObservation(observation, metadata);
+    expect(result.metadata.confidence).toBe("low");
+  });
+
+  it("caps confidence at medium when evidence is only usable-with-uncertainty, regardless of the AI's own high claim", () => {
+    const observation = fullyObserved({
+      overallConfidence: "high",
+      evidence: { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: [] },
+    });
+    const result = reconcileObservation(observation, metadata);
+    expect(result.metadata.confidence).toBe("medium");
+  });
+
+  it("flags an 'observed' windowCount as possibly incomplete when evidence says coverage was insufficient — never silently presents it as the total", () => {
+    const observation = fullyObserved({
+      windowCount: { status: "observed", value: 6, confidence: "high" },
+      evidence: { coverage: "insufficient", overallEvidence: "insufficient", issues: ["distance", "vegetation"] },
+    });
+    const result = reconcileObservation(observation, metadata);
+    // The AI's clearly-visible count is still surfaced (not thrown away)...
+    expect(result.characteristics.windowCount).toBe(6);
+    // ...but flagged, not presented as a confirmed total.
+    expect(result.metadata.notes?.some((n) => n.includes("6") && n.toLowerCase().includes("total"))).toBe(true);
+  });
+
+  it("does not add the incomplete-coverage note when evidence is sufficient", () => {
+    const observation = fullyObserved({
+      windowCount: { status: "observed", value: 24, confidence: "high" },
+      evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
+    });
+    const result = reconcileObservation(observation, metadata);
+    expect(result.metadata.notes).toBeUndefined();
   });
 });

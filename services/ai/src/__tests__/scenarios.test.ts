@@ -31,6 +31,7 @@ describe("synthetic scenario: simple single-story property, fully visible", () =
     hardWaterStaining: { status: "observed", value: false, confidence: "high" },
     overallConfidence: "high",
     warnings: [],
+    evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
   };
 
   it("validates and reconciles with high confidence and no fallback notes", () => {
@@ -60,6 +61,7 @@ describe("synthetic scenario: two-story property with a mix of large and small w
     hardWaterStaining: { status: "observed", value: false, confidence: "medium" },
     overallConfidence: "medium",
     warnings: ["Window sizes vary significantly across the front elevation; count is an estimate."],
+    evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
   };
 
   it("falls back windowCount to a stories-based heuristic and preserves the provider's warning", () => {
@@ -86,6 +88,7 @@ describe("synthetic scenario: difficult access — third story, locked gate", ()
     hardWaterStaining: { status: "observed", value: true, confidence: "medium" },
     overallConfidence: "medium",
     warnings: ["Locked side gate blocks access to the rear windows."],
+    evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
   };
 
   it("passes the difficult accessibility rating through, not just an inferred one", () => {
@@ -108,6 +111,7 @@ describe("synthetic scenario: partial obstruction — landscaping blocks part of
     hardWaterStaining: { status: "unknown" },
     overallConfidence: "low",
     warnings: ["Dense landscaping obscures the lower windows on the left side of the house."],
+    evidence: { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: ["vegetation"] },
   };
 
   it("honestly reports low confidence rather than guessing past what's visible", () => {
@@ -132,6 +136,7 @@ describe("synthetic scenario: multiple visible sides of the property across seve
     hardWaterStaining: { status: "observed", value: false, confidence: "high" },
     overallConfidence: "high",
     warnings: [],
+    evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
   };
 
   it("reflects the higher confidence multiple angles should support", () => {
@@ -154,6 +159,7 @@ describe("synthetic scenario: low-quality or ambiguous single photo", () => {
     hardWaterStaining: { status: "unknown" },
     overallConfidence: "low",
     warnings: ["Photo is blurry and taken from too far away to make out window details."],
+    evidence: { coverage: "insufficient", overallEvidence: "insufficient", issues: ["blur", "distance"] },
   };
 
   it("never invents specifics from an unusable photo — everything falls back to documented defaults", () => {
@@ -182,6 +188,7 @@ describe("synthetic scenario: customer-declared story count fills a genuine gap"
     hardWaterStaining: { status: "unknown" },
     overallConfidence: "low",
     warnings: ["No photos show the full height of the property."],
+    evidence: { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: ["cropped_facade"] },
   };
 
   it("uses the customer-declared story count as the fallback, not a guess", () => {
@@ -203,6 +210,7 @@ describe("synthetic scenario: several photos of the same angle add no new inform
     hardWaterStaining: { status: "unknown" },
     overallConfidence: "medium",
     warnings: ["All photos show the same front elevation; the rear and sides are not visible."],
+    evidence: { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: [] },
   };
 
   it("stays at medium confidence rather than being inflated by photo count alone", () => {
@@ -210,6 +218,38 @@ describe("synthetic scenario: several photos of the same angle add no new inform
     expect(result.metadata.confidence).toBe("medium");
     expect(result.metadata.notes).toContain(
       "All photos show the same front elevation; the rear and sides are not visible.",
+    );
+  });
+});
+
+describe("synthetic scenario: townhouse photographed from across the street, shrubs obscuring several windows (the production 6-vs-14 case)", () => {
+  const observation: RawPropertyObservation = {
+    vertical: "window-cleaning",
+    stories: { status: "observed", value: 2, confidence: "medium" },
+    // The model can clearly count 6 windows in what it's shown, but — per
+    // this phase's prompt guidance — reports "uncertain" rather than
+    // "observed" because it knows the photos don't show the whole property.
+    windowCount: { status: "uncertain", confidence: "medium" },
+    windowType: { status: "observed", value: "double-hung", confidence: "medium" },
+    screens: { status: "unknown" },
+    tracks: { status: "unknown" },
+    accessibility: { status: "observed", value: "moderate", confidence: "medium" },
+    condition: { status: "unknown" },
+    hardWaterStaining: { status: "unknown" },
+    overallConfidence: "medium",
+    warnings: ["Only the front of the property is visible; shrubs obscure the lower windows."],
+    evidence: { coverage: "partial", overallEvidence: "insufficient", issues: ["distance", "vegetation"] },
+  };
+
+  it("never presents the partial count as the property's total, and requests better evidence rather than pricing off it", () => {
+    const validated = validateRawPropertyObservation(observation);
+    expect(validated.ok).toBe(true);
+    const result = reconcileObservation(observation, metadata);
+    // evidence.overallEvidence === "insufficient" forces confidence to low
+    // regardless of the model's own "medium" claim.
+    expect(result.metadata.confidence).toBe("low");
+    expect(result.metadata.notes).toContain(
+      "Only the front of the property is visible; shrubs obscure the lower windows.",
     );
   });
 });

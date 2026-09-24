@@ -30,6 +30,7 @@ function validObservation() {
     hardWaterStaining: { status: "unknown" },
     overallConfidence: "medium",
     warnings: ["The rear of the property is not visible in any photo."],
+    evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
   };
 }
 
@@ -56,6 +57,7 @@ describe("validateRawPropertyObservation — positive cases", () => {
       hardWaterStaining: { status: "unknown" },
       overallConfidence: "low",
       warnings: [],
+      evidence: { coverage: "insufficient", overallEvidence: "insufficient", issues: ["distance"] },
     };
     const result = validateRawPropertyObservation(allUnknown);
     expect(result.ok).toBe(true);
@@ -234,6 +236,48 @@ describe("validateRawPropertyObservation — graceful degradation (one bad field
     // Untouched fields survive the other fields' degradation.
     expect(result.value.windowType).toEqual({ status: "observed", value: "double-hung", confidence: "medium" });
     expect(result.value.warnings.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("validateRawPropertyObservation — evidence assessment (Vision V1.1)", () => {
+  it("accepts a valid evidence object", () => {
+    const input = { ...validObservation(), evidence: { coverage: "partial", overallEvidence: "insufficient", issues: ["vegetation", "distance"] } };
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.evidence).toEqual({ coverage: "partial", overallEvidence: "insufficient", issues: ["vegetation", "distance"] });
+  });
+
+  it("degrades a missing evidence object to a conservative default rather than rejecting", () => {
+    const input = validObservation() as Record<string, unknown>;
+    delete input.evidence;
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.evidence).toEqual({ coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: [] });
+    expect(result.value.warnings.join(" ")).toMatch(/evidence/);
+  });
+
+  it("degrades an evidence object with an invalid overallEvidence to the conservative default", () => {
+    const input = { ...validObservation(), evidence: { coverage: "complete", overallEvidence: "definitely-fine", issues: [] } };
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.evidence.overallEvidence).toBe("usable_with_uncertainty");
+  });
+
+  it("drops unrecognized issue tags and de-duplicates rather than rejecting", () => {
+    const input = {
+      ...validObservation(),
+      evidence: { coverage: "partial", overallEvidence: "sufficient", issues: ["vegetation", "vegetation", "made-up-issue"] },
+    };
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.evidence.issues).toEqual(["vegetation"]);
+  });
+
+  it("never lets evidence.overallEvidence alone hard-reject the observation", () => {
+    const input = { ...validObservation(), evidence: { coverage: "insufficient", overallEvidence: "insufficient", issues: ["distance", "vegetation"] } };
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
   });
 });
 

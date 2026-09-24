@@ -29,6 +29,48 @@ export type ObservedValue<T> =
   | { status: "unknown" };
 
 /**
+ * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md) —
+ * how much of the property the submitted photos actually show, distinct
+ * from how confident the model is about any one field. A model can be
+ * "observed, high confidence" about a windowCount of 6 while still
+ * knowing perfectly well that 6 is only what's visible, not necessarily
+ * the property's true total — `coverage`/`overallEvidence` is what lets
+ * `reconcile.ts` and the UI tell "the AI is sure of what it saw" apart
+ * from "the AI saw enough of the property to be sure of the total."
+ *
+ * `coverage` is the specific diagnostic dimension (how much of the
+ * property's sides/angles came through) — mainly useful for composing a
+ * specific follow-up message. `overallEvidence` is the single field code
+ * actually branches on (reconciliation's defensive downgrade, the
+ * follow-up-photo prompt, quote escalation) — the model's own holistic
+ * judgment combining coverage, visibility, distance, and any issues below
+ * into one of three actionable tiers. `issues` is a flat set of specific,
+ * named problems (not a free-text field) so a follow-up message can name
+ * the actual obstacle instead of a generic "photos weren't good enough."
+ * Deliberately no separate `distance`/`visibility` scalar fields — an
+ * issue tag already conveys that same information per photo without a
+ * second parallel classification to keep in sync with it.
+ */
+export type EvidenceCoverage = "complete" | "partial" | "insufficient";
+export type OverallEvidence = "sufficient" | "usable_with_uncertainty" | "insufficient";
+export type EvidenceIssue =
+  | "distance"
+  | "vegetation"
+  | "vehicles"
+  | "glare"
+  | "darkness"
+  | "blur"
+  | "cropped_facade"
+  | "unrelated_images";
+
+export interface EvidenceAssessment {
+  coverage: EvidenceCoverage;
+  overallEvidence: OverallEvidence;
+  /** Empty when nothing got in the way — never omitted, so a caller never has to special-case "field absent" vs. "no issues found." */
+  issues: EvidenceIssue[];
+}
+
+/**
  * The validated, structured result of one property-photo analysis pass —
  * what every provider (mock or real) must produce, and the only shape
  * `reconcile.ts` accepts. Field names deliberately mirror
@@ -60,4 +102,6 @@ export interface RawPropertyObservation {
   overallConfidence: ConfidenceLevel;
   /** Free-text caveats a provider wants surfaced verbatim (e.g. "the rear of the property is not visible in any photo"). Bounded in `validateObservation.ts` — never trusted as HTML/markup. */
   warnings: string[];
+  /** Vision V1.1 — see `EvidenceAssessment`'s own comment above. */
+  evidence: EvidenceAssessment;
 }

@@ -63,6 +63,7 @@ function validToolResponse(overrides: Record<string, unknown> = {}) {
           hardWaterStaining: { status: "unknown" },
           overallConfidence: "medium",
           warnings: [],
+          evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
         },
       },
     ],
@@ -211,6 +212,43 @@ describe("createAnthropicProvider — successful response", () => {
     expect(system).toMatch(/bay.*counts as one window/is);
     expect(system).toMatch(/same property, not separate properties/i);
     expect(system).toMatch(/count that window only once/i);
+  });
+
+  /**
+   * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+   * — the production 6-vs-14 miscount: the model must be told explicitly
+   * not to report a partial count as "observed" when it knows coverage is
+   * incomplete, and the tool schema must actually require the model to say
+   * so structurally, not just describe it in prose.
+   */
+  it("requires a structured evidence assessment and tells the model not to report a partial count as the property's total", async () => {
+    let receivedBody: string | undefined;
+    const baseURL = await listen((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        receivedBody = Buffer.concat(chunks).toString("utf-8");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(validToolResponse()));
+      });
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+    await provider.analyzeProperty(images, metadata);
+
+    const body = JSON.parse(receivedBody!);
+    const system = body.system as string;
+    expect(system).toMatch(/do not report\s+windowcount as "observed"/i);
+    expect(system).toMatch(/unrelated_images/i);
+
+    const tool = body.tools[0];
+    expect(tool.input_schema.required).toContain("evidence");
+    const evidenceSchema = tool.input_schema.properties.evidence;
+    expect(evidenceSchema.required).toEqual(expect.arrayContaining(["coverage", "overallEvidence"]));
+    expect(evidenceSchema.properties.overallEvidence.enum).toEqual([
+      "sufficient",
+      "usable_with_uncertainty",
+      "insufficient",
+    ]);
   });
 
   /**

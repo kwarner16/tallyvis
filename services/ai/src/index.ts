@@ -7,7 +7,14 @@ import { validateRawPropertyObservation, summarizeObservationForLogging } from "
 import { reconcileObservation } from "./reconcile";
 import { logAnalysisEvent } from "./logging";
 
-export type { ObservedValue, RawPropertyObservation } from "./types";
+export type {
+  ObservedValue,
+  RawPropertyObservation,
+  EvidenceAssessment,
+  EvidenceCoverage,
+  EvidenceIssue,
+  OverallEvidence,
+} from "./types";
 export {
   validateRawPropertyObservation,
   safeParseJson,
@@ -20,6 +27,7 @@ export {
   wasObservationCorrected,
   type ObservationComparisonRow,
 } from "./compareObservation";
+export { describeEvidenceGaps } from "./evidenceMessages";
 export { AiProviderError, type AiProvider, type AiErrorCategory, type AiProviderResult } from "./providers/types";
 export { mockProvider } from "./providers/mock";
 export { createAnthropicProvider, type AnthropicProviderConfig } from "./providers/anthropic";

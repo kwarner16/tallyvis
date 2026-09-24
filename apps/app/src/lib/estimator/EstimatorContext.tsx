@@ -80,6 +80,23 @@ interface EstimatorContextValue {
    * public wizard still has no UI that displays it, unchanged from Phase 12.
    */
   aiObservation: RawPropertyObservation | null;
+  /**
+   * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+   * — safe, already-rendered follow-up-photo copy computed server-side by
+   * `analyzePublicPropertyAction` (see that action's own comment for why
+   * this is plain strings, not a client-side call to `describeEvidenceGaps`).
+   * Empty when there's nothing to ask for, or for the manual-entry path.
+   */
+  evidenceMessages: string[];
+  /**
+   * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+   * — true once the customer has been through `/estimate/confirm` (or that
+   * step decided there was nothing AI-derived to confirm — see
+   * `setConfirmed`'s call sites). `setAnalysis` always resets this to
+   * `false`, so a fresh analysis always requires a fresh confirmation
+   * before `/estimate/result` will price it.
+   */
+  confirmed: boolean;
   analysisError: string | null;
   /** Set once this session's result has been saved as a Quote, to guard against creating duplicates if the result page re-renders. */
   quoteId: string | null;
@@ -94,7 +111,12 @@ interface EstimatorContextValue {
   /** Compresses each file client-side (see imageCompression.ts) before adding it — never trusts the original, potentially multi-megabyte phone photo directly. */
   addPhotos: (files: File[]) => Promise<PhotoRejection[]>;
   removePhoto: (id: string) => void;
-  setAnalysis: (result: PropertyAnalysisResult | null, observation?: RawPropertyObservation | null) => void;
+  setAnalysis: (
+    result: PropertyAnalysisResult | null,
+    observation?: RawPropertyObservation | null,
+    evidenceMessages?: string[],
+  ) => void;
+  setConfirmed: (value: boolean) => void;
   setAnalysisError: (message: string | null) => void;
   setQuoteId: (id: string) => void;
   setEmbedId: (id: string) => void;
@@ -107,6 +129,8 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
   const [input, setInput] = useState<CustomerInput>(EMPTY_CUSTOMER_INPUT);
   const [analysis, setAnalysisState] = useState<PropertyAnalysisResult | null>(null);
   const [aiObservation, setAiObservation] = useState<RawPropertyObservation | null>(null);
+  const [evidenceMessages, setEvidenceMessages] = useState<string[]>([]);
+  const [confirmed, setConfirmed] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [quoteId, setQuoteId] = useState<string | null>(null);
   const [embedId, setEmbedIdState] = useState<string | null>(null);
@@ -114,10 +138,19 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
   const hydrated = useRef(false);
 
   /** `observation` defaults to `null` (not "leave whatever was there") — every caller sets both explicitly, so a stale AI observation can never survive a manual re-entry or a fresh analysis. */
-  const setAnalysis = useCallback((result: PropertyAnalysisResult | null, observation: RawPropertyObservation | null = null) => {
-    setAnalysisState(result);
-    setAiObservation(observation);
-  }, []);
+  const setAnalysis = useCallback(
+    (
+      result: PropertyAnalysisResult | null,
+      observation: RawPropertyObservation | null = null,
+      newEvidenceMessages: string[] = [],
+    ) => {
+      setAnalysisState(result);
+      setAiObservation(observation);
+      setEvidenceMessages(newEvidenceMessages);
+      setConfirmed(false);
+    },
+    [],
+  );
 
   const setEmbedId = useCallback((id: string) => {
     setEmbedIdState(id);
@@ -290,6 +323,8 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
     });
     setAnalysisState(null);
     setAiObservation(null);
+    setEvidenceMessages([]);
+    setConfirmed(false);
     setAnalysisError(null);
     setQuoteId(null);
     try {
@@ -304,6 +339,8 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       input,
       analysis,
       aiObservation,
+      evidenceMessages,
+      confirmed,
       analysisError,
       quoteId,
       embedId,
@@ -315,6 +352,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       addPhotos,
       removePhoto,
       setAnalysis,
+      setConfirmed,
       setAnalysisError,
       setQuoteId,
       setEmbedId,
@@ -324,6 +362,8 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       input,
       analysis,
       aiObservation,
+      evidenceMessages,
+      confirmed,
       analysisError,
       quoteId,
       embedId,

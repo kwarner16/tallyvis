@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   resolvePublicBusinessSummary: vi.fn(),
   getActiveConfigurationForBusiness: vi.fn(),
   analyzePropertyPublic: vi.fn(),
+  describeEvidenceGaps: vi.fn((): string[] => []),
   createQuotePublic: vi.fn(),
   getQuoteByShareToken: vi.fn(),
   acceptQuoteByToken: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock("@tallyvis/api", () => ({
   resolvePublicBusinessSummary: mocks.resolvePublicBusinessSummary,
   getActiveConfigurationForBusiness: mocks.getActiveConfigurationForBusiness,
   analyzePropertyPublic: mocks.analyzePropertyPublic,
+  describeEvidenceGaps: mocks.describeEvidenceGaps,
   createQuotePublic: mocks.createQuotePublic,
   getQuoteByShareToken: mocks.getQuoteByShareToken,
   acceptQuoteByToken: mocks.acceptQuoteByToken,
@@ -122,6 +124,18 @@ describe("analyzePublicPropertyAction", () => {
     mocks.analyzePropertyPublic.mockResolvedValue({ analysis: { characteristics: {}, metadata: {} }, observation: {} });
     const result = await analyzePublicPropertyAction({ images: [], property: {} });
     expect(result.ok).toBe(true);
+  });
+
+  it("attaches evidenceMessages computed server-side via describeEvidenceGaps (Vision V1.1)", async () => {
+    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    const observation = { evidence: { coverage: "partial", overallEvidence: "insufficient", issues: [] } };
+    mocks.analyzePropertyPublic.mockResolvedValue({ analysis: { characteristics: {}, metadata: {} }, observation });
+    mocks.describeEvidenceGaps.mockReturnValue(["A closer photo would help."]);
+    const result = await analyzePublicPropertyAction({ images: [], property: {} });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(mocks.describeEvidenceGaps).toHaveBeenCalledWith(observation);
+    expect(result.data.evidenceMessages).toEqual(["A closer photo would help."]);
   });
 
   it("returns ok:false with the business-not-configured message when the business can't be resolved — never throws", async () => {

@@ -7,6 +7,7 @@ import {
   analyzePropertyPublic,
   createQuotePublic,
   declineQuoteByToken,
+  describeEvidenceGaps,
   getActiveConfigurationForBusiness,
   getDb,
   getDefaultPublicBusiness,
@@ -136,10 +137,24 @@ export async function verifyEmbedIdAction(embedId: string): Promise<boolean> {
  * request, so it can later be compared against whatever ends up confirmed.
  * See docs/decisions/0015-job-outcome-tracking.md.
  */
+/**
+ * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+ * — `evidenceMessages` (already-rendered, safe, fixed copy — see
+ * `describeEvidenceGaps`) rather than the raw `evidence` object, computed
+ * HERE rather than client-side: `/estimate/result` is a `"use client"`
+ * component, and importing a real function (not just a type) from
+ * `@tallyvis/api` there would pull the whole package — including its
+ * Postgres driver — into the browser bundle (confirmed by a real build
+ * failure, not a guess). `analysis`/`observation` already cross this exact
+ * server/client boundary as plain data; this keeps the one function call
+ * that touches them server-side too.
+ */
+export type AnalyzePublicPropertyResult = AnalyzePropertyResult & { evidenceMessages: string[] };
+
 export async function analyzePublicPropertyAction(
   input: AnalyzePropertyInput,
   embedId?: string,
-): Promise<ActionResult<AnalyzePropertyResult>> {
+): Promise<ActionResult<AnalyzePublicPropertyResult>> {
   // Safe, non-secret stage trace for exactly this kind of failure — never
   // the embed id itself, a photo, or any customer data, only presence/
   // counts/categories. Existing @tallyvis/ai logging already covers the AI
@@ -184,7 +199,7 @@ export async function analyzePublicPropertyAction(
     console.log(
       JSON.stringify({ at: new Date().toISOString(), event: "public-analyze-stage", stage: "analysis-succeeded" }),
     );
-    return { ok: true, data: result };
+    return { ok: true, data: { ...result, evidenceMessages: describeEvidenceGaps(result.observation) } };
   } catch (err) {
     const errorCategory = err instanceof AiProviderError ? err.category : "unknown";
     console.log(

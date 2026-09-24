@@ -1,5 +1,5 @@
 import type { AccessibilityLevel, ConditionLevel, ConfidenceLevel, WindowType } from "@tallyvis/types";
-import type { ObservedValue, RawPropertyObservation } from "./types";
+import type { EvidenceAssessment, EvidenceCoverage, EvidenceIssue, ObservedValue, OverallEvidence, RawPropertyObservation } from "./types";
 
 /**
  * Every provider's raw output — whether it's the mock's own object literal
@@ -45,6 +45,29 @@ const WINDOW_TYPES: readonly WindowType[] = [
 ];
 const ACCESSIBILITY_LEVELS: readonly AccessibilityLevel[] = ["easy", "moderate", "difficult"];
 const CONDITION_LEVELS: readonly ConditionLevel[] = ["good", "fair", "poor"];
+const EVIDENCE_COVERAGE_LEVELS: readonly EvidenceCoverage[] = ["complete", "partial", "insufficient"];
+const OVERALL_EVIDENCE_LEVELS: readonly OverallEvidence[] = ["sufficient", "usable_with_uncertainty", "insufficient"];
+const EVIDENCE_ISSUES: readonly EvidenceIssue[] = [
+  "distance",
+  "vegetation",
+  "vehicles",
+  "glare",
+  "darkness",
+  "blur",
+  "cropped_facade",
+  "unrelated_images",
+];
+const MAX_EVIDENCE_ISSUES = 8; // one of each defined tag — never legitimately more
+/**
+ * A conservative middle default for a malformed `evidence` object —
+ * neither "sufficient" (would falsely reassure the customer/business that
+ * coverage is fine) nor "insufficient" (would force a follow-up-photo
+ * request the model may not have actually meant to trigger). A response
+ * that got `evidence` wrong is likely to have other rough edges too, so
+ * this lands on the same "usable, but flagged" tier `overallConfidence`
+ * degradation already lands on for other malformed top-level fields.
+ */
+const DEFAULT_EVIDENCE: EvidenceAssessment = { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: [] };
 
 /** Absurd-number guards — generous enough for any real residential property, tight enough to reject a model hallucinating (or a provider bug returning) something like 50,000 windows. */
 const STORIES_RANGE = { min: 1, max: 6 };
@@ -126,6 +149,43 @@ function validateObservedValue<T>(
     `The AI's "${fieldName}" status was unrecognized (${JSON.stringify(status)}), so it was treated as unknown.`,
   );
   return { status: "unknown" };
+}
+
+/**
+ * Validates the `evidence` object with the same soft-degradation
+ * philosophy as `validateObservedValue` — a malformed shape never voids
+ * the observation, it just falls back to `DEFAULT_EVIDENCE` with a
+ * recorded note. `issues` specifically tolerates unrecognized/duplicate
+ * entries by dropping them rather than failing the whole array, since an
+ * unfamiliar issue tag is exactly the kind of small drift a model update
+ * could introduce and shouldn't take the rest of the analysis down with it.
+ */
+function validateEvidence(raw: unknown, degradations: string[]): EvidenceAssessment {
+  if (!isRecord(raw)) {
+    degradations.push(`The AI's "evidence" response wasn't in the expected shape, so photo-coverage couldn't be assessed.`);
+    return DEFAULT_EVIDENCE;
+  }
+
+  const { coverage, overallEvidence, issues } = raw;
+
+  if (!isOneOf(coverage, EVIDENCE_COVERAGE_LEVELS) || !isOneOf(overallEvidence, OVERALL_EVIDENCE_LEVELS)) {
+    degradations.push(`The AI's "evidence" response was incomplete, so photo-coverage couldn't be assessed.`);
+    return DEFAULT_EVIDENCE;
+  }
+
+  let cleanIssues: EvidenceIssue[] = [];
+  if (issues === undefined) {
+    cleanIssues = [];
+  } else if (Array.isArray(issues)) {
+    cleanIssues = Array.from(new Set(issues.filter((i): i is EvidenceIssue => isOneOf(i, EVIDENCE_ISSUES)))).slice(
+      0,
+      MAX_EVIDENCE_ISSUES,
+    );
+  } else {
+    degradations.push(`The AI's "evidence.issues" wasn't a valid list, so it was ignored.`);
+  }
+
+  return { coverage, overallEvidence, issues: cleanIssues };
 }
 
 /**
@@ -259,6 +319,8 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     overallConfidence = "low";
   }
 
+  const evidence = validateEvidence(input.evidence, degradations);
+
   let warnings: string[] = [];
   if (Array.isArray(input.warnings)) {
     warnings = input.warnings
@@ -283,6 +345,7 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
       hardWaterStaining,
       overallConfidence,
       warnings: [...warnings, ...degradations],
+      evidence,
     },
   };
 }
@@ -319,5 +382,8 @@ export function summarizeObservationForLogging(observation: RawPropertyObservati
   const parts = fields.map(([name, field]) => `${name}=${summarizeField(field)}`);
   parts.push(`overallConfidence=${observation.overallConfidence}`);
   parts.push(`warnings=${observation.warnings.length}`);
+  parts.push(
+    `evidence=${observation.evidence.overallEvidence}(coverage=${observation.evidence.coverage},issues=${observation.evidence.issues.join("+") || "none"})`,
+  );
   return parts.join(" ");
 }

@@ -61,6 +61,35 @@ const OBSERVED_VALUE_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/**
+ * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+ * — a real production test (14 actual windows, photographed from across
+ * the street with shrubs blocking several) produced a windowCount of ~6
+ * with no explicit signal distinguishing "6 is everything visible, and
+ * the rest of the property isn't shown" from "6 is the property's total."
+ * This schema asks the model to say which one it means, structurally
+ * rather than leaving it implicit in a free-text warning. See
+ * `EvidenceAssessment`'s own comment in `../types.ts` for what each field
+ * means and why `distance`/`visibility` were deliberately NOT split into
+ * separate scalar fields alongside `issues`.
+ */
+const EVIDENCE_SCHEMA = {
+  type: "object",
+  properties: {
+    coverage: { type: "string", enum: ["complete", "partial", "insufficient"] },
+    overallEvidence: { type: "string", enum: ["sufficient", "usable_with_uncertainty", "insufficient"] },
+    issues: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: ["distance", "vegetation", "vehicles", "glare", "darkness", "blur", "cropped_facade", "unrelated_images"],
+      },
+    },
+  },
+  required: ["coverage", "overallEvidence"],
+  additionalProperties: false,
+} as const;
+
 const REPORT_TOOL: Anthropic.Tool = {
   name: TOOL_NAME,
   description:
@@ -80,6 +109,7 @@ const REPORT_TOOL: Anthropic.Tool = {
       hardWaterStaining: OBSERVED_VALUE_SCHEMA,
       overallConfidence: { type: "string", enum: ["high", "medium", "low"] },
       warnings: { type: "array", items: { type: "string" } },
+      evidence: EVIDENCE_SCHEMA,
     },
     required: [
       "vertical",
@@ -92,6 +122,7 @@ const REPORT_TOOL: Anthropic.Tool = {
       "condition",
       "hardWaterStaining",
       "overallConfidence",
+      "evidence",
     ],
     additionalProperties: false,
   },
@@ -151,6 +182,29 @@ const SYSTEM_PROMPT = [
   "If a specific obstruction or access issue drove your accessibility rating, name it in \"warnings\"",
   "as well (e.g. \"Locked side gate blocks access to the rear windows\") — don't let it disappear",
   "into a bare difficulty label the business can't act on.",
+  "",
+  "Evidence assessment (report this honestly via the \"evidence\" field — real customer photos are",
+  "often imperfect, and that's expected, not a failure):",
+  "- \"coverage\": \"complete\" if the photos together show every side of the property that matters for",
+  "  this job; \"partial\" if some sides/angles are missing; \"insufficient\" if you can't tell how much",
+  "  of the property you're even looking at.",
+  "- \"overallEvidence\": your holistic judgment. \"sufficient\" — you're confident your counts reflect",
+  "  the whole property. \"usable_with_uncertainty\" — you can give a useful partial answer, but you",
+  "  know it may be incomplete. \"insufficient\" — you cannot responsibly give the business a number to",
+  "  price from; closer or additional photos are genuinely needed.",
+  "- \"issues\": name every specific thing that got in the way (\"vegetation\", \"distance\", \"vehicles\",",
+  "  \"glare\", \"darkness\", \"blur\", \"cropped_facade\" for a photo that cuts off part of the building,",
+  "  \"unrelated_images\" if one or more photos don't appear to show the same property as the others —",
+  "  leave it empty if nothing got in the way.",
+  "",
+  "This is the single most important rule for windowCount: never let \"evidence.overallEvidence\" and",
+  "your windowCount status contradict each other. If you can clearly count 6 windows but substantial",
+  "parts of the property are obscured, too far away, or simply not shown in any photo, do NOT report",
+  "windowCount as \"observed\" — that would present 6 as if it were the property's true total. Report",
+  "it as \"uncertain\" instead (your best estimate of what you can see, paired with an honest",
+  "\"overallEvidence\": \"insufficient\" or \"usable_with_uncertainty\"), and use \"warnings\" to say what's",
+  "missing, e.g. \"Only the front elevation is visible; the total window count is likely higher.\" Only",
+  "use \"observed\" for windowCount when you're confident the visible windows ARE the property's total.",
   "",
   "You are not setting a price; you are only describing what is visible.",
 ].join("\n");

@@ -38,12 +38,20 @@ export const windowCleaningEstimatorConfig: IndustryConfig = {
    * next.config.ts for the matching `bodySizeLimit`.
    */
   maxPhotos: 6,
-  photoIntro: "Show us the windows. We'll handle the rest.",
+  photoIntro: "Help Tallyvis see your property",
+  /**
+   * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+   * — real customer photos are commonly distant, partially obstructed, or
+   * incomplete; the goal here is a fast, concrete nudge toward better
+   * evidence, not a photography tutorial. Deliberately kept to a handful of
+   * short lines — see that ADR for why a longer guide was rejected.
+   */
   photoGuidance: [
-    "Take photos from outside the home.",
-    "Try to include a full side of the house in each shot.",
-    "Make sure the windows are clearly visible.",
-    "A photo from a different angle helps if the property has more than one side.",
+    "Start with a full view of the property.",
+    "Then take closer photos of each visible side.",
+    "Make sure windows are large enough in the photo to see clearly.",
+    "A few branches or a parked car are fine — just avoid photos where they block most of a wall.",
+    "Different angles can overlap — that's okay, we'll sort it out.",
   ],
   serviceQuestions: [
     {

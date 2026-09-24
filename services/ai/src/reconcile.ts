@@ -7,7 +7,7 @@ import type {
   WindowCleaningCharacteristics,
   WindowType,
 } from "@tallyvis/types";
-import type { ObservedValue, RawPropertyObservation } from "./types";
+import type { EvidenceAssessment, ObservedValue, RawPropertyObservation } from "./types";
 
 /**
  * Turns a validated `RawPropertyObservation` into the stable
@@ -74,6 +74,30 @@ function downgradeConfidence(claimed: ConfidenceLevel, unresolvedCount: number):
   return claimed;
 }
 
+const CONFIDENCE_RANK: Record<ConfidenceLevel, number> = { low: 0, medium: 1, high: 2 };
+
+function moreConservative(a: ConfidenceLevel, b: ConfidenceLevel): ConfidenceLevel {
+  return CONFIDENCE_RANK[a] <= CONFIDENCE_RANK[b] ? a : b;
+}
+
+/**
+ * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+ * — `overallConfidence`/`countUnresolved` above only ever measure whether
+ * the model was willing to COMMIT to a value; they say nothing about
+ * whether it could see enough of the property to commit to the right
+ * value. A model that's genuinely, consistently confident about a
+ * windowCount of 6 while looking at a photo that only shows the front of
+ * a townhouse from across the street produces exactly the failure this
+ * phase exists to catch: `evidence.overallEvidence` is the model's own
+ * coverage signal, applied here independently of its per-field confidence
+ * claims, never the more optimistic of the two.
+ */
+function confidenceFromEvidence(evidence: EvidenceAssessment, claimed: ConfidenceLevel): ConfidenceLevel {
+  if (evidence.overallEvidence === "insufficient") return "low";
+  if (evidence.overallEvidence === "usable_with_uncertainty" && claimed === "high") return "medium";
+  return claimed;
+}
+
 export function reconcileObservation(
   observation: RawPropertyObservation,
   metadata: PropertyMetadata,
@@ -89,6 +113,19 @@ export function reconcileObservation(
     "Window count",
     notes,
   );
+
+  // Defensive, code-enforced backstop for exactly the failure this phase
+  // targets: a model that reports windowCount as "observed" (so `resolve`
+  // above used its value as-is, no fallback note) while its OWN evidence
+  // assessment says coverage was insufficient. The prompt now tells the
+  // model never to do this, but a prompt is not a contract — this can
+  // never be skipped by a model that ignores the instruction. Never
+  // silently invents a bigger number; only makes the honest gap visible.
+  if (observation.windowCount.status === "observed" && observation.evidence.overallEvidence === "insufficient") {
+    notes.push(
+      `Window count: ${observation.windowCount.value} window${observation.windowCount.value === 1 ? "" : "s"} clearly visible, but the photos don't show enough of the property to confirm that's the total — please confirm the full count or add more photos.`,
+    );
+  }
 
   const windowType = resolve<WindowType>(observation.windowType, "double-hung", "Window type", notes);
 
@@ -119,7 +156,10 @@ export function reconcileObservation(
     interiorCleaning: false,
   };
 
-  const confidence = downgradeConfidence(observation.overallConfidence, countUnresolved(observation));
+  const confidence = moreConservative(
+    downgradeConfidence(observation.overallConfidence, countUnresolved(observation)),
+    confidenceFromEvidence(observation.evidence, observation.overallConfidence),
+  );
   const allNotes = [...observation.warnings, ...notes];
 
   return {

@@ -1,4 +1,5 @@
 import type { ConfidenceLevel, PropertyImage, PropertyMetadata } from "@tallyvis/types";
+import type { EvidenceAssessment } from "../types";
 import type { AiProvider, AiProviderResult } from "./types";
 
 /**
@@ -50,6 +51,18 @@ async function analyzeProperty(images: PropertyImage[], metadata: PropertyMetada
   const screens = Math.round(windowCount * 0.4);
   const condition = photoCount >= 4 ? "fair" : "good";
 
+  // Same photo-count heuristic the confidence tiers above already use —
+  // no real vision behind this, just a plausible correlation between "how
+  // many angles were provided" and "how much of the property they cover"
+  // so this stub exercises the same evidence-aware code paths a real
+  // provider's output does.
+  const evidence: EvidenceAssessment =
+    photoCount < 3
+      ? { coverage: "insufficient", overallEvidence: "insufficient", issues: ["distance"] }
+      : photoCount < 5
+        ? { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: [] }
+        : { coverage: "complete", overallEvidence: "sufficient", issues: [] };
+
   return {
     raw: {
       vertical: "window-cleaning",
@@ -63,6 +76,7 @@ async function analyzeProperty(images: PropertyImage[], metadata: PropertyMetada
       hardWaterStaining: { status: "unknown" }, // no real signal — never fabricated as a false "observation"
       overallConfidence: confidence,
       warnings,
+      evidence,
     },
     meta: { model: "mock-heuristic-v1" },
   };

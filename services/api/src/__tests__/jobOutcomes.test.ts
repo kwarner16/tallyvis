@@ -32,6 +32,7 @@ const sampleObservation = (windowCount = 18): RawPropertyObservation => ({
   hardWaterStaining: { status: "observed", value: false, confidence: "high" },
   overallConfidence: "high",
   warnings: [],
+  evidence: { coverage: "complete", overallEvidence: "sufficient", issues: [] },
 });
 
 const sampleInput = (overrides?: { windowCount?: number; aiObservation?: RawPropertyObservation }) => ({

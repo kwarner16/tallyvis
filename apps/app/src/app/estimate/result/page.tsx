@@ -17,7 +17,8 @@ import {
 import { CONTACT_URL } from "@/lib/urls";
 
 export default function ResultStepPage() {
-  const { analysis, aiObservation, input, quoteId, embedId, setQuoteId, reset } = useEstimator();
+  const { analysis, aiObservation, evidenceMessages, confirmed, input, quoteId, embedId, setQuoteId, reset } =
+    useEstimator();
   const router = useRouter();
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [requested, setRequested] = useState(false);
@@ -31,8 +32,17 @@ export default function ResultStepPage() {
   useEffect(() => {
     if (!analysis) {
       router.replace("/estimate/property");
+      return;
     }
-  }, [analysis, router]);
+    // Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+    // — an AI-derived analysis must go through /estimate/confirm first; a
+    // manually-entered one (no aiObservation) never needed to. Catches a
+    // direct/back-button navigation here that skipped confirmation, not
+    // the normal flow (which already routes through /estimate/confirm).
+    if (aiObservation && !confirmed) {
+      router.replace("/estimate/confirm");
+    }
+  }, [analysis, aiObservation, confirmed, router]);
 
   useEffect(() => {
     if (!analysis) return;
@@ -123,6 +133,16 @@ export default function ResultStepPage() {
   const display = getEstimateDisplay(estimate);
   const { characteristics, metadata } = analysis;
   const needsMoreInfo = metadata.confidence === "low";
+  // Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
+  // — specific, actionable gaps computed server-side (see
+  // `analyzePublicPropertyAction`'s own comment for why this is plain
+  // strings from context, not a client-side `describeEvidenceGaps` call),
+  // when any exist. Falls back to the previous generic first-note
+  // behavior otherwise, so the manual-entry path is unaffected.
+  const moreInfoMessages =
+    evidenceMessages.length > 0
+      ? evidenceMessages
+      : [metadata.notes?.[0] ?? "We couldn't confidently determine every detail from the photos provided."];
 
   if (requested) {
     return (
@@ -180,10 +200,11 @@ export default function ResultStepPage() {
           <p className="text-sm font-semibold text-accent-strong">
             We need a little more information
           </p>
-          <p className="text-sm text-ink-soft">
-            {metadata.notes?.[0] ??
-              "We couldn't confidently determine every detail from the photos provided."}
-          </p>
+          <ul className="flex flex-col gap-1.5 text-sm text-ink-soft">
+            {moreInfoMessages.map((message) => (
+              <li key={message}>{message}</li>
+            ))}
+          </ul>
           <Link
             href="/estimate/photos"
             className={buttonVariants({ variant: "outline", className: "self-start" })}
