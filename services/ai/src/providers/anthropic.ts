@@ -191,6 +191,18 @@ function describeFailure(err: unknown): AiProviderError {
   if (err instanceof Anthropic.APIError && err.type === "overloaded_error") {
     return new AiProviderError("The AI provider is temporarily at capacity. Please try again shortly.", "overloaded");
   }
+  // Confirmed in production (2026-09-23): an API key not scoped to a
+  // workspace makes every request fail this way — a genuine account/key
+  // configuration problem on Anthropic's side, not a per-request or
+  // per-photo issue, and previously indistinguishable from any other 4xx
+  // in the generic "provider-error" bucket below. `err.message` itself
+  // is never logged (see this function's own comment) — only the type.
+  if (err instanceof Anthropic.APIError && err.type === "invalid_request_error") {
+    return new AiProviderError(
+      "AI analysis isn't configured correctly for this environment yet.",
+      "invalid-request",
+    );
+  }
   if (err instanceof Anthropic.RateLimitError) {
     return new AiProviderError("The AI provider is rate-limiting requests right now. Please try again shortly.", "rate-limit");
   }

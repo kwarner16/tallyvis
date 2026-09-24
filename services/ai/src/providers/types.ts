@@ -50,6 +50,7 @@ export type AiErrorCategory =
   | "billing" // Anthropic's own documented `billing_error` type (insufficient credits/plan issue) — distinct from rate-limit: retrying immediately never helps, the account itself needs attention.
   | "overloaded" // Anthropic's own documented `overloaded_error` type — the model is temporarily at capacity, distinct from this account being rate-limited.
   | "model-not-found" // the configured AI_PROVIDER_MODEL isn't a valid/callable model id for this account — an operator misconfiguration, not a per-request failure a retry fixes.
+  | "invalid-request" // Anthropic's own documented `invalid_request_error` type — the request itself was malformed/rejected before any model inference ran (e.g. an API key not scoped to a workspace). An operator/account misconfiguration, not something a retry or a different photo fixes.
   | "timeout"
   | "connection"
   | "provider-error"
