@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { safeParseJson, validateRawPropertyObservation } from "../validateObservation";
+import { safeParseJson, summarizeObservationForLogging, validateRawPropertyObservation } from "../validateObservation";
 
 /**
  * All AI output is untrusted external data (Phase 11 — see
@@ -7,6 +7,14 @@ import { safeParseJson, validateRawPropertyObservation } from "../validateObserv
  * every failure mode the brief calls out explicitly: malformed JSON,
  * missing fields, invalid enums, invalid/absurd numbers, and the
  * uncertainty representation itself — not just the happy path.
+ *
+ * Phase 12.1 (docs/decisions/0022-graceful-partial-ai-analysis.md) split
+ * failures into two severities. Only a non-object input or a mismatched
+ * `vertical` still hard-rejects the whole observation (`ok: false`) —
+ * every other malformed shape (a missing confidence, an invalid enum, an
+ * out-of-range number, a bad status) degrades just that one field to
+ * `{status: "unknown"}` with a recorded warning, while the rest of the
+ * observation — and the observation as a whole — stays usable.
  */
 
 function validObservation() {
@@ -72,7 +80,7 @@ describe("validateRawPropertyObservation — positive cases", () => {
   });
 });
 
-describe("validateRawPropertyObservation — malformed/missing/invalid input", () => {
+describe("validateRawPropertyObservation — hard rejection (no per-field data to salvage)", () => {
   it("rejects non-object top-level input", () => {
     expect(validateRawPropertyObservation(null).ok).toBe(false);
     expect(validateRawPropertyObservation(undefined).ok).toBe(false);
@@ -81,100 +89,151 @@ describe("validateRawPropertyObservation — malformed/missing/invalid input", (
     expect(validateRawPropertyObservation([1, 2, 3]).ok).toBe(false);
   });
 
-  it("rejects a missing required field", () => {
-    const input = validObservation() as Record<string, unknown>;
-    delete input.windowCount;
-    const result = validateRawPropertyObservation(input);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.join(" ")).toMatch(/windowCount/);
-  });
-
-  it("rejects an invalid enum value", () => {
-    const input = { ...validObservation(), accessibility: { status: "observed", value: "impossible", confidence: "high" } };
-    const result = validateRawPropertyObservation(input);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.join(" ")).toMatch(/accessibility/);
-  });
-
   it("rejects a wrong vertical", () => {
     const result = validateRawPropertyObservation({ ...validObservation(), vertical: "pressure-washing" });
     expect(result.ok).toBe(false);
   });
 
-  it("rejects an observed value missing its confidence", () => {
+  it("rejects a missing vertical", () => {
+    const input = validObservation() as Record<string, unknown>;
+    delete input.vertical;
+    expect(validateRawPropertyObservation(input).ok).toBe(false);
+  });
+});
+
+describe("validateRawPropertyObservation — graceful degradation (one bad field doesn't discard the rest)", () => {
+  it("degrades a missing field to unknown instead of rejecting the whole observation", () => {
+    const input = validObservation() as Record<string, unknown>;
+    delete input.windowCount;
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.windowCount).toEqual({ status: "unknown" });
+    // Every other field is untouched — the point of graceful degradation.
+    expect(result.value.stories).toEqual({ status: "observed", value: 2, confidence: "high" });
+    expect(result.value.warnings.join(" ")).toMatch(/windowCount/);
+  });
+
+  it("degrades an invalid enum value to unknown, keeping the rest of the observation", () => {
+    const input = { ...validObservation(), accessibility: { status: "observed", value: "impossible", confidence: "high" } };
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.accessibility).toEqual({ status: "unknown" });
+    expect(result.value.warnings.join(" ")).toMatch(/accessibility/);
+  });
+
+  it("degrades an observed value missing its confidence to unknown", () => {
     const input = { ...validObservation(), stories: { status: "observed", value: 2 } };
     const result = validateRawPropertyObservation(input);
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.stories).toEqual({ status: "unknown" });
+    expect(result.value.warnings.join(" ")).toMatch(/stories/);
   });
 
-  it("rejects an observed value with an invalid confidence level", () => {
+  it("degrades an observed value with an invalid confidence level to unknown", () => {
     const input = { ...validObservation(), stories: { status: "observed", value: 2, confidence: "extremely-sure" } };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.stories).toEqual({ status: "unknown" });
   });
 
-  it("rejects an unrecognized status", () => {
+  it("degrades an unrecognized status to unknown", () => {
     const input = { ...validObservation(), windowCount: { status: "guessed", value: 24, confidence: "high" } };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.windowCount).toEqual({ status: "unknown" });
   });
 
-  it("rejects a negative window count", () => {
+  it("degrades a negative window count to unknown", () => {
     const input = { ...validObservation(), windowCount: { status: "observed", value: -5, confidence: "high" } };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.windowCount).toEqual({ status: "unknown" });
   });
 
-  it("rejects an absurd window count", () => {
+  it("degrades an absurd window count to unknown rather than trusting a hallucinated total", () => {
     const input = { ...validObservation(), windowCount: { status: "observed", value: 50000, confidence: "high" } };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.windowCount).toEqual({ status: "unknown" });
   });
 
-  it("rejects a non-integer window count", () => {
+  it("degrades a non-integer window count to unknown", () => {
     const input = { ...validObservation(), windowCount: { status: "observed", value: 24.5, confidence: "high" } };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.windowCount).toEqual({ status: "unknown" });
   });
 
-  it("rejects NaN and Infinity", () => {
+  it("degrades NaN and Infinity to unknown", () => {
     const nanInput = { ...validObservation(), stories: { status: "observed", value: NaN, confidence: "high" } };
-    expect(validateRawPropertyObservation(nanInput).ok).toBe(false);
+    const nanResult = validateRawPropertyObservation(nanInput);
+    expect(nanResult.ok).toBe(true);
+    if (nanResult.ok) expect(nanResult.value.stories).toEqual({ status: "unknown" });
+
     const infInput = { ...validObservation(), windowCount: { status: "observed", value: Infinity, confidence: "high" } };
-    expect(validateRawPropertyObservation(infInput).ok).toBe(false);
+    const infResult = validateRawPropertyObservation(infInput);
+    expect(infResult.ok).toBe(true);
+    if (infResult.ok) expect(infResult.value.windowCount).toEqual({ status: "unknown" });
   });
 
-  it("rejects an absurd stories count", () => {
+  it("degrades an absurd stories count to unknown", () => {
     const input = { ...validObservation(), stories: { status: "observed", value: 200, confidence: "high" } };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.stories).toEqual({ status: "unknown" });
   });
 
-  it("rejects a non-boolean hardWaterStaining value", () => {
+  it("degrades a non-boolean hardWaterStaining value to unknown", () => {
     const input = { ...validObservation(), hardWaterStaining: { status: "observed", value: "yes", confidence: "high" } };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.hardWaterStaining).toEqual({ status: "unknown" });
   });
 
-  it("rejects a missing overallConfidence", () => {
+  it("defaults a missing overallConfidence to \"low\" instead of rejecting", () => {
     const input = validObservation() as Record<string, unknown>;
     delete input.overallConfidence;
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.overallConfidence).toBe("low");
+      expect(result.value.warnings.join(" ")).toMatch(/overallConfidence/);
+    }
   });
 
-  it("rejects a warnings array containing a non-string", () => {
+  it("drops a non-string warnings entry rather than rejecting the whole observation", () => {
     const input = { ...validObservation(), warnings: ["fine", 42] };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.warnings).toContain("fine");
   });
 
-  it("caps an excessively long warnings array rather than accepting it unbounded", () => {
+  it("caps an excessively long warnings array rather than rejecting it", () => {
     const input = { ...validObservation(), warnings: Array.from({ length: 100 }, (_, i) => `warning ${i}`) };
-    expect(validateRawPropertyObservation(input).ok).toBe(false);
+    const result = validateRawPropertyObservation(input);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.warnings.length).toBeLessThanOrEqual(20);
   });
 
-  it("accumulates multiple errors in one pass rather than stopping at the first", () => {
+  it("degrades every malformed field independently, ending up with one usable observation", () => {
     const input = {
       ...validObservation(),
-      vertical: "wrong",
       stories: { status: "observed", value: -1, confidence: "high" },
+      windowCount: { status: "observed", value: 24 }, // missing confidence
       overallConfidence: "extremely-confident",
     };
     const result = validateRawPropertyObservation(input);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.length).toBeGreaterThanOrEqual(3);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.stories).toEqual({ status: "unknown" });
+    expect(result.value.windowCount).toEqual({ status: "unknown" });
+    expect(result.value.overallConfidence).toBe("low");
+    // Untouched fields survive the other fields' degradation.
+    expect(result.value.windowType).toEqual({ status: "observed", value: "double-hung", confidence: "medium" });
+    expect(result.value.warnings.length).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -196,5 +255,18 @@ describe("safeParseJson", () => {
 
   it("handles a model refusal/prose response safely (not JSON at all)", () => {
     expect(safeParseJson("I'm sorry, I can't help with that.").ok).toBe(false);
+  });
+});
+
+describe("summarizeObservationForLogging", () => {
+  it("produces a safe, compact per-field summary with no photos/PII", () => {
+    const result = validateRawPropertyObservation(validObservation());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const summary = summarizeObservationForLogging(result.value);
+    expect(summary).toContain("windowCount=observed(24,medium)");
+    expect(summary).toContain("stories=observed(2,high)");
+    expect(summary).toContain("hardWaterStaining=unknown");
+    expect(summary).toContain("overallConfidence=medium");
   });
 });

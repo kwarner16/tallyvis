@@ -147,6 +147,73 @@ describe("createAnthropicProvider — successful response", () => {
   });
 
   /**
+   * Part 10 of the production-reliability audit (docs/decisions/0022-
+   * graceful-partial-ai-analysis.md): multiple photos of the same property
+   * must be reasoned about together, not double-counted. Architecturally
+   * this was already true — every photo becomes one `image` content block
+   * in a single user message of a single `messages.create` call, never one
+   * call per photo — this test locks that in so it can't silently regress
+   * into a per-photo-then-sum request shape later.
+   */
+  it("sends every photo as one message in a single request, never one request per photo", async () => {
+    let requestCount = 0;
+    let receivedBody: string | undefined;
+    const baseURL = await listen((req, res) => {
+      requestCount++;
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        receivedBody = Buffer.concat(chunks).toString("utf-8");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(validToolResponse()));
+      });
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+    const multiImages = [
+      { url: "data:image/jpeg;base64,AAAA" },
+      { url: "data:image/jpeg;base64,BBBB" },
+      { url: "data:image/jpeg;base64,CCCC" },
+    ];
+
+    await provider.analyzeProperty(multiImages, metadata);
+
+    expect(requestCount).toBe(1);
+    const body = JSON.parse(receivedBody!);
+    expect(body.messages).toHaveLength(1);
+    const imageBlocks = (body.messages[0].content as { type: string }[]).filter((block) => block.type === "image");
+    expect(imageBlocks).toHaveLength(3);
+  });
+
+  /**
+   * Regression for the prompt-ambiguity gaps the same audit found: the
+   * original prompt never defined what counts as one "window" (a bay
+   * window's multiple sashes? a glass door?) and never told the model its
+   * photos are overlapping views of one property rather than independent
+   * ones — see this file's SYSTEM_PROMPT.
+   */
+  it("defines what counts as one window and instructs against double-counting across overlapping photos", async () => {
+    let receivedBody: string | undefined;
+    const baseURL = await listen((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        receivedBody = Buffer.concat(chunks).toString("utf-8");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(validToolResponse()));
+      });
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+    await provider.analyzeProperty(images, metadata);
+
+    const body = JSON.parse(receivedBody!);
+    const system = body.system as string;
+    expect(system).toMatch(/do not count doors as windows/i);
+    expect(system).toMatch(/bay.*counts as one window/is);
+    expect(system).toMatch(/same property, not separate properties/i);
+    expect(system).toMatch(/count that window only once/i);
+  });
+
+  /**
    * Regression (confirmed in production, 2026-09-24): Anthropic's strict
    * tool-use validation rejects an empty `{}` JSON Schema — the shape
    * `report_property_observation`'s `value` field used, meant as "accepts
@@ -308,7 +375,7 @@ describe("createAnthropicProvider — provider failure modes", () => {
     await expectCategory(provider.analyzeProperty(images, metadata), "malformed-response");
   });
 
-  it("passes through a tool input that fails schema validation — the caller's validator catches it, not a crash here", async () => {
+  it("passes through a tool input with a malformed field — the caller's validator degrades it, not a crash here", async () => {
     const baseURL = await listen((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
@@ -320,6 +387,36 @@ describe("createAnthropicProvider — provider failure modes", () => {
                 id: "toolu_test",
                 name: "report_property_observation",
                 input: { vertical: "window-cleaning", windowCount: { status: "observed", value: -999, confidence: "high" } },
+              },
+            ],
+          }),
+        ),
+      );
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+
+    const { raw } = await provider.analyzeProperty(images, metadata);
+    // An absurd windowCount and every other missing field degrade to
+    // "unknown" (Phase 12.1 — docs/decisions/0022-graceful-partial-ai-
+    // analysis.md) rather than voiding the whole observation, since
+    // `vertical` alone is structurally valid.
+    const validated = validateRawPropertyObservation(raw);
+    expect(validated.ok).toBe(true);
+    if (validated.ok) expect(validated.value.windowCount).toEqual({ status: "unknown" });
+  });
+
+  it("still fails schema validation outright for genuinely uninterpretable top-level input (wrong vertical)", async () => {
+    const baseURL = await listen((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify(
+          validToolResponse({
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu_test",
+                name: "report_property_observation",
+                input: { ...validToolResponse().content[0]!.input, vertical: "pressure-washing" },
               },
             ],
           }),

@@ -66,12 +66,28 @@ describe("runAnalysis — full pipeline via a fake provider", () => {
     await expect(runAnalysis(emptyProvider, threeImages, metadata)).rejects.toThrow();
   });
 
-  it("rejects a partial response missing required fields", async () => {
+  it("accepts a partial response missing most fields — graceful degradation, not wholesale rejection", async () => {
+    // Phase 12.1 (docs/decisions/0022-graceful-partial-ai-analysis.md): a
+    // response missing most fields is structurally valid (correct
+    // `vertical`) and reaches the human reviewer with everything it
+    // legitimately lacks marked unknown and defaulted, rather than being
+    // discarded outright the way a genuinely corrupt response still is.
     const partialProvider: AiProvider = {
       name: "partial",
       analyzeProperty: async () => ({ raw: { vertical: "window-cleaning", stories: { status: "unknown" } } }),
     };
-    await expect(runAnalysis(partialProvider, threeImages, metadata)).rejects.toThrow(/invalid result/i);
+    const result = await runAnalysis(partialProvider, threeImages, metadata);
+    expect(result.observation.windowCount).toEqual({ status: "unknown" });
+    expect(result.analysis.metadata.confidence).toBe("low");
+    expect(result.analysis.characteristics.stories).toBe(metadata.customerDeclaredStories);
+  });
+
+  it("still rejects a genuinely uninterpretable response outright (wrong vertical)", async () => {
+    const wrongVerticalProvider: AiProvider = {
+      name: "wrong-vertical",
+      analyzeProperty: async () => ({ raw: { vertical: "pressure-washing" } }),
+    };
+    await expect(runAnalysis(wrongVerticalProvider, threeImages, metadata)).rejects.toThrow(/invalid result/i);
   });
 
   it("propagates a provider error as a clean Error, never crashes the caller", async () => {

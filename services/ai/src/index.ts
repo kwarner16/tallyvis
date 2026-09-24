@@ -3,12 +3,17 @@ import type { RawPropertyObservation } from "./types";
 import { AiProviderError, type AiProvider } from "./providers/types";
 import { mockProvider } from "./providers/mock";
 import { createAnthropicProvider } from "./providers/anthropic";
-import { validateRawPropertyObservation } from "./validateObservation";
+import { validateRawPropertyObservation, summarizeObservationForLogging } from "./validateObservation";
 import { reconcileObservation } from "./reconcile";
 import { logAnalysisEvent } from "./logging";
 
 export type { ObservedValue, RawPropertyObservation } from "./types";
-export { validateRawPropertyObservation, safeParseJson, type ValidationResult } from "./validateObservation";
+export {
+  validateRawPropertyObservation,
+  safeParseJson,
+  summarizeObservationForLogging,
+  type ValidationResult,
+} from "./validateObservation";
 export { reconcileObservation } from "./reconcile";
 export {
   compareObservationToCharacteristics,
@@ -99,6 +104,11 @@ export async function runAnalysis(
 
   const validated = validateRawPropertyObservation(raw);
   if (!validated.ok) {
+    // `validated.errors` here are only ever the small set of genuine
+    // top-level structural messages (not a JSON object, wrong `vertical`)
+    // — see validateObservation.ts's own comment on why this branch is now
+    // narrow. Safe to log in full: no photos, no prompt text, no PII, just
+    // a description of the malformed shape itself.
     logAnalysisEvent({
       provider: provider.name,
       model: meta?.model,
@@ -106,6 +116,7 @@ export async function runAnalysis(
       latencyMs: Date.now() - startedAt,
       imageCount: images.length,
       errorCategory: "invalid-response",
+      errorDetail: validated.errors.join(" "),
     });
     throw new AiProviderError(
       `The AI provider returned an invalid result: ${validated.errors.join(" ")}`,
@@ -121,6 +132,7 @@ export async function runAnalysis(
     imageCount: images.length,
     inputTokens: meta?.inputTokens,
     outputTokens: meta?.outputTokens,
+    observationSummary: summarizeObservationForLogging(validated.value),
   });
 
   return { analysis: reconcileObservation(validated.value, metadata), observation: validated.value };

@@ -9,6 +9,24 @@ import type { ObservedValue, RawPropertyObservation } from "./types";
  * `RawPropertyObservation` that didn't come from a successful
  * `validateRawPropertyObservation()` call. See
  * docs/decisions/0013-ai-analysis-foundation.md.
+ *
+ * Phase 12.1 (docs/decisions/0022-graceful-partial-ai-analysis.md) —
+ * production diagnosis of a real Anthropic response found this file was
+ * previously all-or-nothing: if *any single* per-field observation was
+ * malformed (e.g. the model set `status: "observed"` but left off
+ * `confidence`), the entire eight-field analysis was discarded, even when
+ * every other field was perfectly usable. That's a stricter reliability
+ * policy than the product ever intended — `reconcileObservation()` and the
+ * review UI (`AiObservationSummary`) already handle individual
+ * uncertain/unknown fields gracefully (fall back to a reviewable default,
+ * downgrade confidence, show a distinct "not visible" style); they just
+ * never got the chance to, because this file rejected the whole response
+ * first. Now, a malformed *individual field* degrades to `{status:
+ * "unknown"}` (recorded as a warning, never silent) instead of failing the
+ * whole observation. Only genuine top-level structural corruption — the
+ * input isn't even an object, or the declared vertical doesn't match — is
+ * still a hard rejection, since there's no per-field data to salvage from
+ * that at all.
  */
 
 export type ValidationResult =
@@ -52,17 +70,24 @@ function isFiniteInteger(value: unknown, min: number, max: number): value is num
  * membership test, a numeric range test, or a boolean check) — kept as a
  * parameter so every field in `validateRawPropertyObservation` below reads
  * as one line instead of repeating the status/confidence plumbing five times.
+ *
+ * Never fails the whole observation — a field the provider got wrong in
+ * some structural way (missing confidence, an out-of-range value, a typo'd
+ * status) degrades to the honest `{status: "unknown"}` rather than voiding
+ * every other field alongside it. Every degradation is recorded in
+ * `degradations` (merged into the result's `warnings` by the caller) so it
+ * stays visible to whoever reviews the analysis, never silent.
  */
 function validateObservedValue<T>(
   raw: unknown,
   fieldName: string,
   describeValue: (value: unknown) => value is T,
   valueTypeDescription: string,
-  errors: string[],
-): ObservedValue<T> | undefined {
+  degradations: string[],
+): ObservedValue<T> {
   if (!isRecord(raw)) {
-    errors.push(`"${fieldName}" must be an object.`);
-    return undefined;
+    degradations.push(`The AI's "${fieldName}" response wasn't in the expected shape, so it was treated as unknown.`);
+    return { status: "unknown" };
   }
 
   const { status, value, confidence } = raw;
@@ -73,26 +98,34 @@ function validateObservedValue<T>(
 
   if (status === "uncertain") {
     if (!isOneOf(confidence, CONFIDENCE_LEVELS)) {
-      errors.push(`"${fieldName}.confidence" must be one of ${CONFIDENCE_LEVELS.join(", ")} when status is "uncertain".`);
-      return undefined;
+      degradations.push(
+        `The AI marked "${fieldName}" uncertain but didn't give a valid confidence level, so it was treated as unknown.`,
+      );
+      return { status: "unknown" };
     }
     return { status: "uncertain", confidence };
   }
 
   if (status === "observed") {
     if (!describeValue(value)) {
-      errors.push(`"${fieldName}.value" is not a valid ${valueTypeDescription}.`);
-      return undefined;
+      degradations.push(
+        `The AI's "${fieldName}" value wasn't a valid ${valueTypeDescription}, so it was treated as unknown.`,
+      );
+      return { status: "unknown" };
     }
     if (!isOneOf(confidence, CONFIDENCE_LEVELS)) {
-      errors.push(`"${fieldName}.confidence" must be one of ${CONFIDENCE_LEVELS.join(", ")} when status is "observed".`);
-      return undefined;
+      degradations.push(
+        `The AI observed "${fieldName}" but didn't give a valid confidence level, so it was treated as unknown.`,
+      );
+      return { status: "unknown" };
     }
     return { status: "observed", value, confidence };
   }
 
-  errors.push(`"${fieldName}.status" must be "observed", "uncertain", or "unknown" — got ${JSON.stringify(status)}.`);
-  return undefined;
+  degradations.push(
+    `The AI's "${fieldName}" status was unrecognized (${JSON.stringify(status)}), so it was treated as unknown.`,
+  );
+  return { status: "unknown" };
 }
 
 /**
@@ -112,28 +145,46 @@ export function safeParseJson(text: string): { ok: true; value: unknown } | { ok
 
 /**
  * The single entry point every provider's output must pass through.
- * Rejects malformed shapes, missing fields, invalid enum values, and
- * absurd numbers — never coerces or guesses a value into existing. Extra/
- * unexpected fields on the input are silently ignored (not copied into the
- * result), never trusted.
+ *
+ * Two different failure severities, deliberately kept distinct (Phase 12.1
+ * — see docs/decisions/0022-graceful-partial-ai-analysis.md):
+ *
+ * - **Hard rejection** (`ok: false`) — the input isn't even a usable
+ *   observation at all: not a JSON object, or a `vertical` that doesn't
+ *   match. There's no per-field data worth salvaging from either case, so
+ *   the whole thing is discarded and the caller should treat this as a
+ *   genuine provider failure (`AiErrorCategory: "invalid-response"`).
+ * - **Soft degradation** (still `ok: true`) — any individual field that's
+ *   malformed (missing confidence, an invalid enum/number, an unrecognized
+ *   status) is replaced with the honest `{status: "unknown"}` and recorded
+ *   as a warning. Every other field — and the analysis as a whole — is
+ *   still usable. This is what lets a response where the model nailed
+ *   `windowCount` and `stories` but fumbled `screens`' confidence field
+ *   still reach human review instead of being discarded wholesale.
+ *
+ * Extra/unexpected top-level fields on the input are silently ignored (not
+ * copied into the result), never trusted.
  */
 export function validateRawPropertyObservation(input: unknown): ValidationResult {
-  const errors: string[] = [];
-
   if (!isRecord(input)) {
     return { ok: false, errors: ["Observation must be a JSON object."] };
   }
 
   if (input.vertical !== "window-cleaning") {
-    errors.push(`"vertical" must be "window-cleaning" — got ${JSON.stringify(input.vertical)}.`);
+    return {
+      ok: false,
+      errors: [`"vertical" must be "window-cleaning" — got ${JSON.stringify(input.vertical)}.`],
+    };
   }
+
+  const degradations: string[] = [];
 
   const stories = validateObservedValue<number>(
     input.stories,
     "stories",
     (v): v is number => isFiniteInteger(v, STORIES_RANGE.min, STORIES_RANGE.max),
     `integer between ${STORIES_RANGE.min} and ${STORIES_RANGE.max}`,
-    errors,
+    degradations,
   );
 
   const windowCount = validateObservedValue<number>(
@@ -141,7 +192,7 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     "windowCount",
     (v): v is number => isFiniteInteger(v, COUNT_RANGE.min, COUNT_RANGE.max),
     `integer between ${COUNT_RANGE.min} and ${COUNT_RANGE.max}`,
-    errors,
+    degradations,
   );
 
   const windowType = validateObservedValue<WindowType>(
@@ -149,7 +200,7 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     "windowType",
     (v): v is WindowType => isOneOf(v, WINDOW_TYPES),
     `window type (one of ${WINDOW_TYPES.join(", ")})`,
-    errors,
+    degradations,
   );
 
   const screens = validateObservedValue<number>(
@@ -157,7 +208,7 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     "screens",
     (v): v is number => isFiniteInteger(v, COUNT_RANGE.min, COUNT_RANGE.max),
     `integer between ${COUNT_RANGE.min} and ${COUNT_RANGE.max}`,
-    errors,
+    degradations,
   );
 
   const tracks = validateObservedValue<number>(
@@ -165,7 +216,7 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     "tracks",
     (v): v is number => isFiniteInteger(v, COUNT_RANGE.min, COUNT_RANGE.max),
     `integer between ${COUNT_RANGE.min} and ${COUNT_RANGE.max}`,
-    errors,
+    degradations,
   );
 
   const accessibility = validateObservedValue<AccessibilityLevel>(
@@ -173,7 +224,7 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     "accessibility",
     (v): v is AccessibilityLevel => isOneOf(v, ACCESSIBILITY_LEVELS),
     `accessibility level (one of ${ACCESSIBILITY_LEVELS.join(", ")})`,
-    errors,
+    degradations,
   );
 
   const condition = validateObservedValue<ConditionLevel>(
@@ -181,7 +232,7 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     "condition",
     (v): v is ConditionLevel => isOneOf(v, CONDITION_LEVELS),
     `condition level (one of ${CONDITION_LEVELS.join(", ")})`,
-    errors,
+    degradations,
   );
 
   const hardWaterStaining = validateObservedValue<boolean>(
@@ -189,37 +240,33 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
     "hardWaterStaining",
     (v): v is boolean => typeof v === "boolean",
     "boolean",
-    errors,
+    degradations,
   );
 
-  if (!isOneOf(input.overallConfidence, CONFIDENCE_LEVELS)) {
-    errors.push(`"overallConfidence" must be one of ${CONFIDENCE_LEVELS.join(", ")}.`);
+  // The model's own top-level confidence claim gets the same soft
+  // treatment — `reconcileObservation()`'s `downgradeConfidence` already
+  // distrusts an unsupported "high" claim downward based on how many core
+  // fields actually came through observed, so a missing/invalid claim here
+  // safely defaults to the most conservative "low" rather than voiding the
+  // whole response.
+  let overallConfidence: ConfidenceLevel;
+  if (isOneOf(input.overallConfidence, CONFIDENCE_LEVELS)) {
+    overallConfidence = input.overallConfidence;
+  } else {
+    degradations.push(
+      `The AI didn't give a valid "overallConfidence", so it was treated as "low".`,
+    );
+    overallConfidence = "low";
   }
 
   let warnings: string[] = [];
-  if (input.warnings === undefined) {
-    warnings = [];
-  } else if (!Array.isArray(input.warnings) || !input.warnings.every((w) => typeof w === "string")) {
-    errors.push('"warnings" must be an array of strings.');
-  } else if (input.warnings.length > MAX_WARNINGS) {
-    errors.push(`"warnings" must contain at most ${MAX_WARNINGS} entries.`);
-  } else {
-    warnings = (input.warnings as string[]).map((w) => w.slice(0, MAX_WARNING_LENGTH));
-  }
-
-  if (
-    errors.length > 0 ||
-    !stories ||
-    !windowCount ||
-    !windowType ||
-    !screens ||
-    !tracks ||
-    !accessibility ||
-    !condition ||
-    !hardWaterStaining ||
-    !isOneOf(input.overallConfidence, CONFIDENCE_LEVELS)
-  ) {
-    return { ok: false, errors };
+  if (Array.isArray(input.warnings)) {
+    warnings = input.warnings
+      .filter((w): w is string => typeof w === "string")
+      .slice(0, MAX_WARNINGS)
+      .map((w) => w.slice(0, MAX_WARNING_LENGTH));
+  } else if (input.warnings !== undefined) {
+    degradations.push(`The AI's "warnings" field wasn't a valid list, so it was ignored.`);
   }
 
   return {
@@ -234,8 +281,43 @@ export function validateRawPropertyObservation(input: unknown): ValidationResult
       accessibility,
       condition,
       hardWaterStaining,
-      overallConfidence: input.overallConfidence,
-      warnings,
+      overallConfidence,
+      warnings: [...warnings, ...degradations],
     },
   };
+}
+
+function summarizeField(field: ObservedValue<unknown>): string {
+  if (field.status === "observed") return `observed(${JSON.stringify(field.value)},${field.confidence})`;
+  if (field.status === "uncertain") return `uncertain(${field.confidence})`;
+  return "unknown";
+}
+
+/**
+ * A safe, compact, dev-log-only structural summary of a validated
+ * observation — every field's status/confidence/value (a count, a story
+ * number, an enum like "double-hung", a boolean; never a photo, an
+ * address, or any other customer-identifying detail) plus how many
+ * individual fields were degraded to unknown. Exists so an operator can
+ * answer "what did the model actually return, structurally" from a log
+ * line alone — see `services/ai/src/logging.ts`'s `AnalysisLogEvent.
+ * observationSummary` and docs/decisions/0022-graceful-partial-ai-
+ * analysis.md's "safe structural diagnostics" goal.
+ */
+export function summarizeObservationForLogging(observation: RawPropertyObservation): string {
+  const fields = [
+    ["stories", observation.stories],
+    ["windowCount", observation.windowCount],
+    ["windowType", observation.windowType],
+    ["screens", observation.screens],
+    ["tracks", observation.tracks],
+    ["accessibility", observation.accessibility],
+    ["condition", observation.condition],
+    ["hardWaterStaining", observation.hardWaterStaining],
+  ] as const;
+
+  const parts = fields.map(([name, field]) => `${name}=${summarizeField(field)}`);
+  parts.push(`overallConfidence=${observation.overallConfidence}`);
+  parts.push(`warnings=${observation.warnings.length}`);
+  return parts.join(" ");
 }

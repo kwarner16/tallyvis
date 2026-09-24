@@ -21,6 +21,8 @@ export interface AnalysisLogEvent {
   errorDetail?: string;
   inputTokens?: number;
   outputTokens?: number;
+  /** Safe, compact per-field structural summary — see `summarizeObservationForLogging` in validateObservation.ts. Only present on a successful analysis (there's no validated observation to summarize on failure). */
+  observationSummary?: string;
 }
 
 export function logAnalysisEvent(event: AnalysisLogEvent): void {
