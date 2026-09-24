@@ -3,3 +3,5 @@ export const ESTIMATOR_URL = `${APP_URL}/estimate`;
 /** Business owner sign-in — apps/app's authenticated dashboard, not the customer estimator above. */
 export const LOGIN_URL = `${APP_URL}/login`;
 export const SIGNUP_URL = `${APP_URL}/signup`;
+/** Dashboard Settings — includes the Danger Zone self-service account deletion flow. */
+export const SETTINGS_URL = `${APP_URL}/dashboard/settings`;
