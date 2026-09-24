@@ -87,10 +87,12 @@ export async function runAnalysis(
           );
     logAnalysisEvent({
       provider: provider.name,
+      model: provider.model,
       success: false,
       latencyMs: Date.now() - startedAt,
       imageCount: images.length,
       errorCategory: wrapped.category,
+      errorDetail: wrapped.detail,
     });
     throw wrapped;
   }

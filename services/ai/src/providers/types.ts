@@ -22,6 +22,8 @@ export interface AiProviderResult {
 export interface AiProvider {
   /** For error messages and logging — never a secret, never provider-internal detail beyond a name. */
   readonly name: string;
+  /** The resolved model identifier, when known ahead of the call — lets a FAILURE log line report which model was targeted, not just a successful one's `meta.model`. Never set for the mock provider. */
+  readonly model?: string;
   analyzeProperty(images: PropertyImage[], metadata: PropertyMetadata): Promise<AiProviderResult>;
 }
 
@@ -32,14 +34,25 @@ export interface AiProvider {
  * provider is rate-limiting us" in dev logs and, ultimately, in what the
  * UI tells the business. `message` is always the safe, user-facing string
  * a caller can display as-is (never a raw SDK error, never a secret).
+ *
+ * `detail` is a SEPARATE, server-log-only channel (never shown to a
+ * customer/business, never returned across the Server Action boundary) for
+ * exactly the kind of diagnosis a single generic category can't carry —
+ * Anthropic's own request id and its own safe, developer-facing error
+ * message text (which never echoes the API key or request content back).
+ * Added after a production incident where every `invalid_request_error`
+ * collapsed into the same "invalid-request" category with no way to tell,
+ * from logs alone, WHICH invalid-request problem it actually was.
  */
 export class AiProviderError extends Error {
   readonly category: AiErrorCategory;
+  readonly detail?: string;
 
-  constructor(message: string, category: AiErrorCategory) {
+  constructor(message: string, category: AiErrorCategory, detail?: string) {
     super(message);
     this.name = "AiProviderError";
     this.category = category;
+    this.detail = detail;
   }
 }
 

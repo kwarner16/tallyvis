@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { type APIError } from "@anthropic-ai/sdk";
 import type { PropertyImage, PropertyMetadata } from "@tallyvis/types";
 import { AiProviderError, type AiProvider, type AiProviderResult } from "./types";
 
@@ -160,16 +160,34 @@ function buildUserContent(images: PropertyImage[], metadata: PropertyMetadata): 
 }
 
 /**
+ * A safe, server-log-only diagnostic string for an Anthropic `APIError` —
+ * its own request id and its own error message (Anthropic's error
+ * messages are developer-facing descriptions of what was wrong with the
+ * REQUEST, e.g. "not scoped to a workspace" or a schema complaint; they
+ * never echo the API key or request content back). Never returned to a
+ * customer/business — see `AiProviderError.detail`'s own comment.
+ */
+function safeDetail(err: APIError): string {
+  const parts = [`status=${err.status ?? "unknown"}`];
+  if (err.requestID) parts.push(`requestId=${err.requestID}`);
+  if (err.message) parts.push(`message=${err.message}`);
+  return parts.join(" ");
+}
+
+/**
  * Maps SDK-level failures to a small set of clear, non-leaking, categorized
  * errors — never a raw provider error string (which could echo request
  * details) and never the API key. The category (Phase 12 — see
  * docs/decisions/0014-ai-real-world-refinement.md) drives both dev logging
  * and which of the distinct failure messages section 13 of the brief asks
- * for actually reaches the UI.
+ * for actually reaches the UI. Every `APIError` branch also attaches
+ * `detail` (see `safeDetail` above) so a server log can distinguish WHICH
+ * specific problem produced a given category, rather than every instance
+ * of e.g. "invalid-request" looking identical in logs.
  */
 function describeFailure(err: unknown): AiProviderError {
   if (err instanceof Anthropic.AuthenticationError) {
-    return new AiProviderError("The AI provider rejected the configured credentials.", "authentication");
+    return new AiProviderError("The AI provider rejected the configured credentials.", "authentication", safeDetail(err));
   }
   // Checked before the generic APIError fallback, using Anthropic's own
   // documented `error.type` values (see @anthropic-ai/sdk's
@@ -180,31 +198,35 @@ function describeFailure(err: unknown): AiProviderError {
     return new AiProviderError(
       "The AI provider doesn't recognize the configured model. This needs attention from Tallyvis, not a retry.",
       "model-not-found",
+      safeDetail(err),
     );
   }
   if (err instanceof Anthropic.APIError && err.type === "billing_error") {
     return new AiProviderError(
       "The AI provider account needs billing attention. This needs attention from Tallyvis, not a retry.",
       "billing",
+      safeDetail(err),
     );
   }
   if (err instanceof Anthropic.APIError && err.type === "overloaded_error") {
-    return new AiProviderError("The AI provider is temporarily at capacity. Please try again shortly.", "overloaded");
+    return new AiProviderError("The AI provider is temporarily at capacity. Please try again shortly.", "overloaded", safeDetail(err));
   }
   // Confirmed in production (2026-09-23): an API key not scoped to a
   // workspace makes every request fail this way — a genuine account/key
   // configuration problem on Anthropic's side, not a per-request or
   // per-photo issue, and previously indistinguishable from any other 4xx
-  // in the generic "provider-error" bucket below. `err.message` itself
-  // is never logged (see this function's own comment) — only the type.
+  // in the generic "provider-error" bucket below. `detail` (server-log-only,
+  // never customer-facing) now carries Anthropic's own message/request id
+  // so a recurrence can be diagnosed without guessing.
   if (err instanceof Anthropic.APIError && err.type === "invalid_request_error") {
     return new AiProviderError(
       "AI analysis isn't configured correctly for this environment yet.",
       "invalid-request",
+      safeDetail(err),
     );
   }
   if (err instanceof Anthropic.RateLimitError) {
-    return new AiProviderError("The AI provider is rate-limiting requests right now. Please try again shortly.", "rate-limit");
+    return new AiProviderError("The AI provider is rate-limiting requests right now. Please try again shortly.", "rate-limit", safeDetail(err));
   }
   if (err instanceof Anthropic.APIConnectionTimeoutError) {
     return new AiProviderError("The AI provider did not respond in time.", "timeout");
@@ -213,7 +235,7 @@ function describeFailure(err: unknown): AiProviderError {
     return new AiProviderError("Could not reach the AI provider.", "connection");
   }
   if (err instanceof Anthropic.APIError) {
-    return new AiProviderError(`The AI provider returned an error (status ${err.status ?? "unknown"}).`, "provider-error");
+    return new AiProviderError(`The AI provider returned an error (status ${err.status ?? "unknown"}).`, "provider-error", safeDetail(err));
   }
   return new AiProviderError("The AI provider request failed.", "provider-error");
 }
@@ -269,5 +291,5 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): AiProv
     return { raw: toolUse.input, meta };
   }
 
-  return { name: "anthropic", analyzeProperty };
+  return { name: "anthropic", model, analyzeProperty };
 }

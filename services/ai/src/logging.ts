@@ -17,6 +17,8 @@ export interface AnalysisLogEvent {
   latencyMs: number;
   imageCount: number;
   errorCategory?: AiErrorCategory;
+  /** Server-log-only diagnostic detail (Anthropic's own request id/error message) — see AiProviderError.detail's own comment for why this is safe. */
+  errorDetail?: string;
   inputTokens?: number;
   outputTokens?: number;
 }
