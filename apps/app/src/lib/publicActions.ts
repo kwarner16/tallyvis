@@ -21,6 +21,7 @@ import {
   type PublicQuoteView,
 } from "@tallyvis/api";
 import { describeAiErrorCategory } from "./aiErrorMessages";
+import { sanitizeForPublicDisplay } from "./errorSanitization";
 import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } from "./publicBusinessErrors";
 import type { ActionResult } from "./actionResult";
 
@@ -171,7 +172,11 @@ export async function analyzePublicPropertyAction(
         embedIdPresent: Boolean(embedId),
       }),
     );
-    return { ok: false, message: err instanceof Error ? err.message : NO_BUSINESS_CONFIGURED_MESSAGE };
+    if (err instanceof Error && (err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE || err.message === NO_BUSINESS_CONFIGURED_MESSAGE)) {
+      return { ok: false, message: err.message };
+    }
+    logUnexpected("analyzePublicPropertyAction (business resolution)", err);
+    return { ok: false, message: NO_BUSINESS_CONFIGURED_MESSAGE };
   }
 
   try {
@@ -231,12 +236,12 @@ export async function createPublicQuoteAction(
     }
     // Anything else here is either a real validation error (e.g. the
     // required-service-address check in services/quotes.ts) — safe and
-    // meant to be shown verbatim — or genuinely unexpected. There is no
-    // provider/DB-internal error path in createQuotePublic itself, unlike
-    // the AI path above, so err.message is trusted directly rather than
-    // requiring an AiProviderError-style allowlist.
+    // meant to be shown verbatim — or genuinely unexpected (a database/
+    // infrastructure failure). `sanitizeForPublicDisplay` tells those apart
+    // by shape (see errorSanitization.ts) rather than trusting every
+    // `err.message` unconditionally.
     logUnexpected("createPublicQuoteAction", err);
-    return { ok: false, message: err instanceof Error ? err.message : "Could not save this request. Please try again." };
+    return { ok: false, message: sanitizeForPublicDisplay(err, "Could not save this request. Please try again.") };
   }
 }
 
@@ -273,7 +278,7 @@ export async function acceptPublicQuoteAction(token: string): Promise<ActionResu
     return { ok: true, data: await acceptQuoteByToken(getDb(), token) };
   } catch (err) {
     logUnexpected("acceptPublicQuoteAction", err);
-    return { ok: false, message: err instanceof Error ? err.message : QUOTE_ACTION_GENERIC_MESSAGES.accept };
+    return { ok: false, message: sanitizeForPublicDisplay(err, QUOTE_ACTION_GENERIC_MESSAGES.accept) };
   }
 }
 
@@ -283,7 +288,7 @@ export async function declinePublicQuoteAction(token: string): Promise<ActionRes
     return { ok: true, data: await declineQuoteByToken(getDb(), token) };
   } catch (err) {
     logUnexpected("declinePublicQuoteAction", err);
-    return { ok: false, message: err instanceof Error ? err.message : QUOTE_ACTION_GENERIC_MESSAGES.decline };
+    return { ok: false, message: sanitizeForPublicDisplay(err, QUOTE_ACTION_GENERIC_MESSAGES.decline) };
   }
 }
 
@@ -293,6 +298,6 @@ export async function requestPublicQuoteChangesAction(token: string, note: strin
     return { ok: true, data: await requestQuoteChangesByToken(getDb(), token, note) };
   } catch (err) {
     logUnexpected("requestPublicQuoteChangesAction", err);
-    return { ok: false, message: err instanceof Error ? err.message : QUOTE_ACTION_GENERIC_MESSAGES["request-changes"] };
+    return { ok: false, message: sanitizeForPublicDisplay(err, QUOTE_ACTION_GENERIC_MESSAGES["request-changes"]) };
   }
 }

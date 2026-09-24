@@ -82,10 +82,14 @@ simplification pending real multi-business public routing — see
   cloning, then `pnpm install`. Requires **Node ≥22.5** (for `node:sqlite`).
 - `pnpm build` / `pnpm dev` / `pnpm test` / `pnpm lint` / `pnpm typecheck` —
   all run through Turborepo across every workspace package.
-- First-time setup: `pnpm --filter @tallyvis/api seed` creates a demo
-  business, an owner login, and sample quotes in `services/api`'s local
-  SQLite file — prints the demo login to use signing in to `apps/app`. See
-  `services/api/README.md`.
+- First-time setup: run `pnpm --filter @tallyvis/api db:migrate` first
+  against your `DATABASE_URL`/`DIRECT_URL` Postgres database — required
+  before `seed` (or the app itself) will work, since `getDb()` now only
+  ever verifies the schema is already migrated, never applies migrations
+  itself (see `docs/decisions/0021-postgres-migration.md`'s "Production
+  migration strategy" addendum). Then `pnpm --filter @tallyvis/api seed`
+  creates a demo business, an owner login, and sample quotes — prints the
+  demo login to use signing in to `apps/app`. See `services/api/README.md`.
 - Tests for a single package live next to it
   (`packages/pricing/src/__tests__`), not in the root `tests/` folder.
   `tests/` is reserved for future cross-package/e2e coverage. Note

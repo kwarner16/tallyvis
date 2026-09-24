@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "db:migrate": "tsx src/db/runMigrationsCli.ts",
     "seed": "tsx src/db/seed.ts",
     "waive-installation": "tsx src/db/waiveInstallation.ts"
   },

@@ -315,10 +315,12 @@ every `.sql` file in `db/pg/migrations/` (sorted by filename, so
 recorded — each inside its own real transaction, recording the filename in
 the same transaction so a crash mid-migration can never leave a
 half-applied, half-recorded state. A failure throws with the specific
-filename and underlying error, stopping whatever called it (a deploy
-script, or — for now, mirroring the SQLite version's own "safe to call on
-every process start" design — the app's own startup path once
-`db/pg/client.ts` is actually wired in).
+filename and underlying error, stopping whatever called it. (This section
+originally proposed calling this "on every process start," mirroring the
+SQLite version's design — that turned out to be unsafe on Vercel and was
+reverted; see "Production migration strategy" below for the incident and
+the actual final design: migrations are deploy-time-only, and the app's
+own startup path only ever verifies the schema, never applies to it.)
 
 Five consolidated migration files
 (`0001_core.sql`/`0002_quote_sharing.sql`/`0003_job_outcomes.sql`/
@@ -449,6 +451,129 @@ Postgres database — none of it was written blind.
   early test run fired real Resend API calls against fixture addresses.
   `vitest.config.ts` loads it directly (a ~10-line inline parser, not the
   `dotenv` package, for two known simple values).
+
+## Production migration strategy (addendum — post-deployment incident)
+
+Written after this ADR's original "What remains" list was closed out and
+the app was actually deployed to Vercel with a real Neon database. The
+"Migration system" section above described migrations as safe to run "on
+every process start" — that assumption was never re-validated against
+Vercel specifically, and it was wrong.
+
+**The incident.** Once `db/pg/client.ts`'s `getDb()` was wired to call
+`runMigrations(pool)` lazily on first use (one `migratedPromise` per warm
+process, mirroring the retired SQLite client's own pattern), every
+database-touching request in production — manual login, Google
+login/signup, and estimator analysis alike, since all three eventually
+call `getDb()` — failed identically with:
+
+```
+ENOENT: no such file or directory, scandir '/var/task/services/api/src/db/pg/migrations'
+```
+
+**Root cause, proven from source and Vercel's own bundling behavior, not
+assumed.** `runMigrations` computed its migrations directory at runtime
+(`path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations")`)
+and called `readdirSync` on it to discover which `.sql` files existed.
+Vercel's serverless function bundler (`@vercel/nft`, used by the Next.js
+build) decides what to include in a deployed function by statically
+tracing `import`/`require` statements — it has no way to see that a
+runtime-computed `readdirSync()` call needs a sibling directory of data
+files, because nothing ever `import`s or `require`s those `.sql` files by
+name. They were silently absent from the deployed bundle. Locally this
+was invisible because `pnpm dev`/`pnpm build && pnpm start` run against
+the real, uncompressed source tree, where the `migrations/` directory is
+right there on disk — the failure mode only exists once code runs from a
+Vercel-traced bundle, which is exactly why local success and Vercel
+failure diverged. Confirmed by inspecting `@vercel/nft`'s tracing
+behavior and by the fact that the fix below (removing the runtime
+`readdirSync` dependency from the request path entirely) is what actually
+resolved it, not a bundler-configuration workaround.
+
+**Why this was an architecture problem, not just a bug.** Beyond the
+immediate `ENOENT`, running migrations from `getDb()` was never safe on
+Vercel in the first place: a module-level "have I migrated yet" flag lives
+in ONE warm process's memory, and Vercel routinely runs many concurrent
+instances with no shared memory — so multiple instances could each decide
+independently that they need to run migrations and race each other on
+first traffic after a deploy. A request-time migration also means a
+schema change ships exactly when the first customer request happens to
+trigger it, not on a controlled, observable, revertible schedule, and a
+migration failure would surface as a broken customer request instead of a
+failed, visible deploy step.
+
+**Chosen fix: migrations became a deploy-time-only operation; the request
+path only ever verifies, never mutates.**
+
+- `db/pg/migrate.ts`'s `runMigrations(pool)` still applies migrations, and
+  still only what's missing (idempotent), but now iterates a hardcoded,
+  checked-in manifest (`db/pg/migrations.ts`'s `MIGRATION_FILENAMES`)
+  instead of `readdirSync`-ing the directory — `readFileSync` for a known
+  filename is the only filesystem access left, and it never runs from a
+  Vercel serverless function, only from a real machine with the full
+  source tree.
+- Its only callers now are `db/runMigrationsCli.ts` (the
+  `pnpm --filter @tallyvis/api db:migrate` command — a human or a CI/CD
+  deploy step runs this explicitly, connecting via `DIRECT_URL`, an
+  unpooled connection, since Neon's pooled endpoint isn't suited to a
+  long-lived DDL session) and this package's own test harness
+  (`testDb.ts`, which needs a real schema created before each test file's
+  suite runs and always has full filesystem access under `vitest`).
+- `db/pg/client.ts`'s `getDb()` no longer calls `runMigrations` at all.
+  Instead it calls a new `assertSchemaUpToDate(pool)` once per warm
+  process: a single read-only `SELECT name FROM schema_migrations`,
+  compared against the same `MIGRATION_FILENAMES` manifest. It never
+  touches the filesystem and never mutates the database — just fails
+  loudly, with a specific "which migration(s) are missing, run
+  `db:migrate`" message, if the deployed code expects a schema state the
+  database doesn't have yet. This directly satisfies "an outdated
+  production schema must not be silently accepted" without adding
+  per-request database overhead — the check runs once per warm process
+  (same lazy-singleton-promise pattern the old migration call used),
+  not once per request.
+
+**Concurrency.** Two migration runs against the same schema (e.g. a
+redeploy's own migrate step and a human running `db:migrate` by hand at
+the same time) are serialized by a session-level Postgres advisory lock,
+held for `runMigrations`'s entire duration:
+`pg_advisory_lock(hashtext('tallyvis:migrations'), hashtext(current_schema()))`.
+Advisory locks are scoped **per database, not per schema** (confirmed
+against PostgreSQL's own documentation, `view-pg-locks.html`: "Advisory
+locks are local to each database"), which is exactly why `current_schema()`
+is folded into the lock key rather than using a single fixed key: this
+package's test harness gives every test FILE its own distinct,
+randomly-named schema against the SAME physical database, so a schema-blind
+lock would have serialized the entire parallel test suite. With the
+schema in the key, different test files never contend (different lock
+keys) while production's one real schema always maps to the same key
+(genuine protection). The lock is released in a `finally` and also
+auto-releases if the holding connection drops.
+
+**Why this fits Vercel specifically.** Migrations as an explicit,
+human/deploy-triggered command is the standard pattern for serverless
+platforms with no persistent "run this once at boot" process and no
+shared memory across instances — there is no equivalent of a traditional
+server's single startup hook to lean on. Read-only schema verification at
+request time is cheap (one query, cached per warm process) and gives a
+clear, actionable failure instead of either a filesystem crash or silent
+operation against a schema the code doesn't actually match.
+
+**Deployment procedure.** Before deploying a build that depends on a new
+migration: run `pnpm --filter @tallyvis/api db:migrate` (with `DIRECT_URL`
+— and, for safety, `DATABASE_URL` — pointed at the target database)
+first, confirm it succeeds, then deploy the code. Deploying code ahead of
+its migration is caught (loudly, at the schema-check point, not
+silently) rather than prevented outright — there is no CI gate wired up
+yet to block that ordering mechanically.
+
+**Rollback/failure behavior.** A migration file that fails rolls back its
+own transaction and throws, leaving `schema_migrations` exactly as it was
+before that file started — safe to fix the SQL and re-run `db:migrate`,
+which skips every already-applied file. There is no automatic
+down-migration; rolling back a bad migration means writing and running a
+new forward migration that undoes it, consistent with this repository's
+existing "migrations are forward-only" convention (no `.down.sql` files
+ever existed here, SQLite era included).
 
 ## What remains
 

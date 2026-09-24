@@ -1,5 +1,5 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
-import { runMigrations } from "./migrate";
+import { MIGRATION_FILENAMES } from "./migrations";
 
 /**
  * Phase 1 of production readiness (see
@@ -47,7 +47,7 @@ export interface Queryable {
 }
 
 let pool: Pool | undefined;
-let migratedPromise: Promise<void> | undefined;
+let schemaCheckPromise: Promise<void> | undefined;
 
 function resolveConnectionString(): string {
   const url = process.env.DATABASE_URL;
@@ -117,26 +117,71 @@ export function poolQueryable(pool: Pool): Queryable {
 }
 
 /**
+ * Verifies the connected database already has every migration in
+ * `MIGRATION_FILENAMES` applied — a plain read-only `SELECT`, never the
+ * filesystem, never a schema mutation. Safe to call from a request
+ * handler (unlike the old `runMigrations`, which read real `.sql` files
+ * off disk — absent from a Vercel serverless function's bundle, since
+ * Next.js's output tracing only follows static imports, not a
+ * runtime-computed `readdirSync` path. That mismatch is exactly what
+ * produced `ENOENT: no such file or directory, scandir
+ * '/var/task/.../migrations'` on every database-touching request once
+ * migrations were wired into `getDb()`'s lazy-init path — see
+ * docs/decisions/0021-postgres-migration.md's "Production migration
+ * strategy" addendum for the full incident).
+ *
+ * Migrations are now an explicit, deploy-time-only operation — run
+ * `pnpm --filter @tallyvis/api db:migrate` (see `db/runMigrationsCli.ts`)
+ * BEFORE deploying code that depends on a new migration. This function is the
+ * runtime-side half of that contract: if the deployed code expects a
+ * migration that was never run, fail loudly and specifically here, rather
+ * than either crashing on a missing file (the old bug) or silently
+ * running application logic against a schema it doesn't actually match
+ * (which could corrupt data or return wrong results instead of just
+ * erroring).
+ */
+async function assertSchemaUpToDate(pool: Pool): Promise<void> {
+  let rows: { name: string }[];
+  try {
+    const result = await pool.query<{ name: string }>("SELECT name FROM schema_migrations");
+    rows = result.rows;
+  } catch (err) {
+    throw new Error(
+      `Could not verify the database schema (is "pnpm --filter @tallyvis/api db:migrate" out of date, or has it never been run against this database?): ${describeConnectionError(err)}`,
+    );
+  }
+  const applied = new Set(rows.map((row) => row.name));
+  const missing = MIGRATION_FILENAMES.filter((name) => !applied.has(name));
+  if (missing.length > 0) {
+    throw new Error(
+      `Database schema is behind the deployed code — missing migration(s): ${missing.join(", ")}. Run "pnpm --filter @tallyvis/api db:migrate" against this database before deploying this build.`,
+    );
+  }
+}
+
+/**
  * The process-wide database handle — plays the same role the retired
  * SQLite-era `getDb(): DatabaseSync` did. Stays SYNCHRONOUS (existing
  * callers throughout apps/app do `someRepoFn(getDb(), ...)`, not
  * `someRepoFn(await getDb(), ...)`) — every query (and every
  * `.transaction()` call) issued through the returned `Queryable`
- * transparently awaits the one-time migration run first, so no caller can
- * ever observe a partially-migrated schema, but no caller needs its own
- * separate "wait for ready" step either.
+ * transparently awaits the one-time (per warm process) schema check
+ * first, so no caller needs its own separate "wait for ready" step. That
+ * check never mutates the database and never touches the filesystem —
+ * see `assertSchemaUpToDate`'s own comment for why that distinction
+ * matters on Vercel specifically.
  */
 export function getDb(): Queryable {
   const p = getRawPool();
-  migratedPromise ??= runMigrations(p);
+  schemaCheckPromise ??= assertSchemaUpToDate(p);
   const wrapped = poolQueryable(p);
   return {
     query: async (text, params = []) => {
-      await migratedPromise;
+      await schemaCheckPromise;
       return wrapped.query(text, params);
     },
     transaction: async (fn) => {
-      await migratedPromise;
+      await schemaCheckPromise;
       return wrapped.transaction(fn);
     },
   };
@@ -158,5 +203,5 @@ export function describeConnectionError(err: unknown): string {
 export async function closePool(): Promise<void> {
   await pool?.end();
   pool = undefined;
-  migratedPromise = undefined;
+  schemaCheckPromise = undefined;
 }
