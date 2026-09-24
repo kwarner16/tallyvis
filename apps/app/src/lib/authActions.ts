@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import {
   getDb,
   logIn,
@@ -97,7 +98,13 @@ export async function requestPasswordResetAction(
   formData: FormData,
 ): Promise<AuthActionState & { submitted?: boolean }> {
   const email = String(formData.get("email") ?? "");
-  await requestPasswordReset(getDb(), email, (token) => `${APP_URL}/reset-password?token=${token}`);
+  const { finished } = await requestPasswordReset(getDb(), email, (token) => `${APP_URL}/reset-password?token=${token}`);
+  // Keeps the function alive long enough for the email send to actually
+  // complete without making the browser wait for it — see
+  // requestPasswordReset's own comment for the production bug this fixes
+  // (Vercel can freeze the process right after the response is sent,
+  // which silently drops a truly fire-and-forget promise).
+  after(() => finished);
   return { submitted: true };
 }
 

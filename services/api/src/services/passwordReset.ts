@@ -92,14 +92,30 @@ function isThrottled(email: string): boolean {
  * observable side effects (e.g. an attacker who also has read access to
  * server logs, or who can observe outbound network connections from this
  * process) — out of scope for a response-timing fix.
+ *
+ * Returns `{ finished }` rather than firing the send truly detached: on
+ * Vercel, a serverless function's process can be frozen the moment its
+ * response is sent, which does not wait for an unawaited promise to
+ * settle — an earlier version of this function did `void sendEmail(...)`
+ * with no way for the caller to keep the process alive, and password-reset
+ * emails were confirmed in production to never actually leave the process
+ * (unlike `sendQuoteEmail`, which `await`s its send and therefore always
+ * ran to completion before its own Server Action returned). `finished`
+ * lets the caller (`apps/app`'s `requestPasswordResetAction`) register the
+ * still-in-flight send with Next.js's `after()`, which Vercel wires to
+ * `waitUntil()` — keeping the function alive for the send WITHOUT making
+ * the caller (and therefore the browser) wait for it, preserving the exact
+ * timing-normalization property above. `services/api` itself never imports
+ * `next/server` — that stays `apps/app`'s responsibility per CLAUDE.md's
+ * module boundary rules.
  */
 export async function requestPasswordReset(
   db: Queryable,
   email: string,
   buildResetUrl: (rawToken: string) => string,
-): Promise<void> {
+): Promise<{ finished: Promise<void> }> {
   const normalized = email.trim().toLowerCase();
-  if (isThrottled(normalized)) return;
+  if (isThrottled(normalized)) return { finished: Promise.resolve() };
   lastRequestAt.set(normalized, Date.now());
 
   const record = await getUserWithPasswordHashByEmail(db, normalized);
@@ -120,7 +136,7 @@ export async function requestPasswordReset(
   if (!record) {
     await db.query("SELECT 1");
     await db.query("SELECT 1");
-    return; // Same silent outcome as a real account — no enumeration signal either way.
+    return { finished: Promise.resolve() }; // Same silent outcome as a real account — no enumeration signal either way.
   }
 
   await invalidateActiveTokensForUser(db, record.user.id);
@@ -128,8 +144,7 @@ export async function requestPasswordReset(
   await insertPasswordResetToken(db, record.user.id, tokenHash, expiresAt);
 
   const resetUrl = buildResetUrl(rawToken);
-  // Deliberately NOT awaited — see this function's own comment above.
-  void sendEmail(
+  const finished = sendEmail(
     {
       to: normalized,
       subject: "Reset your Tallyvis password",
@@ -137,9 +152,14 @@ export async function requestPasswordReset(
       html: buildPasswordResetHtml(resetUrl),
     },
     "password-reset",
-  ).catch((err) => {
-    console.error("requestPasswordReset: background email send failed:", err);
-  });
+  ).then(
+    () => {},
+    (err: unknown) => {
+      console.error("requestPasswordReset: background email send failed:", err);
+    },
+  );
+
+  return { finished };
 }
 
 /**

@@ -8,6 +8,7 @@ import { cn } from "@tallyvis/ui";
 import { deriveEstimatorTheme } from "@tallyvis/config";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { getPublicBusinessAction } from "@/lib/publicActions";
+import { MARKETING_URL } from "@/lib/urls";
 
 const STEPS = [
   { key: "property", label: "Property", href: "/estimate/property" },
@@ -140,6 +141,34 @@ export function StepShell({ children }: StepShellProps) {
       </header>
 
       <main className="flex-1">{children}</main>
+
+      <PoweredByTallyvis embedded={Boolean(embedId)} />
+    </div>
+  );
+}
+
+/**
+ * Part 14 UX pass: on a business's own embedded estimator (`embedId` set —
+ * see `public/embed.js`), this stays deliberately subtle — the primary
+ * identity here is the embedding business's, not Tallyvis's (see
+ * `useEstimatorBrandTheme` above) — and opens in a new tab rather than
+ * navigating so clicking it can never carry a customer away from the
+ * business's own website inside their embedded iframe. On the direct,
+ * unembedded `/estimate/*` wizard (the marketing site's bare fallback —
+ * see `getDefaultPublicBusiness`), it's a normal, clearer link back to the
+ * marketing site, since there's no third-party page to protect here.
+ */
+function PoweredByTallyvis({ embedded }: { embedded: boolean }) {
+  return (
+    <div className={cn("pt-6 text-center", embedded ? "text-[11px] text-ink-faint/70" : "text-xs text-ink-faint")}>
+      <a
+        href={MARKETING_URL}
+        target={embedded ? "_blank" : undefined}
+        rel={embedded ? "noopener noreferrer" : undefined}
+        className="hover:text-ink-soft"
+      >
+        Powered by Tallyvis
+      </a>
     </div>
   );
 }

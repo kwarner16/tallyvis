@@ -49,8 +49,48 @@ describe("requestPasswordReset", () => {
     const db = getDb();
     const capture = captureToken();
 
-    await expect(requestPasswordReset(db, "nobody@nowhere.example", capture.buildResetUrl)).resolves.toBeUndefined();
+    const { finished } = await requestPasswordReset(db, "nobody@nowhere.example", capture.buildResetUrl);
+    await expect(finished).resolves.toBeUndefined();
     expect(capture.get()).toBe(""); // never generates or sends anything for an unknown account
+  });
+});
+
+describe("requestPasswordReset — background send survives the caller returning early", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Regression: production confirmed password-reset emails never actually
+   * left the process, while `sendQuoteEmail` (which `await`s its send)
+   * always worked — because this function used to fire the send with a
+   * bare `void`, giving the caller no way to keep a serverless function
+   * alive for it (see this function's own comment in passwordReset.ts).
+   * `finished` is the fix's actual contract: it must be the SAME promise
+   * `sendEmail` returns (awaiting it must observe the real send outcome),
+   * not a decoy that resolves independently of the real work.
+   */
+  it("returns quickly while `finished` still reflects the real send outcome once awaited", async () => {
+    const { db, email } = await setUp("finished-contract@sparkle.example");
+    const notifications = await import("../notifications");
+    let resolveSend!: () => void;
+    const sendPromise = new Promise<{ providerMessageId?: string }>((resolve) => {
+      resolveSend = () => resolve({});
+    });
+    vi.spyOn(notifications, "sendEmail").mockReturnValue(sendPromise);
+
+    const capture = captureToken();
+    const { finished } = await requestPasswordReset(db, email, capture.buildResetUrl);
+
+    let settled = false;
+    void finished.then(() => {
+      settled = true;
+    });
+    expect(settled).toBe(false); // the outer call already returned; the send is still in flight
+
+    resolveSend();
+    await finished;
+    expect(settled).toBe(true); // awaiting `finished` genuinely observes the send completing
   });
 });
 
@@ -65,7 +105,8 @@ describe("requestPasswordReset — enumeration/reliability hardening", () => {
     vi.spyOn(notifications, "sendEmail").mockRejectedValue(new Error("provider is down"));
 
     const capture = captureToken();
-    await expect(requestPasswordReset(db, email, capture.buildResetUrl)).resolves.toBeUndefined();
+    const { finished } = await requestPasswordReset(db, email, capture.buildResetUrl);
+    await expect(finished).resolves.toBeUndefined(); // the failed send is caught/logged, never rejects `finished`
     // The token was still issued — a real reset link works even if this particular delivery attempt fails.
     expect(capture.get().length).toBeGreaterThan(20);
   });

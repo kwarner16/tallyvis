@@ -81,6 +81,12 @@ function ResetPasswordForm() {
           {pending ? "Saving…" : "Reset password"}
         </button>
       </form>
+
+      <p className="text-center text-sm text-ink-faint">
+        <Link href="/login" className="font-medium text-accent-strong hover:text-accent">
+          Back to login
+        </Link>
+      </p>
     </div>
   );
 }
