@@ -177,6 +177,76 @@ describe("handleStripeWebhook — customer.subscription.created (fixes the statu
     expect(final.providerSubscriptionId).toBe("sub_seq");
   });
 
+  it("REVERSED order — customer.subscription.created arrives BEFORE checkout.session.completed — still resolves via the subscription's own metadata.businessId, never silently dropped (2026-09 production incident: Stripe does not guarantee delivery order across different event types, only same-object events are best-effort ordered)", async () => {
+    const db = getDb();
+    const session = await newBusiness(db);
+    await upsertSubscription(db, session.businessId, { planId: "pro", status: "incomplete" });
+
+    // No checkout.session.completed has been processed yet, so
+    // provider_subscription_id is still unset on this row — the ONLY way
+    // to resolve it is the subscription object's own
+    // subscription_data.metadata.businessId (see billing/providers/stripe.ts).
+    const subCreatedFirst = JSON.stringify({
+      id: "evt_reversed_sub_created",
+      created: NOW_SECONDS,
+      type: "customer.subscription.created",
+      data: {
+        object: { id: "sub_reversed", status: "trialing", metadata: { businessId: session.businessId, planId: "pro" } },
+      },
+    });
+    await handleStripeWebhook(db, subCreatedFirst, signPayload(subCreatedFirst), SECRET);
+
+    const afterFirstEvent = (await getSubscription(db, session))!;
+    expect(afterFirstEvent.status).toBe("trialing");
+    // Backfilled by the fallback path, so every LATER event for this same
+    // subscription is found directly by id, not by repeating the fallback.
+    expect(afterFirstEvent.providerSubscriptionId).toBe("sub_reversed");
+
+    // checkout.session.completed arrives second — must not regress
+    // anything the fallback already correctly resolved.
+    const checkoutSecond = JSON.stringify({
+      id: "evt_reversed_checkout",
+      created: NOW_SECONDS + 1,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          customer: "cus_reversed",
+          subscription: "sub_reversed",
+          metadata: { businessId: session.businessId, planId: "pro" },
+        },
+      },
+    });
+    await handleStripeWebhook(db, checkoutSecond, signPayload(checkoutSecond), SECRET);
+
+    const final = (await getSubscription(db, session))!;
+    expect(final.status).toBe("trialing");
+    expect(final.billingCustomerId).toBe("cus_reversed");
+    expect(final.providerSubscriptionId).toBe("sub_reversed");
+  });
+
+  it("does NOT use the metadata fallback when the event's subscription id already matches an existing row by id — no redundant write", async () => {
+    const db = getDb();
+    const session = await newBusiness(db);
+    await upsertSubscription(db, session.businessId, {
+      planId: "growth",
+      status: "incomplete",
+      providerSubscriptionId: "sub_already_known",
+    });
+
+    // Deliberately WRONG businessId in metadata — if the fallback were
+    // used here despite the id already matching, this would prove it by
+    // resolving to the wrong result. It must not even be consulted.
+    const payload = JSON.stringify({
+      id: "evt_no_fallback_needed",
+      created: NOW_SECONDS,
+      type: "customer.subscription.updated",
+      data: { object: { id: "sub_already_known", status: "active", metadata: { businessId: "business_nonexistent" } } },
+    });
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+
+    expect((await getSubscription(db, session))?.status).toBe("active");
+  });
+
   it("persists Stripe's own trial_start/trial_end onto our row (regression: these were never written for a real webhook-driven subscription, so the dashboard's 'X of 7 days remaining' UI silently showed nothing for every real customer)", async () => {
     const db = getDb();
     const session = await newBusiness(db);

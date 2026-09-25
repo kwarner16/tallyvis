@@ -68,8 +68,30 @@ async function applyStripeSubscription(db: Queryable, event: StripeEvent, forced
     cancel_at_period_end?: boolean;
     cancel_at?: number | null;
     items?: { data?: Array<{ price?: { id?: string } }> };
+    metadata?: { businessId?: string };
   };
-  const existing = await subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
+
+  // Stripe does not guarantee delivery order ACROSS event types — only
+  // same-object events are (best-effort) ordered — so this event can
+  // legitimately arrive before the `checkout.session.completed` handler
+  // has had a chance to backfill `provider_subscription_id` onto the
+  // row. Without this fallback, that race permanently drops the event
+  // (silently returning below) and the subscription is stuck at
+  // whatever status `createCheckoutSessionForPlan` initialized it to —
+  // exactly the "Stripe says trialing, TallyVis says incomplete" bug
+  // this fixes (2026-09 incident). `subscription_data.metadata` is set
+  // on every Checkout-created subscription (see
+  // billing/providers/stripe.ts), so it's always available here as a
+  // second, reliable way to find the right row — `providerSubscriptionId`
+  // is passed through explicitly below so this row is found directly by
+  // id on every subsequent event, not just future ones that happen to
+  // repeat the fallback.
+  let existing = await subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
+  let foundByMetadataFallback = false;
+  if (!existing && stripeSub.metadata?.businessId) {
+    existing = await subscriptionsRepo.getSubscriptionByBusinessId(db, stripeSub.metadata.businessId);
+    foundByMetadataFallback = existing !== undefined;
+  }
   if (!existing) return;
   if (isStaleOrReplayed(event, existing)) return;
 
@@ -111,6 +133,12 @@ async function applyStripeSubscription(db: Queryable, event: StripeEvent, forced
   await subscriptionsRepo.upsertSubscription(db, existing.businessId, {
     planId: resolvedPlanId ?? existing.planId,
     status,
+    // Only set when this event was resolved via the metadata fallback
+    // above (the normal id-lookup path already found this row BY its
+    // provider_subscription_id, so it's already correct and this is
+    // omitted to avoid a redundant write) — backfills the column so
+    // every later event for this same subscription is found directly.
+    providerSubscriptionId: foundByMetadataFallback ? stripeSub.id : undefined,
     trialStartedAt: stripeSub.trial_start ? new Date(stripeSub.trial_start * 1000).toISOString() : undefined,
     trialEndsAt: stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : undefined,
     currentPeriodStart: stripeSub.current_period_start

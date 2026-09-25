@@ -218,6 +218,30 @@ describe("hasProductAccess — server-authoritative gate", () => {
       }),
     ).toBe(false);
   });
+
+  function subscriptionWithStatus(status: Subscription["status"]): Subscription {
+    return {
+      id: "sub_1",
+      businessId: "biz_1",
+      planId: "starter",
+      status,
+      cancelAtPeriodEnd: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  it("grants access for 'active' (Part 5 status matrix)", () => {
+    expect(hasProductAccess(subscriptionWithStatus("active"))).toBe(true);
+  });
+
+  it("denies access for 'incomplete' (Part 5 status matrix) — this is exactly the state a checkout stays in until a webhook confirms trialing/active", () => {
+    expect(hasProductAccess(subscriptionWithStatus("incomplete"))).toBe(false);
+  });
+
+  it("denies access for 'expired' (Part 5 status matrix — covers Stripe's unpaid/incomplete_expired/paused, already mapped to this by billingWebhooks.ts)", () => {
+    expect(hasProductAccess(subscriptionWithStatus("expired"))).toBe(false);
+  });
 });
 
 describe("createQuote — subscription gate integration", () => {
@@ -393,12 +417,15 @@ describe("createCheckoutSessionForPlan", () => {
     expect(callArg.customerEmail).toBe("owner@sparkle.example");
   });
 
-  it("reuses an already-linked Stripe Customer id instead of customer_email, avoiding a duplicate Customer", async () => {
+  it("reuses an already-linked Stripe Customer id instead of customer_email, avoiding a duplicate Customer (reactivating a genuinely ended subscription)", async () => {
     const { db, session } = await setUp();
     const { upsertSubscription } = await import("../repositories/subscriptions");
+    // "canceled", not "trialing"/"active" — the reactivation case the
+    // duplicate-subscription guard below still allows a fresh Checkout
+    // for. See that guard's own test for the case it blocks.
     await upsertSubscription(db, session.businessId, {
       planId: "starter",
-      status: "trialing",
+      status: "canceled",
       billingCustomerId: "cus_already_linked",
     });
 
@@ -509,6 +536,75 @@ describe("createCheckoutSessionForPlan", () => {
     const secondKey = spy.mock.calls[1]![0].idempotencyKey;
 
     expect(secondKey).not.toBe(firstKey);
+  });
+
+  describe("duplicate-subscription guard (2026-09 incident fix)", () => {
+    it("refuses to start a new Checkout when a real Stripe Customer already has a trialing subscription on file", async () => {
+      const { db, session } = await setUp();
+      const { upsertSubscription } = await import("../repositories/subscriptions");
+      await upsertSubscription(db, session.businessId, {
+        planId: "growth",
+        status: "trialing",
+        billingCustomerId: "cus_already_subscribed",
+        providerSubscriptionId: "sub_already_subscribed",
+      });
+      const billing = await import("../billing");
+      const spy = vi.spyOn(billing, "createCheckoutSession");
+
+      await expect(
+        createCheckoutSessionForPlan(db, session, "starter", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).rejects.toThrow(/already have a subscription/i);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("refuses even when the local status is merely 'incomplete' but a real Stripe Customer already exists — re-running Checkout while stuck in that state must not create yet another parallel subscription", async () => {
+      const { db, session } = await setUp();
+      const { upsertSubscription } = await import("../repositories/subscriptions");
+      await upsertSubscription(db, session.businessId, {
+        planId: "growth",
+        status: "incomplete",
+        billingCustomerId: "cus_stuck_incomplete",
+      });
+      const billing = await import("../billing");
+      const spy = vi.spyOn(billing, "createCheckoutSession");
+
+      await expect(
+        createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).rejects.toThrow(/already have a subscription/i);
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("still allows a fresh Checkout once Stripe confirmed the previous subscription actually ended (canceled)", async () => {
+      const { db, session } = await setUp();
+      const { upsertSubscription } = await import("../repositories/subscriptions");
+      await upsertSubscription(db, session.businessId, {
+        planId: "starter",
+        status: "canceled",
+        billingCustomerId: "cus_formerly_subscribed",
+      });
+      const billing = await import("../billing");
+      vi.spyOn(billing, "createCheckoutSession").mockResolvedValue({
+        id: "cs_reactivate",
+        url: "https://checkout.stripe.example/cs_reactivate",
+      });
+
+      await expect(
+        createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).resolves.toEqual({ url: "https://checkout.stripe.example/cs_reactivate" });
+    });
+
+    it("still allows the very first checkout for a business with no Stripe Customer yet", async () => {
+      const { db, session } = await setUp();
+      const billing = await import("../billing");
+      vi.spyOn(billing, "createCheckoutSession").mockResolvedValue({
+        id: "cs_first_ever",
+        url: "https://checkout.stripe.example/cs_first_ever",
+      });
+
+      await expect(
+        createCheckoutSessionForPlan(db, session, "starter", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).resolves.toEqual({ url: "https://checkout.stripe.example/cs_first_ever" });
+    });
   });
 });
 

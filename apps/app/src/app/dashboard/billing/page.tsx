@@ -124,11 +124,29 @@ export default async function BillingPage({
           </p>
         ) : null}
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "outline" })}>
-            {effectiveStatus === "active" ? "Change plan" : "Reactivate / change plan"}
-          </Link>
+          {/*
+            A business with a real Stripe Customer already on file and a
+            still-live subscription (trialing/active) must change plans
+            through the Customer Portal (below), which updates that SAME
+            subscription's price — never by starting a new Checkout
+            here, which `createCheckoutSessionForPlan` now refuses
+            server-side anyway (see its own comment: re-running Checkout
+            while already subscribed used to silently create a second,
+            parallel real Stripe subscription — 2026-09 incident). Only
+            offer a fresh Checkout when there's genuinely nothing live to
+            manage: no Customer yet, or Stripe confirmed the previous
+            subscription actually ended.
+          */}
+          {subscription.billingCustomerId && (effectiveStatus === "trialing" || effectiveStatus === "active") ? null : (
+            <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "outline" })}>
+              {effectiveStatus === "active" ? "Change plan" : "Reactivate / change plan"}
+            </Link>
+          )}
           {subscription.billingCustomerId ? <ManageBillingButton /> : null}
         </div>
+        {subscription.billingCustomerId && (effectiveStatus === "trialing" || effectiveStatus === "active") ? (
+          <p className="mt-2 text-xs text-ink-faint">To switch plans, use &ldquo;Manage billing&rdquo; below.</p>
+        ) : null}
         {!billingConfigured() ? (
           <p className="mt-3 text-xs text-ink-faint">
             Billing isn&rsquo;t configured in this environment — trial state is fully functional; paid

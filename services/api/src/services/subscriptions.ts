@@ -243,6 +243,30 @@ export async function createCheckoutSessionForPlan(
     const priceId = resolveStripePriceId(plan.id);
     const existing = await subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
 
+    // Refuse to start a SECOND real Stripe subscription for a business
+    // that already has a real Stripe Customer on file, unless its
+    // previous subscription has actually ended (Stripe confirmed
+    // "canceled"/"expired" — never inferred from a merely-stale-looking
+    // local status, since "incomplete" can legitimately mean "a webhook
+    // just hasn't caught up yet" rather than "nothing real exists").
+    // Found during a real production incident (2026-09): re-running
+    // Checkout for a business that was already subscribed created a
+    // brand-new Stripe Customer + Subscription every time (Checkout
+    // mode "subscription" has no built-in "one active subscription per
+    // customer" limit), leaving multiple parallel real subscriptions
+    // that would each try to bill independently once their trials
+    // ended. Changing plans while already subscribed must go through
+    // the Stripe Customer Portal (`createBillingPortalSession`), which
+    // updates the SAME subscription's price instead of creating a new
+    // one — see `applyStripeSubscription` in billingWebhooks.ts for how
+    // a portal-driven price switch is already reconciled back to this
+    // business's own `planId`.
+    if (existing?.billingCustomerId && existing.status !== "canceled" && existing.status !== "expired") {
+      throw new Error(
+        "You already have a subscription on file. Use “Manage billing” to change your plan instead of starting a new checkout.",
+      );
+    }
+
     const result = await providerCreateCheckoutSession({
       mode: "subscription",
       priceId,
