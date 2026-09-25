@@ -40,6 +40,7 @@ describe("runMigrations (Postgres)", () => {
       expect(tables).toEqual(
         [
           "auth_identities",
+          "benchmark_cases",
           "billing_charges",
           "businesses",
           "customers",

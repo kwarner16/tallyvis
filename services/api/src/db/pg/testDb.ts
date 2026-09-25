@@ -35,6 +35,7 @@ export interface TestDb {
 }
 
 const APP_TABLES = [
+  "benchmark_cases",
   "job_outcomes",
   "quote_share_tokens",
   "auth_identities",

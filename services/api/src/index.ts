@@ -68,6 +68,25 @@ export {
   type ObservationComparisonRow,
 } from "./services/jobOutcomes";
 
+// Final validation & launch-readiness phase (2026-09) — internal estimator
+// benchmark harness (/dashboard/testing). See services/benchmarkCases.ts.
+export {
+  saveBenchmarkCase,
+  listBenchmarkCases,
+  deleteBenchmarkCase,
+  computeBenchmarkMetrics,
+  type BenchmarkCondition,
+  type BenchmarkCase,
+  type BenchmarkGroundTruth,
+  type BenchmarkAiSummary,
+  type BenchmarkConfirmedResult,
+  type SaveBenchmarkCaseInput,
+  type BenchmarkMetrics,
+  type BenchmarkConditionBreakdown,
+  type EvidenceTierBreakdown,
+  type FollowUpPhotoStats,
+} from "./services/benchmarkCases";
+
 export {
   getShareLinkStatus,
   generateShareLink,

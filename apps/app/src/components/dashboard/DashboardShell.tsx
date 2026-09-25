@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Quotes", href: "/dashboard/quotes" },
   { label: "Job outcomes", href: "/dashboard/job-outcomes" },
+  { label: "AI Testing", href: "/dashboard/testing" },
   { label: "Pricing", href: "/dashboard/pricing" },
   { label: "Website", href: "/dashboard/website" },
   { label: "Billing", href: "/dashboard/billing" },

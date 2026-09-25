@@ -6,6 +6,42 @@
 
 export type ConfidenceLevel = "high" | "medium" | "low";
 
+/**
+ * A fixed, reviewed set of test-condition tags for the internal estimator
+ * benchmark harness (`/dashboard/testing`, final validation & launch-
+ * readiness phase, 2026-09). Lives here — not in `services/api`, where the
+ * rest of that harness's types live — specifically so a client component
+ * can import it directly: this package is the one thing in the repo
+ * guaranteed to depend on nothing (see this file's own top comment and
+ * CLAUDE.md's repository-structure notes), so it's safe to pull into a
+ * browser bundle. `services/api`'s benchmark-harness code imports the
+ * `BenchmarkCondition` type from here rather than redefining it.
+ */
+export const BENCHMARK_CONDITIONS = [
+  "clear_daylight",
+  "overcast",
+  "bright_sun",
+  "glare_reflection",
+  "dusk",
+  "low_light",
+  "distant_photo",
+  "close_up_photo",
+  "mixed_distances",
+  "trees_bushes",
+  "partial_obstruction",
+  "blurry_image",
+  "poor_quality_image",
+  "multi_story",
+  "townhouse",
+  "neighboring_property_visible",
+  "missing_property_side",
+  "unusual_grouped_bay_windows",
+  "glass_doors",
+  "screens",
+  "other",
+] as const;
+export type BenchmarkCondition = (typeof BENCHMARK_CONDITIONS)[number];
+
 export type AccessibilityLevel = "easy" | "moderate" | "difficult";
 
 export type ConditionLevel = "good" | "fair" | "poor";
