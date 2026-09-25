@@ -174,11 +174,35 @@ export async function createQuotePublic(db: Queryable, businessId: string, input
  * short of "high" (this already accounts for unresolved core fields AND
  * `reconcile.ts`'s evidence-driven downgrade — see
  * docs/decisions/0022/0023), or the AI's own evidence assessment flagged
- * the photo coverage itself as insufficient even if confidence math didn't
- * separately catch it (belt-and-suspenders: confidence is derived FROM
- * evidence today, but this function does not assume that always stays
- * true). A quote with no AI observation at all (manual entry) has already
- * been reviewed by whoever typed it in, so it's never escalated here.
+ * the photo coverage as genuinely `"insufficient"` — not merely
+ * `"usable_with_uncertainty"` — even if confidence math didn't separately
+ * catch it (belt-and-suspenders for `"insufficient"` specifically: that
+ * tier means the photos may not show enough of the property for ANYONE,
+ * including the person confirming a number, to know it's the true total —
+ * see reconcile.ts's own "please confirm the full count or add more
+ * photos" note — so it stays a meaningful unresolved condition even after
+ * confirmation). A quote with no AI observation at all (manual entry) has
+ * already been reviewed by whoever typed it in, so it's never escalated
+ * here.
+ *
+ * `"usable_with_uncertainty"` alone is deliberately NOT escalated here
+ * (launch-readiness review, 2026-09): it's the AI's own middle tier for
+ * "imperfect coverage, but still a usable basis for a value" — distinct
+ * from `"insufficient"`. Escalating on it unconditionally meant a quote
+ * stayed forced into `needs_review` purely because of a HISTORICAL evidence
+ * gap even after a customer fully confirmed every pricing-critical field
+ * (`/estimate/confirm` only caps confidence below "high" for strictly
+ * `"insufficient"` evidence, matching this), or after a business reviewed
+ * and saved a quote themselves (the dashboard's "New quote" flow always
+ * records confidence "high" on save — see `NewQuoteClient.tsx` — precisely
+ * because whatever's on screen when a human clicks Save has been reviewed).
+ * That violated the "historical uncertainty alone should not require
+ * review if the problem was subsequently resolved" principle: once
+ * `analysis.metadata.confidence` is genuinely "high" — which, for both
+ * callers, already factors in unresolved fields and the evidence tier
+ * itself (see `reconcile.ts`'s `confidenceFromEvidence` and the confirm
+ * page's own cap) — nothing pricing-relevant remains unresolved, and the
+ * quote is eligible for automatic processing like any other.
  *
  * V1 default, deliberately conservative rather than configurable: every
  * business gets this behavior uniformly today. A future per-business
@@ -193,7 +217,7 @@ export function determineInitialQuoteStatus(
 ): QuoteStatus {
   if (!aiObservation) return "new";
   if (analysis.metadata.confidence !== "high") return "needs_review";
-  if (aiObservation.evidence.overallEvidence !== "sufficient") return "needs_review";
+  if (aiObservation.evidence.overallEvidence === "insufficient") return "needs_review";
   return "new";
 }
 

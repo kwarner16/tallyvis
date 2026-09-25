@@ -76,6 +76,20 @@ describe("determineInitialQuoteStatus — pure policy", () => {
     });
     expect(determineInitialQuoteStatus(analysisWith("high"), highConfidenceButBadEvidence)).toBe("needs_review");
   });
+
+  it("stays 'new' for 'usable_with_uncertainty' evidence once confidence is genuinely high (historical coverage uncertainty was resolved by confirmation, not a permanent review trigger)", () => {
+    const resolvedAfterConfirmation = observation({
+      evidence: { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: ["distance"] },
+    });
+    expect(determineInitialQuoteStatus(analysisWith("high"), resolvedAfterConfirmation)).toBe("new");
+  });
+
+  it("still escalates 'usable_with_uncertainty' evidence when confidence was never actually resolved to high", () => {
+    const stillUncertain = observation({
+      evidence: { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: ["distance"] },
+    });
+    expect(determineInitialQuoteStatus(analysisWith("medium"), stillUncertain)).toBe("needs_review");
+  });
 });
 
 async function setUp() {
@@ -129,6 +143,16 @@ describe("createQuotePublic — escalation wired end-to-end", () => {
     const { db } = await setUp();
     const business = (await getDefaultPublicBusiness(db))!;
     const quote = await createQuotePublic(db, business.id, sampleInput(undefined, "low"));
+    expect(quote.status).toBe("new");
+  });
+
+  it("saves a quote with merely 'usable_with_uncertainty' evidence as 'new' once confirmation resolved confidence to high", async () => {
+    const { db } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    const resolvedAfterConfirmation = observation({
+      evidence: { coverage: "partial", overallEvidence: "usable_with_uncertainty", issues: ["distance"] },
+    });
+    const quote = await createQuotePublic(db, business.id, sampleInput(resolvedAfterConfirmation, "high"));
     expect(quote.status).toBe("new");
   });
 });
