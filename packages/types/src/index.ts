@@ -208,6 +208,16 @@ export interface Business {
   brandColor?: string;
   /** Set whenever the embed route actually loads for this business — the dashboard's best-effort "is this installed" signal, never a guarantee. */
   embedLastSeenAt?: string;
+  /**
+   * True only for a brand-new Google signup that hasn't yet confirmed a
+   * real business name (a Google signup starts with a placeholder — see
+   * services/googleAuth.ts's `deriveBusinessName`) — never true for a
+   * password signup, which always collects a real name upfront. The
+   * dashboard requires a one-time onboarding step while this is true and
+   * clears it once completed; a returning Google user never sees it
+   * again. See docs/decisions and the 2026-09 onboarding-gap fix.
+   */
+  needsOnboarding: boolean;
 }
 
 export type PropertyType = "single-family" | "townhouse" | "other";

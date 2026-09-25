@@ -102,6 +102,22 @@ describe("runMigrations (Postgres)", () => {
     }
   });
 
+  it("businesses.needs_onboarding is a real boolean, defaulting to false", async () => {
+    const testDb = await createTestDb();
+    try {
+      await testDb.db.query(
+        `INSERT INTO businesses (id, name, email, phone, service_area, default_industry, created_at, public_embed_id)
+         VALUES ('biz_onb', 'Onboarding Co', 'owner@onb.example', '', '', 'window-cleaning', '2026-01-01T00:00:00.000Z', 'embed_onb')`,
+      );
+      const result = await testDb.db.query<{ needs_onboarding: boolean }>(
+        `SELECT needs_onboarding FROM businesses WHERE id = 'biz_onb'`,
+      );
+      expect(result.rows[0]?.needs_onboarding).toBe(false);
+    } finally {
+      await dropTestDb(testDb);
+    }
+  });
+
   it("quote_share_tokens allows at most one active (non-revoked) token per quote — the partial unique index", async () => {
     const testDb = await createTestDb();
     try {

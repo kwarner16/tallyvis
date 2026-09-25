@@ -140,7 +140,7 @@ async function createAccountFromGoogle(db: Queryable, identity: VerifiedGoogleId
 
   try {
     return await db.transaction(async (tx) => {
-      const business = await createBusiness(tx, { name: businessName, email: identity.email });
+      const business = await createBusiness(tx, { name: businessName, email: identity.email, needsOnboarding: true });
       await createInitialPricingConfiguration(tx, business.id, windowCleaningDefaultPricingRules);
       const user = await createUser(tx, business.id, identity.email, null);
       await createAuthIdentity(tx, user.id, {

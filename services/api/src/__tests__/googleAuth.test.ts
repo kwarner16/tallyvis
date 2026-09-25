@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { signInWithGoogle, GoogleSignInError } from "../services/googleAuth";
+import { completeOnboarding } from "../services/business";
 import { getIdentityByProviderAccountId } from "../repositories/authIdentities";
+import { getBusinessById } from "../repositories/businesses";
 import { validateSession } from "../auth/session";
 import type { VerifiedGoogleIdentity } from "../auth/googleOAuth";
 
@@ -47,6 +49,14 @@ describe("signInWithGoogle — fresh sign-up (no existing identity, no session, 
     // Just needs to be non-empty and not the raw email — exact wording isn't a policy, it's a starter default the owner can rename.
     expect(outcome.session.businessId).toBeTruthy();
   });
+
+  it("marks a brand-new Google signup as needing onboarding (2026-09 fix) — the dashboard requires a real business name/optional password before showing the real dashboard", async () => {
+    const db = getDb();
+    const outcome = await signInWithGoogle(db, identity());
+    if (outcome.kind !== "signup") throw new Error("unreachable");
+    const business = await getBusinessById(db, outcome.session.businessId);
+    expect(business?.needsOnboarding).toBe(true);
+  });
 });
 
 describe("signInWithGoogle — email collision with an existing (non-Google) account, no active session", () => {
@@ -72,6 +82,19 @@ describe("signInWithGoogle — returning Google user (identity already linked)",
     expect(second.kind).toBe("login");
     expect(second.session.userId).toBe(first.session.userId);
     expect(second.session.businessId).toBe(first.session.businessId);
+  });
+
+  it("a returning login never re-sets needsOnboarding once it's been cleared — a Google user who already completed onboarding never sees it again", async () => {
+    const db = getDb();
+    const first = await signInWithGoogle(db, identity());
+    if (first.kind !== "signup") throw new Error("unreachable");
+
+    await completeOnboarding(db, first.session, { businessName: "Real Business Name" });
+
+    await signInWithGoogle(db, identity());
+    const business = await getBusinessById(db, first.session.businessId);
+    expect(business?.needsOnboarding).toBe(false);
+    expect(business?.name).toBe("Real Business Name");
   });
 });
 

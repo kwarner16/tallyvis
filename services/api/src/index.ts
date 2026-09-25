@@ -14,6 +14,7 @@ export {
   logOut,
   resolveSession,
   getCurrentUser,
+  setPassword,
   type SignUpInput,
   type LogInInput,
   type AuthResult,
@@ -23,10 +24,12 @@ export {
 export {
   getCurrentBusiness,
   updateCurrentBusiness,
+  completeOnboarding,
   getDefaultPublicBusiness,
   resolveEmbedBusiness,
   resolvePublicBusinessSummary,
   type UpdateBusinessInput,
+  type CompleteOnboardingInput,
 } from "./services/business";
 
 export {

@@ -4,7 +4,13 @@ import { hashPassword, verifyPassword, DUMMY_PASSWORD_HASH_FOR_TIMING_SAFETY } f
 import type { Queryable } from "../db/pg/client";
 import { isUniqueViolation } from "../db/pg/client";
 import { createBusiness } from "../repositories/businesses";
-import { createUser, getUserById, getUserWithPasswordHashByEmail, userHasPassword } from "../repositories/users";
+import {
+  createUser,
+  getUserById,
+  getUserWithPasswordHashByEmail,
+  updatePasswordHash,
+  userHasPassword,
+} from "../repositories/users";
 import { listIdentitiesForUser } from "../repositories/authIdentities";
 import { createInitialPricingConfiguration } from "../repositories/pricingConfigurations";
 
@@ -139,4 +145,27 @@ export async function getCurrentUser(db: Queryable, session: AuthSession): Promi
     hasPassword,
     linkedProviders: identities.map((identity) => identity.provider),
   };
+}
+
+/**
+ * Establishes a password credential for the FIRST time (a Google-only
+ * account acquiring email/password login) — deliberately distinct from a
+ * password change, which goes through `passwordReset.ts`'s token flow
+ * instead (see docs/decisions and the 2026-09 onboarding fix: "Create
+ * password" vs. "Change password" are different UX and different code
+ * paths, not the same action with a different label). Refuses outright
+ * if this account already has a password — a real change must go through
+ * the reset-token flow, which correctly requires proving control via
+ * email rather than trusting an active session alone to overwrite an
+ * existing credential silently.
+ */
+export async function setPassword(db: Queryable, session: AuthSession, newPassword: string): Promise<void> {
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    throw new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+  }
+  if (await userHasPassword(db, session.userId)) {
+    throw new Error("This account already has a password — use the change-password flow instead.");
+  }
+  const passwordHash = await hashPassword(newPassword);
+  await updatePasswordHash(db, session.userId, passwordHash);
 }

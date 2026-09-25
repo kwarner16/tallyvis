@@ -27,4 +27,5 @@ export const MIGRATION_FILENAMES: readonly string[] = [
   "0004_accounts_billing.sql",
   "0005_google_auth.sql",
   "0006_benchmark_cases.sql",
+  "0007_google_onboarding.sql",
 ];

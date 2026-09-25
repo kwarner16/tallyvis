@@ -9,6 +9,7 @@ import { ManageBillingButton } from "@/components/dashboard/ManageBillingButton"
 import { DangerZoneClient } from "@/components/dashboard/DangerZoneClient";
 import { GoogleErrorBanner } from "@/components/auth/GoogleErrorBanner";
 import { GoogleLinkedBanner } from "@/components/auth/GoogleLinkedBanner";
+import { CreatePasswordForm } from "@/components/dashboard/CreatePasswordForm";
 
 const STATUS_LABELS: Record<string, string> = {
   trialing: "Trialing",
@@ -66,7 +67,9 @@ export default async function SettingsPage() {
                 Change password
               </Link>
             </div>
-          ) : null}
+          ) : (
+            <CreatePasswordForm />
+          )}
           {!user.linkedProviders.includes("google") ? (
             <div className="mt-1">
               <a href="/api/auth/google/start" className="text-sm font-medium text-accent-strong hover:underline">

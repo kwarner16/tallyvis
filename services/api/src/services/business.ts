@@ -3,7 +3,9 @@ import { normalizeHexColor } from "@tallyvis/config";
 import type { AuthSession } from "../auth/session";
 import type { Queryable } from "../db/pg/client";
 import type { PublicBusinessSummary } from "./quoteSharing";
+import { setPassword } from "./auth";
 import {
+  completeOnboarding as completeOnboardingRepo,
   getBusinessById,
   getBusinessByPublicEmbedId,
   touchEmbedLastSeen,
@@ -78,6 +80,35 @@ export async function updateCurrentBusiness(
   input: UpdateBusinessInput,
 ): Promise<Business> {
   return updateBusiness(db, session.businessId, normalizeUpdateBusinessInput(input));
+}
+
+export interface CompleteOnboardingInput {
+  businessName: string;
+  /** Optional — a Google-only account may skip setting a password now and do it later from Settings (see `setPassword`). */
+  password?: string;
+}
+
+/**
+ * The Google-signup onboarding step's one write (2026-09 fix): sets the
+ * real business name (replacing the placeholder `deriveBusinessName`
+ * produced) and clears `needsOnboarding`, plus optionally establishes a
+ * password credential in the same action. Password creation reuses
+ * `setPassword`'s own validation/refusal rules unchanged — this function
+ * adds no separate password logic of its own.
+ */
+export async function completeOnboarding(
+  db: Queryable,
+  session: AuthSession,
+  input: CompleteOnboardingInput,
+): Promise<Business> {
+  const name = input.businessName.trim();
+  if (name.length === 0) {
+    throw new Error("Business name is required.");
+  }
+  if (input.password) {
+    await setPassword(db, session, input.password);
+  }
+  return completeOnboardingRepo(db, session.businessId, name);
 }
 
 /**
