@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import type { PropertyAnalysisResult } from "@tallyvis/types";
 import type { RawPropertyObservation } from "@tallyvis/api";
 import { compressImageFile, ImageCompressionError, MAX_SOURCE_FILE_BYTES } from "../imageCompression";
@@ -66,6 +67,16 @@ const STORAGE_KEY = "tallyvis-estimator-draft-v1";
  * `imageCompression.ts` already uses) purely so this invariant — no
  * frame-context branching anywhere in the read/write path — is directly
  * unit-testable without a real DOM.
+ *
+ * 2026-09-26 follow-up incident: per-TAB scoping alone still wasn't
+ * enough — it stops a cached id crossing tabs/sessions, but not a LATER,
+ * unrelated visit to the direct estimator within the SAME tab that
+ * happened to visit a business's embed earlier (real repro: visit Korr's
+ * embed, then later in the same tab open the direct estimator from
+ * tallyvis.com — Korr's branding, and Korr's tenant, would have carried
+ * over). `shouldConsiderCachedEmbedId` closes that: a cached id is now
+ * only ever considered when this mount's landing path isn't the bare,
+ * direct entry point, regardless of what's sitting in `sessionStorage`.
  */
 const EMBED_ID_STORAGE_KEY = "tallyvis-estimator-embed-id";
 
@@ -103,6 +114,47 @@ export function clearCachedEmbedId(storage: EmbedIdStorage): void {
 export function shouldBlockEstimator(cachedEmbedIdPresent: boolean, verification: boolean | null): boolean {
   if (!cachedEmbedIdPresent) return false;
   return verification !== true;
+}
+
+/**
+ * The bare wizard welcome screen — the ONE path a business's embed can
+ * never redirect to (`/embed/[embedId]` always lands directly on
+ * `/estimate/property`, see that page's own comment) and the exact URL
+ * every direct/marketing entry point uses (apps/web's `ESTIMATOR_URL`, and
+ * "entering the URL directly" per a human's own mental model of "the
+ * estimator's URL").
+ */
+export const DIRECT_ESTIMATOR_ENTRY_PATH = "/estimate";
+
+/**
+ * 2026-09-26 "wrong branding" incident: a cached embed id in
+ * `sessionStorage` survives EVERY in-tab navigation and reload, not just
+ * the one legitimate `/embed/[id]` -> `/estimate/property` transition it
+ * exists to bridge (see `EMBED_ID_STORAGE_KEY`'s own comment). Visiting a
+ * business's embed, then later in the SAME TAB navigating to the direct,
+ * un-embedded estimator (e.g. tallyvis.com's own "Try the Estimator" link,
+ * which always lands on `DIRECT_ESTIMATOR_ENTRY_PATH`) picked up that
+ * stale cached id and applied the WRONG business's branding — and, more
+ * seriously, would have attached a real quote to that unrelated business
+ * too, since the server has no way to distinguish a stale client-side
+ * embed id from a legitimate one; both resolve to a real, valid business.
+ *
+ * A fresh mount that lands exactly on `DIRECT_ESTIMATOR_ENTRY_PATH` can
+ * therefore never legitimately be continuing an embedded flow, no matter
+ * what an earlier, unrelated visit in this same tab left cached — this
+ * function is consulted BEFORE any verification call, purely on the
+ * mount's landing path, so a stale id is never even considered (and is
+ * actively cleared, so it can't resurface later in this tab either).
+ *
+ * Any OTHER `/estimate/*` path is left to the existing verify-then-trust
+ * logic below unchanged: it could legitimately be a same-flow mid-wizard
+ * reload (sessionStorage surviving a refresh is the whole reason it's used
+ * over in-memory state), or someone directly bookmarking a sub-step, which
+ * real server-side verification (`shouldBlockEstimator`) already fails
+ * closed on if the id doesn't resolve.
+ */
+export function shouldConsiderCachedEmbedId(pathname: string): boolean {
+  return pathname !== DIRECT_ESTIMATOR_ENTRY_PATH;
 }
 
 /**
@@ -212,6 +264,15 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
   const [embedBlocked, setEmbedBlocked] = useState(false);
   const [isProcessingPhotos, setIsProcessingPhotos] = useState(false);
   const hydrated = useRef(false);
+  // Captured once, at this EstimatorProvider instance's first render — see
+  // shouldConsiderCachedEmbedId's own comment for why the LANDING path
+  // (not whatever the pathname happens to be later, after client-side
+  // navigation between wizard steps) is what must gate trusting a cached
+  // embed id. A ref (not a dependency of the mount effect below) so it
+  // never changes after mount, matching that effect's intentional
+  // run-once-per-provider-instance semantics.
+  const pathname = usePathname();
+  const mountPathname = useRef(pathname);
 
   /** `observation` defaults to `null` (not "leave whatever was there") — every caller sets both explicitly, so a stale AI observation can never survive a manual re-entry or a fresh analysis. */
   const setAnalysis = useCallback(
@@ -241,15 +302,24 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           const persisted = JSON.parse(raw) as PersistedInput;
           setInput((prev) => ({ ...prev, ...persisted }));
         }
-        // Read back from `sessionStorage` unconditionally — no frame-context
-        // check needed (see `EMBED_ID_STORAGE_KEY`'s own comment for why a
-        // `window.self !== window.top` guard used to be here, and why it's
-        // gone: `sessionStorage`'s own per-tab-session scoping already
+        // Read back from `sessionStorage` regardless of iframe framing — no
+        // frame-context check (see `EMBED_ID_STORAGE_KEY`'s own comment for
+        // why a `window.self !== window.top` guard used to be here, and why
+        // it's gone: `sessionStorage`'s own per-tab-session scoping already
         // prevents the original bug that guard existed for, without also
         // silently dropping the embed id for a legitimate top-level visit
-        // to `/embed/[embedId]`).
+        // to `/embed/[embedId]`). Whether a value found here is actually
+        // CONSIDERED still depends on this mount's landing path — see
+        // `shouldConsiderCachedEmbedId` just below.
         const storedEmbedId = readCachedEmbedId(window.sessionStorage);
-        if (storedEmbedId) {
+        if (storedEmbedId && !shouldConsiderCachedEmbedId(mountPathname.current)) {
+          // 2026-09-26 incident: this mount landed fresh on the bare,
+          // direct entry point — see shouldConsiderCachedEmbedId's own
+          // comment for why a cached id can never be legitimate here.
+          // Cleared (not just ignored) so it can't resurface later in this
+          // same tab either.
+          clearCachedEmbedId(window.sessionStorage);
+        } else if (storedEmbedId) {
           // A cached embed id from an earlier session must be revalidated,
           // not blindly trusted — the underlying business may have been
           // deleted/recreated since it was cached. Previously this went

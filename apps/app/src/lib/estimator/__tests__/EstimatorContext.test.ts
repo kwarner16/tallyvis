@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { readCachedEmbedId, writeCachedEmbedId, clearCachedEmbedId, shouldBlockEstimator } from "../EstimatorContext";
+import {
+  readCachedEmbedId,
+  writeCachedEmbedId,
+  clearCachedEmbedId,
+  shouldBlockEstimator,
+  shouldConsiderCachedEmbedId,
+  DIRECT_ESTIMATOR_ENTRY_PATH,
+} from "../EstimatorContext";
 
 /**
  * Pure, DOM-free tests for the embed-id cache's storage functions
@@ -99,5 +106,124 @@ describe("shouldBlockEstimator — tenant-isolation invariant", () => {
 
   it("blocks when a cached embed id's verification hit an unknown/transient error — this is the exact case the incident traced: an error must never be treated as 'no embed'", () => {
     expect(shouldBlockEstimator(true, null)).toBe(true);
+  });
+});
+
+/**
+ * 2026-09-26 "wrong branding" incident: a real browser that had previously
+ * used Korr's embedded estimator later saw Korr's blue branding (and would
+ * have had its quote attributed to Korr) on the DIRECT, un-embedded
+ * estimator reached from tallyvis.com — because a cached embed id in
+ * `sessionStorage` survives every in-tab navigation, not just the one
+ * legitimate `/embed/[id]` -> `/estimate/property` transition it exists to
+ * bridge. `shouldConsiderCachedEmbedId` is the fix: a cached id is only
+ * ever considered when the CURRENT mount's landing path isn't
+ * `DIRECT_ESTIMATOR_ENTRY_PATH`, regardless of what's cached.
+ *
+ * `resolveMountEmbedId` below is a small test-only helper that composes
+ * the real exported primitives (`shouldConsiderCachedEmbedId`,
+ * `shouldBlockEstimator`) in exactly the same order
+ * `EstimatorProvider`'s mount effect does, so these tests exercise the
+ * actual decision chain, not just its individual pieces in isolation.
+ */
+type MountEmbedResolution =
+  | { kind: "bare"; clearedStaleCache: boolean }
+  | { kind: "trusted"; embedId: string }
+  | { kind: "blocked" };
+
+function resolveMountEmbedId(
+  pathname: string,
+  storage: Storage,
+  verify: (id: string) => boolean | null,
+): MountEmbedResolution {
+  const cached = readCachedEmbedId(storage);
+  if (!cached) return { kind: "bare", clearedStaleCache: false };
+
+  if (!shouldConsiderCachedEmbedId(pathname)) {
+    clearCachedEmbedId(storage);
+    return { kind: "bare", clearedStaleCache: true };
+  }
+
+  const verification = verify(cached);
+  if (shouldBlockEstimator(true, verification)) {
+    if (verification === false) clearCachedEmbedId(storage);
+    return { kind: "blocked" };
+  }
+  return { kind: "trusted", embedId: cached };
+}
+
+describe("estimator-mode resolution at mount — 2026-09-26 cross-tenant branding incident", () => {
+  it("1. direct estimator with no prior embed at all resolves bare — TallyVis/default branding", () => {
+    const storage = createFakeStorage();
+    const result = resolveMountEmbedId(DIRECT_ESTIMATOR_ENTRY_PATH, storage, () => true);
+    expect(result).toEqual({ kind: "bare", clearedStaleCache: false });
+  });
+
+  it("2. a business's embed (landing on /estimate/property, not the bare root) resolves trusted — that business's branding", () => {
+    const storage = createFakeStorage();
+    writeCachedEmbedId(storage, "embed_korr");
+    const result = resolveMountEmbedId("/estimate/property", storage, () => true);
+    expect(result).toEqual({ kind: "trusted", embedId: "embed_korr" });
+  });
+
+  it("3. Korr embed followed by a later direct-estimator mount in the same tab resolves bare, not Korr — the exact reported regression", () => {
+    const storage = createFakeStorage();
+    // Simulates /embed/[embedId] having verified and cached Korr's id earlier in this tab.
+    writeCachedEmbedId(storage, "embed_korr");
+    // Simulates the LATER, separate mount at tallyvis.com's own direct-estimator URL.
+    const result = resolveMountEmbedId(DIRECT_ESTIMATOR_ENTRY_PATH, storage, () => true);
+    expect(result).toEqual({ kind: "bare", clearedStaleCache: true });
+    expect(readCachedEmbedId(storage)).toBeNull();
+  });
+
+  it("4. business A's embed followed by business B's embed resolves B, never a mix of both", () => {
+    const storage = createFakeStorage();
+    writeCachedEmbedId(storage, "embed_business_a");
+    // /embed/[embedId] overwrites the same key on each new embed visit.
+    writeCachedEmbedId(storage, "embed_business_b");
+    const result = resolveMountEmbedId("/estimate/property", storage, () => true);
+    expect(result).toEqual({ kind: "trusted", embedId: "embed_business_b" });
+  });
+
+  it("5. business B's embed followed by a later direct-estimator mount resolves bare, not B", () => {
+    const storage = createFakeStorage();
+    writeCachedEmbedId(storage, "embed_business_b");
+    const result = resolveMountEmbedId(DIRECT_ESTIMATOR_ENTRY_PATH, storage, () => true);
+    expect(result).toEqual({ kind: "bare", clearedStaleCache: true });
+  });
+
+  it("6. a stale cached embed id can never influence a new direct session, even if it would still verify as valid", () => {
+    const storage = createFakeStorage();
+    writeCachedEmbedId(storage, "embed_still_technically_valid");
+    // The business is still real/active (verify would return true) — the
+    // fix must reject this on PATH alone, before ever calling verify.
+    let verifyCalled = false;
+    const result = resolveMountEmbedId(DIRECT_ESTIMATOR_ENTRY_PATH, storage, () => {
+      verifyCalled = true;
+      return true;
+    });
+    expect(result.kind).toBe("bare");
+    expect(verifyCalled).toBe(false);
+  });
+
+  it("7. an active embed identity that fails verification on a genuine mid-wizard mount fails closed, never falls back to bare/default", () => {
+    const storage = createFakeStorage();
+    writeCachedEmbedId(storage, "embed_deleted_business");
+    const result = resolveMountEmbedId("/estimate/photos", storage, () => false);
+    expect(result).toEqual({ kind: "blocked" });
+    // Confirmed-invalid IS cleared (see shouldBlockEstimator's own note) —
+    // but the mount itself still blocks rather than silently going bare.
+    expect(readCachedEmbedId(storage)).toBeNull();
+  });
+
+  it("8. a direct-estimator mount can never carry a stale business id forward to quote creation — resolving bare means no embedId is ever handed to createPublicQuoteAction", () => {
+    const storage = createFakeStorage();
+    writeCachedEmbedId(storage, "embed_korr");
+    const result = resolveMountEmbedId(DIRECT_ESTIMATOR_ENTRY_PATH, storage, () => true);
+    // "bare" carries no embedId at all — the same shape a genuinely
+    // embed-less session has, which createPublicQuoteAction/publicActions.ts
+    // already treats as its no-persistence demo mode (ADR 0027).
+    expect(result.kind).toBe("bare");
+    expect((result as { embedId?: string }).embedId).toBeUndefined();
   });
 });
