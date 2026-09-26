@@ -19,7 +19,6 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   resolveEmbedBusiness: vi.fn(),
-  getDefaultPublicBusiness: vi.fn(),
   resolvePublicBusinessSummary: vi.fn(),
   getActiveConfigurationForBusiness: vi.fn(),
   analyzePropertyPublic: vi.fn(),
@@ -44,7 +43,6 @@ vi.mock("@tallyvis/api", () => ({
   getDb: vi.fn(() => ({})),
   AiProviderError: FakeAiProviderError,
   resolveEmbedBusiness: mocks.resolveEmbedBusiness,
-  getDefaultPublicBusiness: mocks.getDefaultPublicBusiness,
   resolvePublicBusinessSummary: mocks.resolvePublicBusinessSummary,
   getActiveConfigurationForBusiness: mocks.getActiveConfigurationForBusiness,
   analyzePropertyPublic: mocks.analyzePropertyPublic,
@@ -69,7 +67,7 @@ const {
   declinePublicQuoteAction,
   requestPublicQuoteChangesAction,
 } = await import("../publicActions");
-const { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } = await import("../publicBusinessErrors");
+const { ESTIMATOR_NOT_CONFIGURED_MESSAGE, DEMO_ESTIMATE_NOT_SAVED_MESSAGE } = await import("../publicBusinessErrors");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -97,6 +95,20 @@ describe("getPublicBusinessAction", () => {
       expect(result.message).not.toContain("connection terminated");
     }
   });
+
+  /**
+   * 2026-09 "direct estimator" incident (docs/decisions/0027): the direct,
+   * un-embedded `/estimate` demo (no `embedId`) must NEVER resolve or
+   * expose a real business — it now returns a clearly-labeled demo
+   * summary without touching the database at all.
+   */
+  it("returns a clearly-labeled demo summary, without touching the database, when no embed id is given", async () => {
+    const result = await getPublicBusinessAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.name).toMatch(/demo/i);
+    expect(mocks.resolvePublicBusinessSummary).not.toHaveBeenCalled();
+  });
 });
 
 describe("getPublicActiveConfigurationAction", () => {
@@ -111,6 +123,15 @@ describe("getPublicActiveConfigurationAction", () => {
     mocks.resolveEmbedBusiness.mockResolvedValue(undefined);
     const result = await getPublicActiveConfigurationAction("bad-id");
     expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
+  });
+
+  it("returns the standalone demo pricing configuration, without touching the database, when no embed id is given (2026-09 incident, docs/decisions/0027)", async () => {
+    const result = await getPublicActiveConfigurationAction();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.businessId).toBe("demo-window-cleaning-co");
+    expect(mocks.resolveEmbedBusiness).not.toHaveBeenCalled();
+    expect(mocks.getActiveConfigurationForBusiness).not.toHaveBeenCalled();
   });
 });
 
@@ -132,19 +153,19 @@ describe("verifyEmbedIdAction (2026-09 \"lost tenant identity\" incident, docs/d
 });
 
 describe("analyzePublicPropertyAction", () => {
-  it("returns ok:true with the analysis result on success", async () => {
-    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+  it("returns ok:true with the analysis result on success (embedded)", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue({ id: "biz_1" });
     mocks.analyzePropertyPublic.mockResolvedValue({ analysis: { characteristics: {}, metadata: {} }, observation: {} });
-    const result = await analyzePublicPropertyAction({ images: [], property: {} });
+    const result = await analyzePublicPropertyAction({ images: [], property: {} }, "embed-123");
     expect(result.ok).toBe(true);
   });
 
   it("attaches evidenceMessages computed server-side via describeEvidenceGaps (Vision V1.1)", async () => {
-    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.resolveEmbedBusiness.mockResolvedValue({ id: "biz_1" });
     const observation = { evidence: { coverage: "partial", overallEvidence: "insufficient", issues: [] } };
     mocks.analyzePropertyPublic.mockResolvedValue({ analysis: { characteristics: {}, metadata: {} }, observation });
     mocks.describeEvidenceGaps.mockReturnValue(["A closer photo would help."]);
-    const result = await analyzePublicPropertyAction({ images: [], property: {} });
+    const result = await analyzePublicPropertyAction({ images: [], property: {} }, "embed-123");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(mocks.describeEvidenceGaps).toHaveBeenCalledWith(observation);
@@ -157,14 +178,20 @@ describe("analyzePublicPropertyAction", () => {
     expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
   });
 
-  it("returns ok:false with the no-business message when there's no embed id and no default business", async () => {
-    mocks.getDefaultPublicBusiness.mockResolvedValue(undefined);
+  /**
+   * 2026-09 "direct estimator" incident (docs/decisions/0027): analysis
+   * is entirely business-agnostic (businessId only ever feeds a de-dup
+   * cache key — see services/api's runAnalysisFor), so the direct,
+   * un-embedded demo must succeed WITHOUT ever resolving a real business.
+   */
+  it("succeeds without resolving any business when there's no embed id (the direct estimator demo)", async () => {
+    mocks.analyzePropertyPublic.mockResolvedValue({ analysis: { characteristics: {}, metadata: {} }, observation: {} });
     const result = await analyzePublicPropertyAction({ images: [], property: {} });
-    expect(result).toEqual({ ok: false, message: NO_BUSINESS_CONFIGURED_MESSAGE });
+    expect(result.ok).toBe(true);
+    expect(mocks.resolveEmbedBusiness).not.toHaveBeenCalled();
   });
 
   it("returns ok:false with the categorized AI failure message — never throws — for an AiProviderError", async () => {
-    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
     mocks.analyzePropertyPublic.mockRejectedValue(new FakeAiProviderError("raw provider detail", "rate-limit"));
     const result = await analyzePublicPropertyAction({ images: [], property: {} });
     expect(result.ok).toBe(false);
@@ -176,7 +203,6 @@ describe("analyzePublicPropertyAction", () => {
   });
 
   it("returns a generic safe message — never throws — for a genuinely unexpected error", async () => {
-    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
     mocks.analyzePropertyPublic.mockRejectedValue(new Error("ECONNREFUSED 10.0.0.5:5432"));
     const result = await analyzePublicPropertyAction({ images: [], property: {} });
     expect(result.ok).toBe(false);
@@ -188,10 +214,10 @@ describe("analyzePublicPropertyAction", () => {
 });
 
 describe("createPublicQuoteAction", () => {
-  it("returns ok:true with only the new quote's id", async () => {
-    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+  it("returns ok:true with only the new quote's id (embedded)", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue({ id: "biz_1" });
     mocks.createQuotePublic.mockResolvedValue({ id: "quote_1", businessId: "biz_1", customerId: "cust_1" });
-    const result = await createPublicQuoteAction({} as never);
+    const result = await createPublicQuoteAction({} as never, "embed-123");
     expect(result).toEqual({ ok: true, data: { id: "quote_1" } });
   });
 
@@ -200,13 +226,26 @@ describe("createPublicQuoteAction", () => {
     const result = await createPublicQuoteAction({} as never, "bad-id");
     expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
   });
+
+  /**
+   * 2026-09 "direct estimator" incident (docs/decisions/0027) — the CORE
+   * safety invariant this mission fixes: the direct, un-embedded
+   * `/estimate` demo must NEVER persist a real quote for any business,
+   * arbitrary or otherwise. Checked BEFORE any database access at all.
+   */
+  it("refuses to persist a quote, without ever resolving a business or touching the database, when no embed id is given", async () => {
+    const result = await createPublicQuoteAction({} as never);
+    expect(result).toEqual({ ok: false, message: DEMO_ESTIMATE_NOT_SAVED_MESSAGE });
+    expect(mocks.resolveEmbedBusiness).not.toHaveBeenCalled();
+    expect(mocks.createQuotePublic).not.toHaveBeenCalled();
+  });
 });
 
 describe("updatePublicQuoteAction (2026-09 incident: re-analysis must write back to the SAME quote, not be silently discarded)", () => {
-  it("returns ok:true with the same quote's id on a successful re-analysis update", async () => {
-    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+  it("returns ok:true with the same quote's id on a successful re-analysis update (embedded)", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue({ id: "biz_1" });
     mocks.updateQuotePublic.mockResolvedValue({ id: "quote_1", businessId: "biz_1", customerId: "cust_1" });
-    const result = await updatePublicQuoteAction("quote_1", {} as never);
+    const result = await updatePublicQuoteAction("quote_1", {} as never, "embed-123");
     expect(result).toEqual({ ok: true, data: { id: "quote_1" } });
     expect(mocks.updateQuotePublic).toHaveBeenCalledWith(expect.anything(), "biz_1", "quote_1", expect.anything());
   });
@@ -218,10 +257,16 @@ describe("updatePublicQuoteAction (2026-09 incident: re-analysis must write back
   });
 
   it("returns a safe generic message (never a raw error) when the update itself fails unexpectedly", async () => {
-    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.resolveEmbedBusiness.mockResolvedValue({ id: "biz_1" });
     mocks.updateQuotePublic.mockRejectedValue(new Error("db unavailable"));
-    const result = await updatePublicQuoteAction("quote_1", {} as never);
+    const result = await updatePublicQuoteAction("quote_1", {} as never, "embed-123");
     expect(result.ok).toBe(false);
+  });
+
+  it("refuses to update any quote, without ever touching the database, when no embed id is given", async () => {
+    const result = await updatePublicQuoteAction("quote_1", {} as never);
+    expect(result).toEqual({ ok: false, message: DEMO_ESTIMATE_NOT_SAVED_MESSAGE });
+    expect(mocks.updateQuotePublic).not.toHaveBeenCalled();
   });
 });
 

@@ -1,5 +1,6 @@
 "use server";
 
+import { demoPricingConfiguration } from "@tallyvis/config";
 import type { Business, PricingConfiguration, Quote } from "@tallyvis/types";
 import {
   acceptQuoteByToken,
@@ -11,7 +12,6 @@ import {
   describeEvidenceGaps,
   getActiveConfigurationForBusiness,
   getDb,
-  getDefaultPublicBusiness,
   getQuoteByShareToken,
   requestQuoteChangesByToken,
   resolveEmbedBusiness,
@@ -24,7 +24,7 @@ import {
 } from "@tallyvis/api";
 import { describeAiErrorCategory } from "./aiErrorMessages";
 import { sanitizeForPublicDisplay } from "./errorSanitization";
-import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } from "./publicBusinessErrors";
+import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, DEMO_ESTIMATE_NOT_SAVED_MESSAGE } from "./publicBusinessErrors";
 import type { ActionResult } from "./actionResult";
 
 /**
@@ -41,19 +41,31 @@ import type { ActionResult } from "./actionResult";
  * same safe, categorized messages a deliberately-thrown error would have
  * used, never the raw error itself.
  *
- * "Which business" is resolved one of two ways: an `embedId` (Phase 14 —
- * see docs/decisions/0016-onboarding-billing-embed.md), the PUBLIC,
- * opaque identifier a website embed asserts, resolved server-side via
- * `resolveEmbedBusiness` — never trusted as an internal businessId, never
- * used for anything beyond this public lookup; or, when no `embedId` is
- * given (the marketing site's own bare `/estimate/*` wizard, unchanged
- * since Phase 9), `getDefaultPublicBusiness` — see that function's own
- * comment and docs/decisions/0011-persistence-auth-and-multi-tenancy.md
- * for why that particular case remains a stated simplification rather
- * than real multi-business routing.
+ * "Which business" is resolved exactly ONE way now (2026-09 incident —
+ * see docs/decisions/0027-direct-estimator-demo-mode.md): an `embedId`
+ * (Phase 14 — see docs/decisions/0016-onboarding-billing-embed.md), the
+ * PUBLIC, opaque identifier a website embed asserts, resolved
+ * server-side via `resolveEmbedBusiness` — never trusted as an internal
+ * businessId, never used for anything beyond this public lookup. There is
+ * NO fallback business for a missing `embedId` — the direct, un-embedded
+ * `/estimate` wizard (the marketing site's own "Try the Estimator" button
+ * — see `apps/web`'s `FinalCta.tsx`/`Nav.tsx`) has no real business
+ * relationship with its visitor at all (ADR 0011 said so explicitly: "it
+ * creates a quote before any business relationship exists from the
+ * visitor's side"), so every action below that touches a REAL business or
+ * persists REAL data now requires `embedId` outright; anything that can
+ * run without one uses `@tallyvis/config`'s standalone
+ * `demoPricingConfiguration`/a clearly-labeled demo summary instead of
+ * ever resolving an arbitrary real business.
  */
 
 const GENERIC_FAILURE_MESSAGE = describeAiErrorCategory("unknown");
+
+/** Clearly labeled per CLAUDE.md's mock/demo-labeling convention — this is never a real business, and must never be mistaken for one downstream. */
+const DEMO_BUSINESS_SUMMARY: PublicBusinessSummary = { name: "Tallyvis (Demo)", phone: "" };
+
+/** Stable, non-secret key `analyzePropertyPublic`'s de-dup cache uses — the AI analysis step is otherwise entirely business-agnostic (see `runAnalysisFor` in `services/api`), so this never needs to be, and never was, a real business id. */
+const DEMO_ANALYSIS_KEY = "public-demo";
 
 function logUnexpected(action: string, err: unknown): void {
   // Never the raw error object (could carry request/connection internals) —
@@ -61,32 +73,13 @@ function logUnexpected(action: string, err: unknown): void {
   console.error(`[publicActions] ${action} failed unexpectedly:`, err instanceof Error ? err.message : "non-Error thrown");
 }
 
-async function requirePublicBusiness(embedId?: string): Promise<Business> {
-  const business = embedId ? await resolveEmbedBusiness(getDb(), embedId) : await getDefaultPublicBusiness(getDb());
-  if (!business) {
-    throw new Error(embedId ? ESTIMATOR_NOT_CONFIGURED_MESSAGE : NO_BUSINESS_CONFIGURED_MESSAGE);
-  }
-  // Safe, permanent, structured signal (no PII — a business id is not a
-  // secret) for the ONE thing that should be rare for a real embedded
-  // session (2026-09 "lost tenant identity" incident, docs/decisions/0026):
-  // this specific call resolved via the default/oldest-business fallback,
-  // not a real embed id. Every legitimate embed page load should never hit
-  // this; if it starts appearing at volume for what should be embedded
-  // traffic, that's the exact anomaly to investigate.
-  if (!embedId) {
-    console.log(
-      JSON.stringify({
-        at: new Date().toISOString(),
-        event: "public-estimator-business-resolution",
-        usedDefaultFallback: true,
-        resolvedBusinessId: business.id,
-      }),
-    );
-  }
+async function requirePublicBusiness(embedId: string): Promise<Business> {
+  const business = await resolveEmbedBusiness(getDb(), embedId);
+  if (!business) throw new Error(ESTIMATOR_NOT_CONFIGURED_MESSAGE);
   return business;
 }
 
-async function requirePublicBusinessId(embedId?: string): Promise<string> {
+async function requirePublicBusinessId(embedId: string): Promise<string> {
   return (await requirePublicBusiness(embedId)).id;
 }
 
@@ -102,11 +95,10 @@ async function requirePublicBusinessId(embedId?: string): Promise<string> {
  * every page load, not merely present in a server-side object.
  */
 export async function getPublicBusinessAction(embedId?: string): Promise<ActionResult<PublicBusinessSummary>> {
+  if (!embedId) return { ok: true, data: DEMO_BUSINESS_SUMMARY };
   try {
     const summary = await resolvePublicBusinessSummary(getDb(), embedId);
-    if (!summary) {
-      return { ok: false, message: embedId ? ESTIMATOR_NOT_CONFIGURED_MESSAGE : NO_BUSINESS_CONFIGURED_MESSAGE };
-    }
+    if (!summary) return { ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE };
     return { ok: true, data: summary };
   } catch (err) {
     logUnexpected("getPublicBusinessAction", err);
@@ -115,12 +107,13 @@ export async function getPublicBusinessAction(embedId?: string): Promise<ActionR
 }
 
 export async function getPublicActiveConfigurationAction(embedId?: string): Promise<ActionResult<PricingConfiguration>> {
+  if (!embedId) return { ok: true, data: demoPricingConfiguration };
   try {
     const businessId = await requirePublicBusinessId(embedId);
     const configuration = await getActiveConfigurationForBusiness(getDb(), businessId);
     return { ok: true, data: configuration };
   } catch (err) {
-    if (err instanceof Error && (err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE || err.message === NO_BUSINESS_CONFIGURED_MESSAGE)) {
+    if (err instanceof Error && err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE) {
       return { ok: false, message: err.message };
     }
     logUnexpected("getPublicActiveConfigurationAction", err);
@@ -208,23 +201,33 @@ export async function analyzePublicPropertyAction(
     }),
   );
 
+  // No `embedId` (the direct, un-embedded `/estimate` demo — see
+  // docs/decisions/0027) never resolves a real business at all: the AI
+  // analysis step is entirely business-agnostic already (`businessId`
+  // only ever feeds `runAnalysisFor`'s de-dup cache key, never pricing or
+  // any DB lookup — see `services/api/src/services/aiAnalysis.ts`), so
+  // there is nothing real to look up here in the first place.
   let businessId: string;
-  try {
-    businessId = await requirePublicBusinessId(embedId);
-  } catch (err) {
-    console.log(
-      JSON.stringify({
-        at: new Date().toISOString(),
-        event: "public-analyze-stage",
-        stage: "business-resolution-failed",
-        embedIdPresent: Boolean(embedId),
-      }),
-    );
-    if (err instanceof Error && (err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE || err.message === NO_BUSINESS_CONFIGURED_MESSAGE)) {
-      return { ok: false, message: err.message };
+  if (embedId) {
+    try {
+      businessId = await requirePublicBusinessId(embedId);
+    } catch (err) {
+      console.log(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          event: "public-analyze-stage",
+          stage: "business-resolution-failed",
+          embedIdPresent: true,
+        }),
+      );
+      if (err instanceof Error && err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE) {
+        return { ok: false, message: err.message };
+      }
+      logUnexpected("analyzePublicPropertyAction (business resolution)", err);
+      return { ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE };
     }
-    logUnexpected("analyzePublicPropertyAction (business resolution)", err);
-    return { ok: false, message: NO_BUSINESS_CONFIGURED_MESSAGE };
+  } else {
+    businessId = DEMO_ANALYSIS_KEY;
   }
 
   try {
@@ -274,12 +277,20 @@ export async function createPublicQuoteAction(
   input: CreateQuoteInput,
   embedId?: string,
 ): Promise<ActionResult<{ id: string }>> {
+  // The direct, un-embedded `/estimate` demo (no `embedId`) never
+  // persists a real quote — see docs/decisions/0027-direct-estimator-demo-mode.md.
+  // There is no real business relationship to attach it to, and the old
+  // fallback (an arbitrary real business, "whichever signed up first")
+  // was both a repeated tenant-isolation incident and dishonest: that
+  // business never actually agreed to receive this request. This check
+  // runs BEFORE any database access — the demo path never even connects.
+  if (!embedId) return { ok: false, message: DEMO_ESTIMATE_NOT_SAVED_MESSAGE };
   try {
     const businessId = await requirePublicBusinessId(embedId);
     const quote = await createQuotePublic(getDb(), businessId, input);
     return { ok: true, data: { id: quote.id } };
   } catch (err) {
-    if (err instanceof Error && (err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE || err.message === NO_BUSINESS_CONFIGURED_MESSAGE)) {
+    if (err instanceof Error && err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE) {
       return { ok: false, message: err.message };
     }
     // Anything else here is either a real validation error (e.g. the
@@ -309,12 +320,15 @@ export async function updatePublicQuoteAction(
   input: CreateQuoteInput,
   embedId?: string,
 ): Promise<ActionResult<{ id: string }>> {
+  // Same demo-mode rule as `createPublicQuoteAction` above — there is
+  // never a real quote to update without a real embedId either.
+  if (!embedId) return { ok: false, message: DEMO_ESTIMATE_NOT_SAVED_MESSAGE };
   try {
     const businessId = await requirePublicBusinessId(embedId);
     const quote = await updateQuotePublic(getDb(), businessId, quoteId, input);
     return { ok: true, data: { id: quote.id } };
   } catch (err) {
-    if (err instanceof Error && (err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE || err.message === NO_BUSINESS_CONFIGURED_MESSAGE)) {
+    if (err instanceof Error && err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE) {
       return { ok: false, message: err.message };
     }
     logUnexpected("updatePublicQuoteAction", err);

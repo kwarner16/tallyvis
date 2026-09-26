@@ -8,10 +8,16 @@ import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { isPropertyComplete } from "@/lib/estimator/types";
 import { blobUrlToDataUrl } from "@/lib/imageEncoding";
 import { analyzePublicPropertyAction, isUsingMockAiProviderAction } from "@/lib/publicActions";
-import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE } from "@/lib/publicBusinessErrors";
+import { ESTIMATOR_NOT_CONFIGURED_MESSAGE } from "@/lib/publicBusinessErrors";
 
-/** These mean the business itself can't be resolved — retrying or falling back to manual entry hits the exact same wall, since both need the same business lookup to succeed. Only the business owner can fix this. */
-const UNRECOVERABLE_MESSAGES: string[] = [ESTIMATOR_NOT_CONFIGURED_MESSAGE, NO_BUSINESS_CONFIGURED_MESSAGE];
+/**
+ * Means the embedded business itself can't be resolved — retrying or
+ * falling back to manual entry hits the exact same wall, since both need
+ * the same business lookup to succeed. Only the business owner can fix
+ * this. The direct, un-embedded `/estimate` demo never reaches this at
+ * all (docs/decisions/0027) — it has no business to fail resolving.
+ */
+const UNRECOVERABLE_MESSAGES: string[] = [ESTIMATOR_NOT_CONFIGURED_MESSAGE];
 
 const STAGES = [
   "Analyzing your property...",

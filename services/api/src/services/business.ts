@@ -127,22 +127,34 @@ export async function resolveEmbedBusiness(db: Queryable, embedId: string): Prom
 
 /**
  * Only what the public estimator's result page actually renders (name and
- * branding) for a business resolved by embed id, or the default public
- * business — deliberately NOT the full `Business` record. Same
- * over-exposure bug class `quoteSharing.ts`'s `PublicBusinessSummary` was
- * introduced to fix (see docs/decisions/0012), found recurring in this
- * sibling public code path during the Stripe V1 hardening audit: the full
- * record includes the owner's login email and internal database id,
- * neither of which the public estimator has any legitimate need for, and
- * because the caller (`apps/app`'s `getPublicBusinessAction`) crosses a
- * client/server boundary as a Server Action, those fields were genuinely
- * transmitted to the browser on every page load.
+ * branding) for a business resolved by embed id — deliberately NOT the
+ * full `Business` record. Same over-exposure bug class
+ * `quoteSharing.ts`'s `PublicBusinessSummary` was introduced to fix (see
+ * docs/decisions/0012), found recurring in this sibling public code path
+ * during the Stripe V1 hardening audit: the full record includes the
+ * owner's login email and internal database id, neither of which the
+ * public estimator has any legitimate need for, and because the caller
+ * (`apps/app`'s `getPublicBusinessAction`) crosses a client/server
+ * boundary as a Server Action, those fields were genuinely transmitted to
+ * the browser on every page load.
+ *
+ * Deliberately does NOT fall back to `getDefaultPublicBusiness()` when
+ * `embedId` is absent (removed 2026-09 — see
+ * docs/decisions/0027-direct-estimator-demo-mode.md): that fallback used
+ * to resolve a real, arbitrary business (whichever signed up first) for
+ * the direct, un-embedded `/estimate` wizard, which has no genuine
+ * business relationship with its visitor at all — every real production
+ * incident of a quote landing on the wrong business traced back to this
+ * exact kind of silent default-tenant substitution. `apps/app`'s caller
+ * now handles the no-`embedId` case itself, entirely without touching a
+ * real business (see that file's own comment).
  */
 export async function resolvePublicBusinessSummary(
   db: Queryable,
   embedId?: string,
 ): Promise<PublicBusinessSummary | undefined> {
-  const business = embedId ? await resolveEmbedBusiness(db, embedId) : await getDefaultPublicBusiness(db);
+  if (!embedId) return undefined;
+  const business = await resolveEmbedBusiness(db, embedId);
   if (!business) return undefined;
   return { name: business.name, phone: business.phone, logoUrl: business.logoUrl, brandColor: business.brandColor };
 }

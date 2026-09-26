@@ -15,7 +15,7 @@ import {
   getPublicActiveConfigurationAction,
   getPublicBusinessAction,
 } from "@/lib/publicActions";
-import { CONTACT_URL } from "@/lib/urls";
+import { CONTACT_URL, MARKETING_URL } from "@/lib/urls";
 
 export default function ResultStepPage() {
   const { analysis, aiObservation, evidenceMessages, confirmed, input, quoteId, embedId, setQuoteId, reset } =
@@ -91,8 +91,17 @@ export default function ResultStepPage() {
   // `updatePublicQuoteAction`'s own comment (2026-09 incident audit: the
   // business was previously stuck seeing only the first, worse-evidence
   // submission, forever).
+  //
+  // Never attempted at all without a real `embedId` (the direct,
+  // un-embedded `/estimate` demo — see
+  // docs/decisions/0027-direct-estimator-demo-mode.md): there is no real
+  // business to notify, and `createPublicQuoteAction`/`updatePublicQuoteAction`
+  // both refuse outright in that case anyway. Skipping the call here (not
+  // just relying on that refusal) avoids a wasted round trip and keeps
+  // `quoteSaveFailed` meaning exactly one thing — a REAL, unexpected save
+  // failure for an embedded session — never "this was always a demo."
   useEffect(() => {
-    if (!analysis || lastSubmittedAnalysis.current === analysis) return;
+    if (!analysis || !embedId || lastSubmittedAnalysis.current === analysis) return;
     lastSubmittedAnalysis.current = analysis;
     const payload = {
       customer: {
@@ -165,6 +174,10 @@ export default function ResultStepPage() {
       : [metadata.notes?.[0] ?? "We couldn't confidently determine every detail from the photos provided."];
 
   if (requested) {
+    // Demo mode (no real embedId — docs/decisions/0027) never sent a real
+    // request to a real business; the confirmation screen says so
+    // explicitly rather than implying "someone" will follow up, per
+    // CLAUDE.md's mock/demo-labeling requirement.
     return (
       <div className="flex flex-col items-center gap-6 py-16 text-center">
         <div
@@ -174,25 +187,38 @@ export default function ResultStepPage() {
           &#10003;
         </div>
         <div className="flex flex-col gap-2">
-          <h1 className="text-2xl font-semibold text-ink">Your request has been received.</h1>
+          <h1 className="text-2xl font-semibold text-ink">
+            {embedId ? "Your request has been received." : "That's the full experience."}
+          </h1>
           <p className="max-w-sm text-sm text-ink-soft">
-            Someone from {business.name} can follow up with you about next steps.
+            {embedId
+              ? `Someone from ${business.name} can follow up with you about next steps.`
+              : "This was a preview — no request was sent to any business. Sign up your own business to start receiving real customer requests like this one."}
           </p>
         </div>
-        <p className="max-w-sm text-xs text-ink-faint">
-          This is a prototype confirmation — no email or text message delivery exists yet, so
-          nothing was actually sent.
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            reset();
-            router.push("/estimate");
-          }}
-          className={buttonVariants({ variant: "outline" })}
-        >
-          Start a new estimate
-        </button>
+        {embedId ? (
+          <p className="max-w-sm text-xs text-ink-faint">
+            This is a prototype confirmation — no email or text message delivery exists yet, so
+            nothing was actually sent.
+          </p>
+        ) : null}
+        <div className="flex flex-wrap justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              reset();
+              router.push("/estimate");
+            }}
+            className={buttonVariants({ variant: "outline" })}
+          >
+            Start a new estimate
+          </button>
+          {embedId ? null : (
+            <Link href="/signup" className={buttonVariants({ variant: "primary" })}>
+              Sign up your business
+            </Link>
+          )}
+        </div>
       </div>
     );
   }
@@ -305,11 +331,17 @@ export default function ResultStepPage() {
           onClick={() => setRequested(true)}
           className={buttonVariants({ variant: "primary" })}
         >
-          Request this service
+          {embedId ? "Request this service" : "See what happens next"}
         </button>
-        <a href={CONTACT_URL} className={buttonVariants({ variant: "outline" })}>
-          Talk to the business
-        </a>
+        {embedId ? (
+          <a href={CONTACT_URL} className={buttonVariants({ variant: "outline" })}>
+            Talk to the business
+          </a>
+        ) : (
+          <a href={MARKETING_URL} className={buttonVariants({ variant: "outline" })}>
+            Learn more about Tallyvis
+          </a>
+        )}
       </div>
     </div>
   );

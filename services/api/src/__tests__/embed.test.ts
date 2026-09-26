@@ -92,12 +92,10 @@ describe("resolvePublicBusinessSummary — over-exposure regression (same bug cl
     expect(summary).not.toHaveProperty("publicEmbedId");
   });
 
-  it("falls back to the default public business (same non-exposure guarantee) when no embed id is given", async () => {
+  it("resolves to undefined when no embed id is given — no dangerous default-business fallback (2026-09 incident, docs/decisions/0027: the direct un-embedded /estimate wizard has no real business relationship at all, so this must never silently resolve to an arbitrary real business)", async () => {
     const { db } = await setUpTwoBusinesses();
-    const summary = await resolvePublicBusinessSummary(db);
-    expect(summary).toBeTruthy();
-    expect(summary).not.toHaveProperty("email");
-    expect(summary).not.toHaveProperty("id");
+    expect(await resolvePublicBusinessSummary(db)).toBeUndefined();
+    expect(await resolvePublicBusinessSummary(db, undefined)).toBeUndefined();
   });
 
   it("resolves to undefined for an unknown embed id, never a fallback business's data", async () => {
