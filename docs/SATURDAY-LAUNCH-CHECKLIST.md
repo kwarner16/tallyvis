@@ -9,6 +9,65 @@ This file is the living pre-launch punch list. Update it as items close.
 
 ---
 
+## Friday final launch-hardening pass (2026-09-26)
+
+Confirmed working end to end in real production before this pass started:
+estimator → AI analysis → customer confirmation → quote creation → correct
+business tenant → quote visible in the dashboard.
+
+A systematic audit (auth/OAuth/password-reset, Stripe/billing/entitlement,
+embed resolution/tenant isolation/share-token security, AI pipeline
+fail-safety) found the codebase in materially better shape than its own
+commit messages suggested — nearly everything the Thursday/Friday passes
+described as fixed was independently re-verified against the current code,
+not just trusted from commit text. One real MUST-FIX gap was found and
+closed; see below.
+
+**Fixed this pass:**
+- **Public-embed entitlement gap (MUST FIX)**: `createQuotePublic` — the
+  function a business's own embedded estimator calls on their website — had
+  no subscription/trial check at all, unlike the authenticated dashboard's
+  `createQuote`. A business whose trial or subscription had ended would
+  have kept receiving unlimited free quotes through its live embed
+  indefinitely. Fixed in `services/api/src/services/quotes.ts`
+  (`requirePublicProductAccess`); regression tests added in
+  `publicEstimator.test.ts`.
+- **Real `/contact` page**: replaced the honest-but-nonfunctional
+  placeholder with a working form (Resend-backed, apps/web's own
+  lightweight integration — see `.env.example`).
+- **Estimator wordmark navigation**: the direct, un-embedded estimator's
+  logo now links to `tallyvis.com` instead of looping back into the
+  estimator's own first step; the embedded case is unchanged (never
+  navigates a customer away from the business's own site).
+- Two stale doc comments (CLAUDE.md, `createQuotePublic`) describing the
+  since-removed `getDefaultPublicBusiness` fallback as still active.
+
+**Confirmed correct, no change needed** (see this session's full findings
+for detail): password hashing/session security, Google OAuth PKCE/state/
+nonce and account-linking policy, password-reset token handling, Stripe
+webhook signature verification and idempotency/ordering, checkout
+price/business binding, duplicate-subscription protection, billing portal
+plan-change correctness, installation-fee dedup, embed business resolution
+and its dead default-business fallback, tenant isolation across
+repositories, share-token security, quote-email recipient binding, the
+un-embedded demo mode's no-persistence guarantee, the AI pipeline's
+server-side-pricing/needs_review/re-analysis-write-back chain, and raw
+error leakage (a blocklist-based sanitizer, not an allowlist, closing a
+real prior incident).
+
+**SHOULD FIX SOON (not launch-blocking):**
+- No rate limiting on `/login` or the public AI-analysis path beyond
+  best-effort dedup — fine at low signup volume, worth a per-IP cap soon.
+- `pnpm audit`: vitest/vite dev-tooling advisories (critical/high) — dev
+  dependencies only, not shipped to production, but worth bumping.
+- Everything already in this file's own SHOULD FIX / POST-LAUNCH sections
+  below, still open.
+
+See the session's final report for the full classified findings, the
+production-config verification (Vercel env presence for both projects),
+and the Stripe live-mode cutover checklist (not executed — test mode
+only).
+
 ## MUST FIX BEFORE SELLING
 
 Things that could cause payment failure, account/login failure,
