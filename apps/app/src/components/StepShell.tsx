@@ -99,10 +99,27 @@ function useEstimatorBrandTheme(embedId: string | null): CSSProperties | undefin
 /** Shared chrome for every /estimate/* step: wordmark + progress indicator. */
 export function StepShell({ children }: StepShellProps) {
   const pathname = usePathname();
-  const { embedId } = useEstimator();
+  const { embedId, embedBlocked } = useEstimator();
   const currentIndex = STEPS.findIndex((step) => pathname?.startsWith(step.href));
   const rootRef = useReportHeightToParent();
   const brandStyle = useEstimatorBrandTheme(embedId);
+
+  // 2026-09 "lost tenant identity" incident (docs/decisions/0026): the
+  // single choke point for every /estimate/* step (StepShell wraps all of
+  // them — see the layout). A session that started from a specific
+  // business's embed but could no longer be confirmed valid must NEVER
+  // continue into any step that could resolve a business (analyze,
+  // confirm, create/update a quote) — that gap is exactly how a real
+  // quote landed on an unrelated business. Rendered here, before
+  // `children`, so no individual step needs its own copy of this check.
+  if (embedBlocked) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-6 text-center">
+        <p className="text-sm font-medium text-ink">This estimator isn&rsquo;t set up correctly.</p>
+        <p className="text-xs text-ink-faint">Contact the business directly for a quote.</p>
+      </div>
+    );
+  }
 
   return (
     <div

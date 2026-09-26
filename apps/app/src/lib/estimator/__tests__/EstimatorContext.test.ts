@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readCachedEmbedId, writeCachedEmbedId, clearCachedEmbedId } from "../EstimatorContext";
+import { readCachedEmbedId, writeCachedEmbedId, clearCachedEmbedId, shouldBlockEstimator } from "../EstimatorContext";
 
 /**
  * Pure, DOM-free tests for the embed-id cache's storage functions
@@ -67,5 +67,37 @@ describe("readCachedEmbedId / writeCachedEmbedId / clearCachedEmbedId", () => {
     const tabB = createFakeStorage();
     writeCachedEmbedId(tabA, "embed_from_tab_a");
     expect(readCachedEmbedId(tabB)).toBeNull();
+  });
+});
+
+/**
+ * 2026-09 "lost tenant identity" incident (docs/decisions/0026): a real
+ * production quote landed on an unrelated business because a cached embed
+ * id that failed re-verification (`verifyEmbedIdAction` returning `false`
+ * for BOTH "confirmed invalid" and "an unexpected error occurred") was
+ * silently treated as "no embed at all," letting the session fall through
+ * to the bare-estimator default-business path. This is the tenant-isolation
+ * invariant that closes it: once a cached embed id existed for this
+ * session, ONLY a confirmed-valid verification may let the estimator
+ * proceed — anything else (confirmed invalid, OR an unknown/transient
+ * error) must block, never silently degrade to "no tenant."
+ */
+describe("shouldBlockEstimator — tenant-isolation invariant", () => {
+  it("never blocks a genuinely bare session (no cached embed id at all) — the documented, accepted bare-estimator fallback must keep working", () => {
+    expect(shouldBlockEstimator(false, null)).toBe(false);
+    expect(shouldBlockEstimator(false, false)).toBe(false);
+    expect(shouldBlockEstimator(false, true)).toBe(false);
+  });
+
+  it("does not block once a cached embed id is confirmed valid", () => {
+    expect(shouldBlockEstimator(true, true)).toBe(false);
+  });
+
+  it("blocks when a cached embed id is confirmed INVALID — never silently falls through to a default business", () => {
+    expect(shouldBlockEstimator(true, false)).toBe(true);
+  });
+
+  it("blocks when a cached embed id's verification hit an unknown/transient error — this is the exact case the incident traced: an error must never be treated as 'no embed'", () => {
+    expect(shouldBlockEstimator(true, null)).toBe(true);
   });
 });

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
-import { getDefaultPublicBusiness } from "../services/business";
-import { createQuote, createQuotePublic, getQuote, listQuotes } from "../services/quotes";
+import { getDefaultPublicBusiness, getCurrentBusiness, resolveEmbedBusiness } from "../services/business";
+import { createQuote, createQuotePublic, updateQuotePublic, getQuote, listQuotes } from "../services/quotes";
 import { findOrCreateCustomer, listCustomers } from "../services/customers";
 import { getActiveConfiguration, saveNewPricingConfigurationVersion } from "../services/pricing";
 
@@ -200,5 +200,96 @@ describe("createQuotePublic tenancy and pricing", () => {
       publicSubmission({ name: "Visitor", email: "visitor@example.com" }),
     );
     expect(quote.status).toBe("new");
+  });
+});
+
+/**
+ * 2026-09 "lost tenant identity" incident (docs/decisions/0026) — a real
+ * production quote landed on an unrelated business's dashboard. These are
+ * tenant-isolation SECURITY invariants, not merely UX tests: the full
+ * embed-id -> business -> quote -> dashboard chain, exercised with two
+ * genuinely distinct real businesses, end to end through the exact
+ * functions the production code calls (`resolveEmbedBusiness`,
+ * `createQuotePublic`, `updateQuotePublic`, `listQuotes`) — never a
+ * shortcut that assumes the resolution step works.
+ */
+describe("tenant isolation end-to-end (embed A / embed B)", () => {
+  it("Business A's embed -> a completed estimate -> the quote belongs to A and appears in A's own dashboard", async () => {
+    const { db, session } = await setUp();
+    const businessA = await getCurrentBusiness(db, session);
+
+    const resolved = await resolveEmbedBusiness(db, businessA.publicEmbedId);
+    expect(resolved?.id).toBe(businessA.id);
+
+    const quote = await createQuotePublic(
+      db,
+      resolved!.id,
+      publicSubmission({ name: "Customer A", email: "customer-a@example.com" }),
+    );
+
+    expect(quote.businessId).toBe(businessA.id);
+    expect((await listQuotes(db, session)).map((q) => q.id)).toContain(quote.id);
+  });
+
+  it("Business B's embed -> a completed estimate -> the quote belongs to B; A cannot see it, B can", async () => {
+    const { db, session, otherSession } = await setUp();
+    const businessB = await getCurrentBusiness(db, otherSession);
+
+    const resolved = await resolveEmbedBusiness(db, businessB.publicEmbedId);
+    expect(resolved?.id).toBe(businessB.id);
+
+    const quote = await createQuotePublic(
+      db,
+      resolved!.id,
+      publicSubmission({ name: "Customer B", email: "customer-b@example.com" }),
+    );
+
+    expect(quote.businessId).toBe(businessB.id);
+    expect((await listQuotes(db, otherSession)).map((q) => q.id)).toContain(quote.id);
+    expect((await listQuotes(db, session)).map((q) => q.id)).not.toContain(quote.id);
+    expect(await getQuote(db, session, quote.id)).toBeUndefined();
+  });
+
+  it("distinct embed ids for A and B never resolve to each other's business, even when both exist simultaneously", async () => {
+    const { db, session, otherSession } = await setUp();
+    const businessA = await getCurrentBusiness(db, session);
+    const businessB = await getCurrentBusiness(db, otherSession);
+    expect(businessA.publicEmbedId).not.toBe(businessB.publicEmbedId);
+
+    expect((await resolveEmbedBusiness(db, businessA.publicEmbedId))?.id).toBe(businessA.id);
+    expect((await resolveEmbedBusiness(db, businessB.publicEmbedId))?.id).toBe(businessB.id);
+  });
+
+  it("re-analysis (updateQuotePublic) can NEVER reassign a quote to a different real business — ownership is immutable through the public update path", async () => {
+    const { db, session, otherSession } = await setUp();
+    const businessA = await getCurrentBusiness(db, session);
+    const businessB = await getCurrentBusiness(db, otherSession);
+
+    const quote = await createQuotePublic(
+      db,
+      businessA.id,
+      publicSubmission({ name: "Customer A", email: "customer-a@example.com" }),
+    );
+
+    // Attempting to "update" it under Business B's resolved identity (e.g.
+    // a corrupted/switched embedId mid-session) must be refused outright,
+    // never silently move the quote to B.
+    await expect(
+      updateQuotePublic(db, businessB.id, quote.id, publicSubmission({ name: "Customer A", email: "customer-a@example.com" })),
+    ).rejects.toThrow(/quote not found/i);
+
+    // The quote is untouched: still A's, not B's, and B's dashboard never sees it.
+    const stillA = await getQuote(db, session, quote.id);
+    expect(stillA?.businessId).toBe(businessA.id);
+    expect((await listQuotes(db, otherSession)).map((q) => q.id)).not.toContain(quote.id);
+
+    // A legitimate re-analysis under the SAME business (A) still works.
+    const updated = await updateQuotePublic(
+      db,
+      businessA.id,
+      quote.id,
+      publicSubmission({ name: "Customer A", email: "customer-a@example.com" }),
+    );
+    expect(updated.businessId).toBe(businessA.id);
   });
 });

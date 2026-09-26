@@ -85,6 +85,27 @@ export function clearCachedEmbedId(storage: EmbedIdStorage): void {
 }
 
 /**
+ * The tenant-isolation invariant (2026-09 "lost tenant identity" incident —
+ * docs/decisions/0026): once THIS session is known to have started from a
+ * specific business's embed (a cached id was present at all), it must
+ * NEVER silently fall through to the bare/default-business estimator
+ * again — that's exactly how a real production quote ended up under an
+ * unrelated business, with no error surfaced anywhere. `verifyEmbedIdAction`
+ * previously collapsed "confirmed invalid" and "an unexpected error
+ * prevented checking at all" into the same `false`, and the caller then
+ * treated that identically to "no embed was ever cached" — clearing the
+ * id and proceeding as if this were always a bare session. Neither a
+ * confirmed-invalid id NOR a transient failure may do that: both must
+ * BLOCK, not degrade. A pure, exported function (not inlined in the
+ * effect below) so this exact invariant is directly unit-testable without
+ * a DOM — see `EstimatorContext.test.ts`.
+ */
+export function shouldBlockEstimator(cachedEmbedIdPresent: boolean, verification: boolean | null): boolean {
+  if (!cachedEmbedIdPresent) return false;
+  return verification !== true;
+}
+
+/**
  * Only property/service/contact answers persist across a reload — uploaded
  * photos are real browser File objects (via blob: URLs) that cannot survive
  * one, so we intentionally don't try. Restoring a "photo" that just shows a
@@ -147,6 +168,15 @@ interface EstimatorContextValue {
   quoteId: string | null;
   /** Which business's embed this session belongs to, if any — `null` for the marketing site's own bare `/estimate/*` wizard. See `EMBED_ID_STORAGE_KEY`'s comment. */
   embedId: string | null;
+  /**
+   * True when this session is known to have started from a specific
+   * business's embed (a cached id was present) but that identity could
+   * NOT be confirmed valid — either genuinely invalid or an unexpected
+   * error prevented checking. See `shouldBlockEstimator`'s own comment:
+   * every `/estimate/*` step must treat this as a hard stop, never as
+   * "proceed with no tenant" (that would be the exact bug this closes).
+   */
+  embedBlocked: boolean;
   /** True while `addPhotos` is still compressing a batch — see imageCompression.ts. Lets PhotoUpload show "Processing…" instead of leaving the customer wondering why their photo hasn't appeared yet. */
   isProcessingPhotos: boolean;
   updateProperty: (patch: Partial<PropertyDetails>) => void;
@@ -179,6 +209,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [quoteId, setQuoteId] = useState<string | null>(null);
   const [embedId, setEmbedIdState] = useState<string | null>(null);
+  const [embedBlocked, setEmbedBlocked] = useState(false);
   const [isProcessingPhotos, setIsProcessingPhotos] = useState(false);
   const hydrated = useRef(false);
 
@@ -227,15 +258,27 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           // after they'd already filled everything in — confirmed root
           // cause, not a guess: business resolution itself was proven
           // healthy for the business's real, current embed id and fails
-          // only for an id that no longer matches one. Clearing an invalid
-          // id falls back to the same bare-estimator behavior a visitor
-          // with no embed context already gets — it never substitutes a
-          // different business's identity.
-          const stillValid = await verifyEmbedIdAction(storedEmbedId);
-          if (stillValid) {
-            setEmbedIdState(storedEmbedId);
+          // only for an id that no longer matches one.
+          //
+          // 2026-09 incident (docs/decisions/0026): `verification` is
+          // `true` (confirmed valid), `false` (confirmed invalid), or
+          // `null` (an unexpected error — NOT the same as invalid). Only
+          // `true` may set the trusted `embedId` state. Neither of the
+          // other two may silently proceed as a bare session — that used
+          // to happen here, and a real production quote landed on an
+          // unrelated business as a direct result, with nothing surfaced
+          // to the customer or the business. `shouldBlockEstimator`
+          // encodes this invariant once, testably, for both branches.
+          const verification = await verifyEmbedIdAction(storedEmbedId);
+          if (shouldBlockEstimator(true, verification)) {
+            // Only clear the cache for a CONFIRMED-invalid id — a
+            // transient error might resolve on its own (a reload/retry),
+            // and clearing it here would just as permanently discard a
+            // perfectly real embed id as trusting it blindly did before.
+            if (verification === false) clearCachedEmbedId(window.sessionStorage);
+            setEmbedBlocked(true);
           } else {
-            clearCachedEmbedId(window.sessionStorage);
+            setEmbedIdState(storedEmbedId);
           }
         }
       } catch {
@@ -381,6 +424,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       analysisError,
       quoteId,
       embedId,
+      embedBlocked,
       isProcessingPhotos,
       updateProperty,
       updateServices,
@@ -404,6 +448,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
       analysisError,
       quoteId,
       embedId,
+      embedBlocked,
       isProcessingPhotos,
       updateProperty,
       updateServices,

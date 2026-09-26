@@ -66,6 +66,23 @@ async function requirePublicBusiness(embedId?: string): Promise<Business> {
   if (!business) {
     throw new Error(embedId ? ESTIMATOR_NOT_CONFIGURED_MESSAGE : NO_BUSINESS_CONFIGURED_MESSAGE);
   }
+  // Safe, permanent, structured signal (no PII — a business id is not a
+  // secret) for the ONE thing that should be rare for a real embedded
+  // session (2026-09 "lost tenant identity" incident, docs/decisions/0026):
+  // this specific call resolved via the default/oldest-business fallback,
+  // not a real embed id. Every legitimate embed page load should never hit
+  // this; if it starts appearing at volume for what should be embedded
+  // traffic, that's the exact anomaly to investigate.
+  if (!embedId) {
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        event: "public-estimator-business-resolution",
+        usedDefaultFallback: true,
+        resolvedBusinessId: business.id,
+      }),
+    );
+  }
   return business;
 }
 
@@ -111,13 +128,28 @@ export async function getPublicActiveConfigurationAction(embedId?: string): Prom
   }
 }
 
-/** Used by `/embed/[embedId]`'s landing page to verify the id is real BEFORE redirecting into the wizard, so an invalid/typo'd embed snippet fails fast with a clear message instead of silently breaking several steps later. Any unexpected failure resolves to `false` (the same "invalid" UI a genuinely bad id shows) rather than crashing that page. */
-export async function verifyEmbedIdAction(embedId: string): Promise<boolean> {
+/**
+ * Used by `/embed/[embedId]`'s landing page (verify BEFORE redirecting into
+ * the wizard) and by `EstimatorContext`'s own re-verification of a cached
+ * id on later mounts. Three-way result, not a plain boolean (2026-09
+ * "lost tenant identity" incident — see docs/decisions/0026): `true` — the
+ * id resolves to a real business; `false` — CONFIRMED invalid (the lookup
+ * itself completed and found nothing, e.g. a typo'd/deleted embed);
+ * `null` — genuinely UNKNOWN, because something unexpected (a transient
+ * DB error, a cold-start hiccup) prevented the lookup from completing at
+ * all. Collapsing `null` into `false` (the previous behavior) meant a
+ * transient failure looked EXACTLY like "this embed id doesn't exist,"
+ * and every caller's "not valid → give up on this embed" handling then
+ * silently discarded a perfectly real embed id — see `EstimatorContext`'s
+ * own comment on why that must never resolve to the bare-estimator
+ * fallback for a session that already established a real tenant.
+ */
+export async function verifyEmbedIdAction(embedId: string): Promise<boolean | null> {
   try {
     return Boolean(await resolveEmbedBusiness(getDb(), embedId));
   } catch (err) {
     logUnexpected("verifyEmbedIdAction", err);
-    return false;
+    return null;
   }
 }
 

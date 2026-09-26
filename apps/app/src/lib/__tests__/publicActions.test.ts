@@ -114,10 +114,20 @@ describe("getPublicActiveConfigurationAction", () => {
   });
 });
 
-describe("verifyEmbedIdAction", () => {
-  it("resolves to false (not a thrown error) when the lookup itself throws", async () => {
+describe("verifyEmbedIdAction (2026-09 \"lost tenant identity\" incident, docs/decisions/0026: confirmed-invalid and unexpected-error must be DISTINGUISHABLE, not collapsed into the same value)", () => {
+  it("resolves to null (not false, not a thrown error) when the lookup itself throws — an unexpected error is NOT the same as a confirmed-invalid embed id", async () => {
     mocks.resolveEmbedBusiness.mockRejectedValue(new Error("db unavailable"));
+    await expect(verifyEmbedIdAction("any-id")).resolves.toBeNull();
+  });
+
+  it("resolves to false when the lookup completes and confirms no business has this embed id", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue(undefined);
     await expect(verifyEmbedIdAction("any-id")).resolves.toBe(false);
+  });
+
+  it("resolves to true when the lookup completes and finds a business", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue({ id: "biz_1" });
+    await expect(verifyEmbedIdAction("any-id")).resolves.toBe(true);
   });
 });
 
