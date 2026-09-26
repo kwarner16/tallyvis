@@ -133,10 +133,7 @@ export function StepShell({ children }: StepShellProps) {
       )}
     >
       <header className="mb-8 flex flex-col gap-6 sm:mb-10">
-        <Link href="/estimate" className="flex items-center gap-2 text-base font-semibold text-ink">
-          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-accent" />
-          Tallyvis
-        </Link>
+        <TallyvisWordmark embedded={Boolean(embedId)} />
 
         {currentIndex >= 0 ? (
           <ol aria-label="Estimate progress" className="flex items-center">
@@ -176,6 +173,44 @@ export function StepShell({ children }: StepShellProps) {
 
       <PoweredByTallyvis embedded={Boolean(embedId)} />
     </div>
+  );
+}
+
+/**
+ * Pre-launch hardening pass: the wordmark used to be a plain internal
+ * `Link href="/estimate"` in every context, embedded or not. For the
+ * direct, un-embedded estimator (`embedded` false — someone using Tallyvis
+ * itself, not a business's embedded copy on their own site) that's a dead
+ * end: it never actually took a visitor to the marketing site, just back to
+ * the estimator's own first step. Now it goes to `MARKETING_URL`
+ * (https://tallyvis.com in production), the same env-driven URL
+ * `PoweredByTallyvis` below already uses, rather than a hardcoded domain.
+ *
+ * For an embedded estimator (`embedded` true), this intentionally keeps the
+ * original in-app `Link href="/estimate"` behavior: it must never carry a
+ * customer away from the business's own website that's hosting the iframe.
+ */
+function TallyvisWordmark({ embedded }: { embedded: boolean }) {
+  const content = (
+    <>
+      <span aria-hidden="true" className="h-2 w-2 rounded-full bg-accent" />
+      Tallyvis
+    </>
+  );
+  const className = "flex items-center gap-2 text-base font-semibold text-ink";
+
+  if (embedded) {
+    return (
+      <Link href="/estimate" className={className}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <a href={MARKETING_URL} className={className}>
+      {content}
+    </a>
   );
 }
 
