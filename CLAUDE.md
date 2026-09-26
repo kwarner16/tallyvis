@@ -217,8 +217,11 @@ notifications & website embedding) — complete.**
     [embedId]`) that resolves a business publicly without ever trusting
     or exposing its internal `businessId`, finally giving the public
     estimator the real multi-business routing ADR 0011 flagged as a
-    stated Phase 9 simplification (still the fallback when no embed id is
-    given). `packages/pricing` is untouched. See
+    stated Phase 9 simplification. That "fall back to an arbitrary real
+    business when no embed id is given" behavior was later removed entirely
+    (see ADR 0027) after it caused real cross-tenant quote leakage; the
+    direct, un-embedded `/estimate` wizard is now a no-database-write demo
+    instead. `packages/pricing` is untouched. See
     `docs/decisions/0016-onboarding-billing-embed.md` for exactly what
     was verified against real services (password reset, quote email via
     the dev provider, trial/access-gate logic, embed resolution, webhook

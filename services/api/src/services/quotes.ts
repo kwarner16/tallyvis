@@ -15,7 +15,7 @@ import type { Queryable } from "../db/pg/client";
 import * as quotesRepo from "../repositories/quotes";
 import * as customersService from "./customers";
 import * as pricingService from "./pricing";
-import { getSubscription, hasProductAccess } from "./subscriptions";
+import { getSubscription, getSubscriptionByBusinessId, hasProductAccess } from "./subscriptions";
 
 export interface CreateQuoteInput {
   customer: CustomerInput;
@@ -139,12 +139,47 @@ async function requireProductAccess(db: Queryable, session: AuthSession): Promis
 }
 
 /**
+ * The message `createQuotePublic` throws when the embedding business's own
+ * trial/subscription has ended. Exported (not just used internally) so
+ * `apps/app`'s public-action layer could special-case it if a future UI
+ * ever wants to; today it flows through the same generic
+ * `sanitizeForPublicDisplay` fallback every other unexpected
+ * `createQuotePublic` failure does, which already tells the customer their
+ * request wasn't auto-delivered and to use the business's direct contact
+ * link instead (see `/estimate/result`'s `quoteSaveFailed` notice).
+ */
+export const PUBLIC_ESTIMATOR_ACCESS_SUSPENDED_MESSAGE =
+  "This business's Tallyvis estimator is temporarily unavailable.";
+
+/**
+ * The public-embed counterpart to `requireProductAccess`, closing a gap a
+ * pre-launch audit found: entitlement was enforced on the business's own
+ * authenticated "New quote" button but NOT on the actual revenue-generating
+ * surface, the public embed on the business's own website — a business
+ * whose trial or subscription had ended kept receiving unlimited free
+ * quotes through its live embed indefinitely. `businessId` here is always
+ * server-resolved from a validated embed id (see `resolveEmbedBusiness`),
+ * never client-supplied, so this carries the same trust boundary
+ * `requireProductAccess` gets from a validated session.
+ */
+async function requirePublicProductAccess(db: Queryable, businessId: string): Promise<void> {
+  const subscription = await getSubscriptionByBusinessId(db, businessId);
+  if (!hasProductAccess(subscription)) {
+    throw new Error(PUBLIC_ESTIMATOR_ACCESS_SUSPENDED_MESSAGE);
+  }
+}
+
+/**
  * The public estimator's counterpart to `createQuote`: the same pricing
  * and persistence logic, but for the one place a quote is created without
- * a signed-in session — the customer-facing `/estimate/*` wizard, which
- * resolves `businessId` server-side via `getDefaultPublicBusiness` rather
- * than from a session or, critically, from anything the browser sent. See
- * docs/decisions/0011-persistence-auth-and-multi-tenancy.md.
+ * a signed-in session — the customer-facing `/estimate/*` wizard. As of
+ * ADR 0027, `businessId` here is always resolved server-side from a
+ * validated `public_embed_id` (`resolveEmbedBusiness`), never from a
+ * session or anything the browser sent, and never falls back to an
+ * arbitrary real business (the old `getDefaultPublicBusiness` fallback is
+ * dead in every live path — see that ADR). See
+ * docs/decisions/0011-persistence-auth-and-multi-tenancy.md for the
+ * original tenancy model this refined.
  *
  * The one deliberate behavioural difference from `createQuote`: this always
  * creates a fresh `Customer` row instead of matching the submitted email
@@ -154,6 +189,7 @@ async function requireProductAccess(db: Queryable, session: AuthSession): Promis
  * real name, phone, and address — see `createCustomerForBusiness`.
  */
 export async function createQuotePublic(db: Queryable, businessId: string, input: CreateQuoteInput): Promise<Quote> {
+  await requirePublicProductAccess(db, businessId);
   const customer = await customersService.createCustomerForBusiness(db, businessId, input.customer);
   return persistPricedQuote(db, businessId, customer.id, input);
 }

@@ -108,6 +108,17 @@ export async function getSubscription(db: Queryable, session: AuthSession): Prom
 }
 
 /**
+ * Same lookup as `getSubscription`, for the one caller with no
+ * `AuthSession`: the unauthenticated public estimator (`createQuotePublic`).
+ * `businessId` there is always server-resolved from a validated embed id,
+ * never client-supplied — see `resolveEmbedBusiness` — so this carries the
+ * same trust boundary `getSubscription` gets from a validated session.
+ */
+export async function getSubscriptionByBusinessId(db: Queryable, businessId: string): Promise<Subscription | undefined> {
+  return subscriptionsRepo.getSubscriptionByBusinessId(db, businessId);
+}
+
+/**
  * Self-heals a subscription genuinely stuck at `incomplete` despite already
  * having a real Stripe subscription id — the exact "webhook was missed or
  * delayed" gap a 2026-09 production incident surfaced (see

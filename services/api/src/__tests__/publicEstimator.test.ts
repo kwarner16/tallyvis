@@ -5,6 +5,8 @@ import { getDefaultPublicBusiness, getCurrentBusiness, resolveEmbedBusiness } fr
 import { createQuote, createQuotePublic, updateQuotePublic, getQuote, listQuotes } from "../services/quotes";
 import { findOrCreateCustomer, listCustomers } from "../services/customers";
 import { getActiveConfiguration, saveNewPricingConfigurationVersion } from "../services/pricing";
+import { getSubscription, startTrial } from "../services/subscriptions";
+import { upsertSubscription } from "../repositories/subscriptions";
 
 const getDb = useTestDb();
 
@@ -147,6 +149,47 @@ describe("createQuotePublic customer handling", () => {
     );
 
     expect(second.customerId).toBe(first.customerId);
+  });
+});
+
+describe("createQuotePublic — entitlement gate", () => {
+  it("still allows quote creation for a legacy business with no subscription row at all", async () => {
+    const { db, session } = await setUp();
+    const quote = await createQuotePublic(db, session.businessId, publicSubmission({ name: "V", email: "v@example.com" }));
+    expect(quote.id).toBeTruthy();
+  });
+
+  it("allows quote creation while the business is on an active trial", async () => {
+    const { db, session } = await setUp();
+    await startTrial(db, session, "starter");
+    const quote = await createQuotePublic(db, session.businessId, publicSubmission({ name: "V", email: "v@example.com" }));
+    expect(quote.id).toBeTruthy();
+  });
+
+  it("blocks quote creation through the public embed once the business's trial has expired — the actual revenue-generating surface, not just its own dashboard button", async () => {
+    const { db, session } = await setUp();
+    await startTrial(db, session, "starter");
+    const sub = (await getSubscription(db, session))!;
+    await upsertSubscription(db, session.businessId, {
+      planId: sub.planId,
+      status: "trialing",
+      trialStartedAt: sub.trialStartedAt,
+      trialEndsAt: new Date(Date.now() - 1000).toISOString(),
+    });
+
+    await expect(
+      createQuotePublic(db, session.businessId, publicSubmission({ name: "V", email: "v@example.com" })),
+    ).rejects.toThrow(/estimator is temporarily unavailable/);
+  });
+
+  it("blocks quote creation through the public embed for a canceled subscription", async () => {
+    const { db, session } = await setUp();
+    await startTrial(db, session, "starter");
+    await upsertSubscription(db, session.businessId, { planId: "starter", status: "canceled" });
+
+    await expect(
+      createQuotePublic(db, session.businessId, publicSubmission({ name: "V", email: "v@example.com" })),
+    ).rejects.toThrow(/estimator is temporarily unavailable/);
   });
 });
 
