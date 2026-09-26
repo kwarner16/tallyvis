@@ -1,6 +1,7 @@
 import type { Queryable } from "../db/pg/client";
 import { verifyStripeWebhookSignature } from "../billing/verifyWebhookSignature";
 import { resolvePlanIdFromPriceId } from "../billing";
+import type { StripeSubscriptionObject } from "../billing/types";
 import * as subscriptionsRepo from "../repositories/subscriptions";
 import type { Subscription, SubscriptionStatus } from "../repositories/subscriptions";
 import * as billingChargesRepo from "../repositories/billingCharges";
@@ -25,6 +26,11 @@ const STRIPE_TO_INTERNAL_STATUS: Record<string, SubscriptionStatus> = {
   paused: "expired",
 };
 
+/** Shared with `subscriptions.ts`'s Stripe reconciliation path — the same Stripe-status → internal-status mapping every webhook branch already uses. */
+export function mapStripeSubscriptionStatus(stripeStatus: string): SubscriptionStatus {
+  return STRIPE_TO_INTERNAL_STATUS[stripeStatus] ?? "incomplete";
+}
+
 export class WebhookVerificationError extends Error {}
 
 interface StripeEvent {
@@ -37,65 +43,34 @@ interface StripeEvent {
 }
 
 /**
- * True if `event` should be skipped: either an exact replay of the most
- * recently applied event (Stripe explicitly documents at-least-once
- * delivery), or a distinct but OLDER event arriving out of order after a
- * newer one was already applied to this row. The second check is what
- * lets this reject a late-arriving, out-of-order DIFFERENT event, not just
- * a byte-for-byte replay of the last one — see
- * docs/decisions/0018-stripe-v1-hardening.md for why this was added and
- * why it's a small, targeted fix rather than a full ordered-event-log.
+ * Pure mapping from a Stripe subscription object to this app's own patch
+ * fields — extracted so the exact same field-by-field translation (status
+ * mapping, plan resolution, and the cancellation-state clearing rules) is
+ * used whether the object arrived via a live webhook event or a direct
+ * Stripe API fetch (reconciliation). Does NOT include `businessId`,
+ * `providerSubscriptionId` backfill, or `lastWebhookEventId`/
+ * `lastWebhookEventCreatedAt` — those depend on the caller's context
+ * (an event vs. a plain fetch) and are added by each caller.
  */
-function isStaleOrReplayed(event: StripeEvent, existing: Subscription | undefined): boolean {
-  if (!existing) return false;
-  if (event.id && existing.lastWebhookEventId === event.id) return true;
-  if (event.created !== undefined && existing.lastWebhookEventCreatedAt !== undefined) {
-    if (event.created < existing.lastWebhookEventCreatedAt) return true;
-  }
-  return false;
+export interface SubscriptionPatchFromStripe {
+  /** `undefined` when the price on the subscription doesn't resolve to a known plan (foreign/stale data) — callers should fall back to the existing stored planId in that case. */
+  resolvedPlanId: ReturnType<typeof resolvePlanIdFromPriceId>;
+  status: SubscriptionStatus;
+  trialStartedAt?: string;
+  trialEndsAt?: string;
+  currentPeriodStart?: string;
+  currentPeriodEnd?: string;
+  canceledAt?: string;
+  clearCanceledAt: boolean;
+  cancelAtPeriodEnd?: boolean;
+  cancelAt?: string;
 }
 
-/** Shared by `customer.subscription.created`/`.updated`/`.deleted` — the only difference between them is where `status` comes from. */
-async function applyStripeSubscription(db: Queryable, event: StripeEvent, forcedStatus?: SubscriptionStatus): Promise<void> {
-  const stripeSub = event.data.object as {
-    id: string;
-    status: string;
-    current_period_start?: number;
-    current_period_end?: number;
-    canceled_at?: number | null;
-    trial_start?: number | null;
-    trial_end?: number | null;
-    cancel_at_period_end?: boolean;
-    cancel_at?: number | null;
-    items?: { data?: Array<{ price?: { id?: string } }> };
-    metadata?: { businessId?: string };
-  };
-
-  // Stripe does not guarantee delivery order ACROSS event types — only
-  // same-object events are (best-effort) ordered — so this event can
-  // legitimately arrive before the `checkout.session.completed` handler
-  // has had a chance to backfill `provider_subscription_id` onto the
-  // row. Without this fallback, that race permanently drops the event
-  // (silently returning below) and the subscription is stuck at
-  // whatever status `createCheckoutSessionForPlan` initialized it to —
-  // exactly the "Stripe says trialing, TallyVis says incomplete" bug
-  // this fixes (2026-09 incident). `subscription_data.metadata` is set
-  // on every Checkout-created subscription (see
-  // billing/providers/stripe.ts), so it's always available here as a
-  // second, reliable way to find the right row — `providerSubscriptionId`
-  // is passed through explicitly below so this row is found directly by
-  // id on every subsequent event, not just future ones that happen to
-  // repeat the fallback.
-  let existing = await subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
-  let foundByMetadataFallback = false;
-  if (!existing && stripeSub.metadata?.businessId) {
-    existing = await subscriptionsRepo.getSubscriptionByBusinessId(db, stripeSub.metadata.businessId);
-    foundByMetadataFallback = existing !== undefined;
-  }
-  if (!existing) return;
-  if (isStaleOrReplayed(event, existing)) return;
-
-  const status: SubscriptionStatus = forcedStatus ?? (STRIPE_TO_INTERNAL_STATUS[stripeSub.status] ?? "incomplete");
+export function buildSubscriptionPatchFromStripe(
+  stripeSub: StripeSubscriptionObject,
+  forcedStatus?: SubscriptionStatus,
+): SubscriptionPatchFromStripe {
+  const status: SubscriptionStatus = forcedStatus ?? mapStripeSubscriptionStatus(stripeSub.status);
 
   // A Customer Portal plan switch changes the subscription's Stripe Price,
   // not anything Tallyvis-initiated — resolve it back to our own planId so
@@ -130,15 +105,23 @@ async function applyStripeSubscription(db: Queryable, event: StripeEvent, forced
       ? undefined
       : new Date(stripeSub.cancel_at * 1000).toISOString();
 
-  await subscriptionsRepo.upsertSubscription(db, existing.businessId, {
-    planId: resolvedPlanId ?? existing.planId,
+  // Same "only act when the payload actually has an opinion" rule as
+  // `cancel_at_period_end` above, applied to `canceled_at` — real Stripe
+  // subscription objects always include this key (as a number or `null`).
+  // A `.deleted` event's genuinely-truthy `canceled_at` is set normally;
+  // otherwise, when the field is present and falsy, it must be explicitly
+  // CLEARED (not just left alone) — Stripe itself clears `canceled_at` on
+  // reactivation, and without this a subscription that was scheduled to
+  // cancel and then reactivated would keep showing the stale original
+  // cancellation timestamp forever, since plain COALESCE(NULL, existing)
+  // can never express "clear this" (2026-09 incident audit — found via a
+  // real production subscription stuck exactly this way).
+  const canceledAt = stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000).toISOString() : undefined;
+  const clearCanceledAt = forcedStatus !== "canceled" && "canceled_at" in stripeSub && !stripeSub.canceled_at;
+
+  return {
+    resolvedPlanId,
     status,
-    // Only set when this event was resolved via the metadata fallback
-    // above (the normal id-lookup path already found this row BY its
-    // provider_subscription_id, so it's already correct and this is
-    // omitted to avoid a redundant write) — backfills the column so
-    // every later event for this same subscription is found directly.
-    providerSubscriptionId: foundByMetadataFallback ? stripeSub.id : undefined,
     trialStartedAt: stripeSub.trial_start ? new Date(stripeSub.trial_start * 1000).toISOString() : undefined,
     trialEndsAt: stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : undefined,
     currentPeriodStart: stripeSub.current_period_start
@@ -147,9 +130,79 @@ async function applyStripeSubscription(db: Queryable, event: StripeEvent, forced
     currentPeriodEnd: stripeSub.current_period_end
       ? new Date(stripeSub.current_period_end * 1000).toISOString()
       : undefined,
-    canceledAt: stripeSub.canceled_at ? new Date(stripeSub.canceled_at * 1000).toISOString() : undefined,
+    canceledAt,
+    clearCanceledAt,
     cancelAtPeriodEnd,
     cancelAt,
+  };
+}
+
+/**
+ * True if `event` should be skipped: either an exact replay of the most
+ * recently applied event (Stripe explicitly documents at-least-once
+ * delivery), or a distinct but OLDER event arriving out of order after a
+ * newer one was already applied to this row. The second check is what
+ * lets this reject a late-arriving, out-of-order DIFFERENT event, not just
+ * a byte-for-byte replay of the last one — see
+ * docs/decisions/0018-stripe-v1-hardening.md for why this was added and
+ * why it's a small, targeted fix rather than a full ordered-event-log.
+ */
+function isStaleOrReplayed(event: StripeEvent, existing: Subscription | undefined): boolean {
+  if (!existing) return false;
+  if (event.id && existing.lastWebhookEventId === event.id) return true;
+  if (event.created !== undefined && existing.lastWebhookEventCreatedAt !== undefined) {
+    if (event.created < existing.lastWebhookEventCreatedAt) return true;
+  }
+  return false;
+}
+
+/** Shared by `customer.subscription.created`/`.updated`/`.deleted` — the only difference between them is where `status` comes from. */
+async function applyStripeSubscription(db: Queryable, event: StripeEvent, forcedStatus?: SubscriptionStatus): Promise<void> {
+  const stripeSub = event.data.object as unknown as StripeSubscriptionObject;
+
+  // Stripe does not guarantee delivery order ACROSS event types — only
+  // same-object events are (best-effort) ordered — so this event can
+  // legitimately arrive before the `checkout.session.completed` handler
+  // has had a chance to backfill `provider_subscription_id` onto the
+  // row. Without this fallback, that race permanently drops the event
+  // (silently returning below) and the subscription is stuck at
+  // whatever status `createCheckoutSessionForPlan` initialized it to —
+  // exactly the "Stripe says trialing, TallyVis says incomplete" bug
+  // this fixes (2026-09 incident). `subscription_data.metadata` is set
+  // on every Checkout-created subscription (see
+  // billing/providers/stripe.ts), so it's always available here as a
+  // second, reliable way to find the right row — `providerSubscriptionId`
+  // is passed through explicitly below so this row is found directly by
+  // id on every subsequent event, not just future ones that happen to
+  // repeat the fallback.
+  let existing = await subscriptionsRepo.getSubscriptionByProviderSubscriptionId(db, stripeSub.id);
+  let foundByMetadataFallback = false;
+  if (!existing && stripeSub.metadata?.businessId) {
+    existing = await subscriptionsRepo.getSubscriptionByBusinessId(db, stripeSub.metadata.businessId);
+    foundByMetadataFallback = existing !== undefined;
+  }
+  if (!existing) return;
+  if (isStaleOrReplayed(event, existing)) return;
+
+  const patch = buildSubscriptionPatchFromStripe(stripeSub, forcedStatus);
+
+  await subscriptionsRepo.upsertSubscription(db, existing.businessId, {
+    planId: patch.resolvedPlanId ?? existing.planId,
+    status: patch.status,
+    // Only set when this event was resolved via the metadata fallback
+    // above (the normal id-lookup path already found this row BY its
+    // provider_subscription_id, so it's already correct and this is
+    // omitted to avoid a redundant write) — backfills the column so
+    // every later event for this same subscription is found directly.
+    providerSubscriptionId: foundByMetadataFallback ? stripeSub.id : undefined,
+    trialStartedAt: patch.trialStartedAt,
+    trialEndsAt: patch.trialEndsAt,
+    currentPeriodStart: patch.currentPeriodStart,
+    currentPeriodEnd: patch.currentPeriodEnd,
+    canceledAt: patch.canceledAt,
+    clearCanceledAt: patch.clearCanceledAt,
+    cancelAtPeriodEnd: patch.cancelAtPeriodEnd,
+    cancelAt: patch.cancelAt,
     lastWebhookEventId: event.id,
     lastWebhookEventCreatedAt: event.created,
   });

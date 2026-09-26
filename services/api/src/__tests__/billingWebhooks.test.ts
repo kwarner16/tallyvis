@@ -441,6 +441,54 @@ describe("handleStripeWebhook — scheduled cancellation (Customer Portal 'cance
     expect(updated.cancelAt).toBeUndefined();
   });
 
+  it("canceled_at clears back to undefined once a later event reports no cancellation — not just cancel_at_period_end/cancel_at (2026-09 incident: a real production subscription stayed stuck showing a stale cancellation timestamp forever after reactivation, even though status/cancel_at_period_end correctly recovered)", async () => {
+    const db = getDb();
+    const session = await newBusiness(db);
+    await upsertSubscription(db, session.businessId, { planId: "pro", status: "trialing", providerSubscriptionId: "sub_stale_canceled_at" });
+
+    // First event: cancellation requested (canceled_at set), matching the
+    // real Stripe payload shape observed in production — cancel_at_period_end
+    // can legitimately read false in the same instant canceled_at is set.
+    const firstEvent = JSON.stringify({
+      id: "evt_cancel_requested",
+      created: NOW_SECONDS,
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_stale_canceled_at",
+          status: "trialing",
+          cancel_at_period_end: false,
+          canceled_at: NOW_SECONDS,
+        },
+      },
+    });
+    await handleStripeWebhook(db, firstEvent, signPayload(firstEvent), SECRET);
+    expect((await getSubscription(db, session))!.canceledAt).toBeTruthy();
+
+    // Second, later event: Stripe confirms reactivation — canceled_at is
+    // genuinely null again. Without the fix, COALESCE(NULL, canceled_at)
+    // would keep the stale timestamp from the first event forever.
+    const secondEvent = JSON.stringify({
+      id: "evt_reactivated_for_real",
+      created: NOW_SECONDS + 42,
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_stale_canceled_at",
+          status: "trialing",
+          cancel_at_period_end: false,
+          canceled_at: null,
+        },
+      },
+    });
+    await handleStripeWebhook(db, secondEvent, signPayload(secondEvent), SECRET);
+
+    const updated = (await getSubscription(db, session))!;
+    expect(updated.status).toBe("trialing");
+    expect(updated.canceledAt).toBeUndefined();
+    expect(updated.lastWebhookEventId).toBe("evt_reactivated_for_real");
+  });
+
   it("an event with no opinion about cancel_at_period_end (omitted from the payload) leaves the existing scheduled state untouched", async () => {
     const db = getDb();
     const session = await newBusiness(db);

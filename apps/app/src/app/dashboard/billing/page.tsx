@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getPlan, TRIAL_DAYS } from "@tallyvis/config";
-import { billingConfigured, getSubscription, listBillingCharges, resolveEffectiveStatus } from "@tallyvis/api";
+import { billingConfigured, getSubscriptionReconciled, listBillingCharges, resolveEffectiveStatus } from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { requireContext } from "@/lib/session";
 import { InstallationChoice } from "@/components/dashboard/InstallationChoice";
@@ -33,7 +33,7 @@ export default async function BillingPage({
 }) {
   const { db, session } = await requireContext();
   const { checkout, installation } = await searchParams;
-  const subscription = await getSubscription(db, session);
+  const subscription = await getSubscriptionReconciled(db, session);
   const charges = await listBillingCharges(db, session);
   const installationCharge = charges.find((charge) => charge.kind === "website_installation");
 

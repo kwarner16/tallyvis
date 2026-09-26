@@ -9,10 +9,12 @@ import { getBusinessById } from "../repositories/businesses";
 import {
   createCheckoutSession as providerCreateCheckoutSession,
   createPortalSession as providerCreatePortalSession,
+  retrieveSubscription as providerRetrieveSubscription,
   isBillingConfigured,
   resolveStripePriceId,
   resolveInstallationPriceId,
 } from "../billing";
+import { buildSubscriptionPatchFromStripe } from "./billingWebhooks";
 
 export type { Subscription, SubscriptionStatus } from "../repositories/subscriptions";
 export type { BillingCharge } from "../repositories/billingCharges";
@@ -103,6 +105,69 @@ function checkoutIdempotencyKey(kind: "subscription" | "installation", businessI
 
 export async function getSubscription(db: Queryable, session: AuthSession): Promise<Subscription | undefined> {
   return subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+}
+
+/**
+ * Self-heals a subscription genuinely stuck at `incomplete` despite already
+ * having a real Stripe subscription id — the exact "webhook was missed or
+ * delayed" gap a 2026-09 production incident surfaced (see
+ * `createCheckoutSessionForPlan`'s duplicate-subscription guard and the
+ * billing dashboard page, the two callers of this function). Deliberately
+ * NOT called from `getSubscription`/`hasProductAccess` — those are on the
+ * hot entitlement path (every `createQuote` call, every dashboard page
+ * load), and adding a live Stripe API call there would mean Stripe traffic
+ * proportional to app usage rather than to the rare "actually stuck"
+ * case. Bounded instead to exactly the two places a human is already
+ * taking a deliberate billing action (viewing the billing page, or trying
+ * to choose a plan again) — and even there, only when there's a concrete
+ * reason to suspect staleness (`status === "incomplete"` AND a
+ * `providerSubscriptionId` already on file — i.e. Checkout completed for
+ * real, but no subscription-lifecycle webhook has landed yet). A
+ * healthy trialing/active/canceled/expired row, or one with no Stripe
+ * subscription yet, never reaches Stripe here at all.
+ *
+ * Fails safe: any error reaching Stripe (network blip, momentarily
+ * misconfigured credentials) is swallowed and the original, unreconciled
+ * subscription is returned unchanged — this is a best-effort freshness
+ * check, never a hard dependency of rendering the billing page or
+ * evaluating the duplicate-subscription guard.
+ */
+export async function reconcileSubscriptionFromStripe(
+  db: Queryable,
+  subscription: Subscription,
+): Promise<Subscription> {
+  if (subscription.status !== "incomplete" || !subscription.providerSubscriptionId || !isBillingConfigured()) {
+    return subscription;
+  }
+
+  let stripeSub;
+  try {
+    stripeSub = await providerRetrieveSubscription(subscription.providerSubscriptionId);
+  } catch (err) {
+    console.error("reconcileSubscriptionFromStripe: could not reach Stripe, leaving local state as-is:", err);
+    return subscription;
+  }
+
+  const patch = buildSubscriptionPatchFromStripe(stripeSub);
+  return subscriptionsRepo.upsertSubscription(db, subscription.businessId, {
+    planId: patch.resolvedPlanId ?? subscription.planId,
+    status: patch.status,
+    trialStartedAt: patch.trialStartedAt,
+    trialEndsAt: patch.trialEndsAt,
+    currentPeriodStart: patch.currentPeriodStart,
+    currentPeriodEnd: patch.currentPeriodEnd,
+    canceledAt: patch.canceledAt,
+    clearCanceledAt: patch.clearCanceledAt,
+    cancelAtPeriodEnd: patch.cancelAtPeriodEnd,
+    cancelAt: patch.cancelAt,
+  });
+}
+
+/** Same as `getSubscription`, but self-heals a stuck `incomplete` row first (see `reconcileSubscriptionFromStripe`) — used only by the billing dashboard page, never the entitlement gate. */
+export async function getSubscriptionReconciled(db: Queryable, session: AuthSession): Promise<Subscription | undefined> {
+  const subscription = await subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+  if (!subscription) return subscription;
+  return reconcileSubscriptionFromStripe(db, subscription);
 }
 
 /**
@@ -241,7 +306,18 @@ export async function createCheckoutSessionForPlan(
     if (!business) throw new Error("Business not found.");
 
     const priceId = resolveStripePriceId(plan.id);
-    const existing = await subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+    const existingBeforeReconcile = await subscriptionsRepo.getSubscriptionByBusinessId(db, session.businessId);
+    // Self-heal a locally-"incomplete" row before deciding whether to
+    // block or allow — otherwise a business whose webhook was merely
+    // delayed (not lost) would see the unhelpful "already have a
+    // subscription" refusal below with no way to ever get past it apart
+    // from waiting, even though Stripe's own state is already known and
+    // fetchable. See `reconcileSubscriptionFromStripe`'s own comment for
+    // why this is safe to call here specifically (a deliberate, rare,
+    // user-initiated action) but not from the entitlement gate.
+    const existing = existingBeforeReconcile
+      ? await reconcileSubscriptionFromStripe(db, existingBeforeReconcile)
+      : existingBeforeReconcile;
 
     // Refuse to start a SECOND real Stripe subscription for a business
     // that already has a real Stripe Customer on file, unless its

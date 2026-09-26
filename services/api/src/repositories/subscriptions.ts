@@ -101,6 +101,21 @@ export interface UpsertSubscriptionInput {
   providerCheckoutSessionId?: string;
   canceledAt?: string;
   /**
+   * True clears `canceled_at` back to NULL instead of the default
+   * COALESCE-preserve — pass this (from `applyStripeSubscription`, which
+   * always knows Stripe's current truth for this field whenever the
+   * incoming payload actually includes `canceled_at`) when Stripe reports
+   * NO cancellation timestamp for an event that isn't itself a
+   * `.deleted`/forced-canceled one. Without this, a subscription that was
+   * scheduled to cancel and then reactivated (Stripe clears its own
+   * `canceled_at` on reactivation) would keep showing the stale original
+   * cancellation timestamp forever — `status`/`cancel_at_period_end`
+   * would correctly reflect the reactivation, but `canceled_at` alone
+   * would not, since plain `COALESCE(NULL, canceled_at)` can never
+   * express "clear this," only "leave it." (2026-09 incident audit.)
+   */
+  clearCanceledAt?: boolean;
+  /**
    * Unlike every other optional field above, omitting this does NOT mean
    * "preserve the existing value" when `cancelAt` is also omitted — see
    * this function's own comment for why a plain COALESCE can't correctly
@@ -157,7 +172,7 @@ export async function upsertSubscription(
          billing_customer_id = COALESCE($7, billing_customer_id),
          provider_subscription_id = COALESCE($8, provider_subscription_id),
          provider_checkout_session_id = COALESCE($9, provider_checkout_session_id),
-         canceled_at = COALESCE($10, canceled_at),
+         canceled_at = CASE WHEN $17 THEN NULL ELSE COALESCE($10, canceled_at) END,
          cancel_at_period_end = COALESCE($11, cancel_at_period_end),
          cancel_at = CASE WHEN $11 = FALSE THEN NULL ELSE COALESCE($12, cancel_at) END,
          last_webhook_event_id = COALESCE($13, last_webhook_event_id),
@@ -181,6 +196,7 @@ export async function upsertSubscription(
         input.lastWebhookEventCreatedAt ?? null,
         now,
         businessId,
+        input.clearCanceledAt ?? false,
       ],
     );
   } else {

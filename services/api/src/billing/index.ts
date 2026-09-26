@@ -7,6 +7,7 @@ import {
   type CheckoutSessionResult,
   type CreatePortalSessionInput,
   type PortalSessionResult,
+  type StripeSubscriptionObject,
 } from "./types";
 
 export {
@@ -17,6 +18,7 @@ export {
   type CheckoutSessionResult,
   type CreatePortalSessionInput,
   type PortalSessionResult,
+  type StripeSubscriptionObject,
 } from "./types";
 
 /**
@@ -58,6 +60,18 @@ export async function createPortalSession(input: CreatePortalSessionInput): Prom
 export async function cancelSubscriptionImmediately(providerSubscriptionId: string): Promise<void> {
   const provider = resolveBillingProvider();
   return provider.cancelSubscriptionImmediately(providerSubscriptionId);
+}
+
+/**
+ * Fetches the real, current Stripe subscription object directly — used
+ * ONLY by `services/subscriptions.ts`'s narrowly-scoped
+ * `reconcileSubscriptionFromStripe` (2026-09 incident hardening), never as
+ * a general "refresh from Stripe" called on every request. See that
+ * function's own comment for exactly when and why this fires.
+ */
+export async function retrieveSubscription(providerSubscriptionId: string): Promise<StripeSubscriptionObject> {
+  const provider = resolveBillingProvider();
+  return provider.retrieveSubscription(providerSubscriptionId);
 }
 
 /** Surfaced to the dashboard so it can show "Billing not configured" honestly rather than a button that would fail when clicked. */

@@ -606,6 +606,156 @@ describe("createCheckoutSessionForPlan", () => {
       ).resolves.toEqual({ url: "https://checkout.stripe.example/cs_first_ever" });
     });
   });
+
+  describe("stale-incomplete self-healing via Stripe reconciliation (2026-09 incident follow-up — a missed webhook must not leave a valid subscription stuck 'incomplete' forever)", () => {
+    beforeEach(() => {
+      process.env.STRIPE_SECRET_KEY = "sk_test_reconcile";
+    });
+
+    it("reconciles 'incomplete' -> 'trialing' from Stripe before evaluating the guard, and blocks with the SAME safe message (a live subscription really does already exist)", async () => {
+      const { db, session } = await setUp();
+      const { upsertSubscription } = await import("../repositories/subscriptions");
+      await upsertSubscription(db, session.businessId, {
+        planId: "growth",
+        status: "incomplete",
+        billingCustomerId: "cus_missed_webhook",
+        providerSubscriptionId: "sub_missed_webhook",
+      });
+      const billing = await import("../billing");
+      vi.spyOn(billing, "retrieveSubscription").mockResolvedValue({
+        id: "sub_missed_webhook",
+        status: "trialing",
+        trial_start: Math.floor(Date.now() / 1000),
+        trial_end: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+      });
+      const checkoutSpy = vi.spyOn(billing, "createCheckoutSession");
+
+      await expect(
+        createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).rejects.toThrow(/already have a subscription/i);
+      expect(checkoutSpy).not.toHaveBeenCalled();
+
+      // The self-heal itself persisted, independent of the guard's own message.
+      const healed = (await getSubscription(db, session))!;
+      expect(healed.status).toBe("trialing");
+    });
+
+    it("reconciles 'incomplete' -> 'canceled' from Stripe and then ALLOWS a fresh checkout — a truly-ended subscription must not stay stuck refusing reactivation forever", async () => {
+      const { db, session } = await setUp();
+      const { upsertSubscription } = await import("../repositories/subscriptions");
+      await upsertSubscription(db, session.businessId, {
+        planId: "starter",
+        status: "incomplete",
+        billingCustomerId: "cus_actually_ended",
+        providerSubscriptionId: "sub_actually_ended",
+      });
+      const billing = await import("../billing");
+      vi.spyOn(billing, "retrieveSubscription").mockResolvedValue({ id: "sub_actually_ended", status: "canceled" });
+      vi.spyOn(billing, "createCheckoutSession").mockResolvedValue({
+        id: "cs_reactivate_after_reconcile",
+        url: "https://checkout.stripe.example/cs_reactivate_after_reconcile",
+      });
+
+      await expect(
+        createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).resolves.toEqual({ url: "https://checkout.stripe.example/cs_reactivate_after_reconcile" });
+    });
+
+    it("never calls Stripe to reconcile when the local status is already trialing/active/canceled/expired — reconciliation is bounded to the genuinely ambiguous 'incomplete' case only", async () => {
+      const { db, session } = await setUp();
+      const { upsertSubscription } = await import("../repositories/subscriptions");
+      await upsertSubscription(db, session.businessId, {
+        planId: "growth",
+        status: "trialing",
+        billingCustomerId: "cus_healthy",
+        providerSubscriptionId: "sub_healthy",
+      });
+      const billing = await import("../billing");
+      const retrieveSpy = vi.spyOn(billing, "retrieveSubscription");
+
+      await expect(
+        createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).rejects.toThrow(/already have a subscription/i);
+      expect(retrieveSpy).not.toHaveBeenCalled();
+    });
+
+    it("never calls Stripe to reconcile when there's no providerSubscriptionId on file yet (nothing to look up)", async () => {
+      const { db, session } = await setUp();
+      const { upsertSubscription } = await import("../repositories/subscriptions");
+      await upsertSubscription(db, session.businessId, {
+        planId: "growth",
+        status: "incomplete",
+        billingCustomerId: "cus_no_sub_id_yet",
+      });
+      const billing = await import("../billing");
+      const retrieveSpy = vi.spyOn(billing, "retrieveSubscription");
+
+      await expect(
+        createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).rejects.toThrow(/already have a subscription/i);
+      expect(retrieveSpy).not.toHaveBeenCalled();
+    });
+
+    it("fails safe: a Stripe error during reconciliation never throws or blocks the guard — it just falls back to the stale local state", async () => {
+      const { db, session } = await setUp();
+      const { upsertSubscription } = await import("../repositories/subscriptions");
+      await upsertSubscription(db, session.businessId, {
+        planId: "growth",
+        status: "incomplete",
+        billingCustomerId: "cus_stripe_unreachable",
+        providerSubscriptionId: "sub_stripe_unreachable",
+      });
+      const billing = await import("../billing");
+      vi.spyOn(billing, "retrieveSubscription").mockRejectedValue(new Error("network error"));
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      // Local status is still "incomplete" after the failed reconciliation
+      // attempt, so the guard's normal (non-reconciled) behavior applies —
+      // still refuses, per the existing "stuck incomplete" guard test.
+      await expect(
+        createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" }),
+      ).rejects.toThrow(/already have a subscription/i);
+      expect((await getSubscription(db, session))?.status).toBe("incomplete");
+      consoleSpy.mockRestore();
+    });
+  });
+});
+
+describe("getSubscriptionReconciled", () => {
+  beforeEach(() => {
+    process.env.STRIPE_SECRET_KEY = "sk_test_reconcile";
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.STRIPE_SECRET_KEY;
+  });
+
+  it("self-heals a stuck-incomplete subscription with a real providerSubscriptionId when read from the billing page", async () => {
+    const { db, session } = await setUp();
+    const { upsertSubscription } = await import("../repositories/subscriptions");
+    await upsertSubscription(db, session.businessId, {
+      planId: "pro",
+      status: "incomplete",
+      billingCustomerId: "cus_billing_page",
+      providerSubscriptionId: "sub_billing_page",
+    });
+    const billing = await import("../billing");
+    vi.spyOn(billing, "retrieveSubscription").mockResolvedValue({ id: "sub_billing_page", status: "active" });
+
+    const { getSubscriptionReconciled } = await import("../services/subscriptions");
+    const result = await getSubscriptionReconciled(db, session);
+    expect(result?.status).toBe("active");
+  });
+
+  it("returns undefined, without calling Stripe, when the business has no subscription row at all", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const retrieveSpy = vi.spyOn(billing, "retrieveSubscription");
+
+    const { getSubscriptionReconciled } = await import("../services/subscriptions");
+    expect(await getSubscriptionReconciled(db, session)).toBeUndefined();
+    expect(retrieveSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("createInstallationCheckoutSession", () => {

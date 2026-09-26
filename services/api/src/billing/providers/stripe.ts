@@ -5,6 +5,7 @@ import {
   type CheckoutSessionResult,
   type CreatePortalSessionInput,
   type PortalSessionResult,
+  type StripeSubscriptionObject,
 } from "../types";
 
 /**
@@ -43,7 +44,7 @@ function encodeFormBody(params: Record<string, string>): string {
 async function stripeRequest(
   baseUrl: string,
   secretKey: string,
-  method: "POST" | "DELETE",
+  method: "GET" | "POST" | "DELETE",
   path: string,
   body?: Record<string, string>,
   idempotencyKey?: string,
@@ -160,5 +161,21 @@ export function createStripeProvider(config: StripeProviderConfig): BillingProvi
     );
   }
 
-  return { name: "stripe", createCheckoutSession, createPortalSession, cancelSubscriptionImmediately };
+  async function retrieveSubscription(providerSubscriptionId: string): Promise<StripeSubscriptionObject> {
+    const result = await stripeRequest(
+      baseUrl,
+      config.secretKey,
+      "GET",
+      `/v1/subscriptions/${encodeURIComponent(providerSubscriptionId)}`,
+    );
+    return result as unknown as StripeSubscriptionObject;
+  }
+
+  return {
+    name: "stripe",
+    createCheckoutSession,
+    createPortalSession,
+    cancelSubscriptionImmediately,
+    retrieveSubscription,
+  };
 }

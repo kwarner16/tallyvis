@@ -52,6 +52,28 @@ export interface PortalSessionResult {
   url: string;
 }
 
+/**
+ * The shape of a Stripe subscription object — identical whether it arrives
+ * as a webhook event's `data.object` (see `services/billingWebhooks.ts`) or
+ * from a direct `GET /v1/subscriptions/{id}` reconciliation fetch (see
+ * `services/subscriptions.ts`'s `reconcileSubscriptionFromStripe`) — one
+ * shape, one field-mapping function (`buildSubscriptionPatchFromStripe`),
+ * used by both callers.
+ */
+export interface StripeSubscriptionObject {
+  id: string;
+  status: string;
+  current_period_start?: number;
+  current_period_end?: number;
+  canceled_at?: number | null;
+  trial_start?: number | null;
+  trial_end?: number | null;
+  cancel_at_period_end?: boolean;
+  cancel_at?: number | null;
+  items?: { data?: Array<{ price?: { id?: string } }> };
+  metadata?: { businessId?: string };
+}
+
 export type BillingErrorCategory = "not-configured" | "provider-error" | "invalid-request";
 
 export class BillingProviderError extends Error {
@@ -77,4 +99,15 @@ export interface BillingProvider {
    * for why financial/accounting records intentionally remain in Stripe.
    */
   cancelSubscriptionImmediately(providerSubscriptionId: string): Promise<void>;
+  /**
+   * Fetches the real, current Stripe subscription object directly (not via
+   * a webhook event) — used ONLY for the targeted, narrowly-scoped
+   * reconciliation path in `services/subscriptions.ts`'s
+   * `reconcileSubscriptionFromStripe` (a local row genuinely stuck at
+   * `incomplete` despite already having a real `provider_subscription_id`
+   * — i.e. a missed/delayed webhook), never on every request or as a
+   * general-purpose "refresh from Stripe" — see that function's own
+   * comment for why this is deliberately bounded.
+   */
+  retrieveSubscription(providerSubscriptionId: string): Promise<StripeSubscriptionObject>;
 }

@@ -138,6 +138,7 @@ export { sendQuoteEmail, type QuoteEmailResult } from "./services/quoteEmail";
 
 export {
   getSubscription,
+  getSubscriptionReconciled,
   resolveEffectiveStatus,
   hasProductAccess,
   startTrial,

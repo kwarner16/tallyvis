@@ -54,8 +54,20 @@ const GENERIC_INSTALLATION_ERROR = "We couldn't start installation checkout. Ple
 const GENERIC_SELF_INSTALL_ERROR = "Could not record your installation choice. Please try again.";
 const GENERIC_PORTAL_ERROR = "Could not open your billing portal. Please try again.";
 
-/** Messages the service layer deliberately hand-writes for the caller to see as-is — never derived from a raw exception, never containing internal ids/details. */
-const SAFE_MESSAGE_PATTERN = /^(Unknown plan "|Installation has already been resolved|No billing account yet)/;
+/**
+ * Messages the service layer deliberately hand-writes for the caller to see
+ * as-is — never derived from a raw exception, never containing internal
+ * ids/details. `You already have a subscription on file...` (the
+ * duplicate-subscription guard added in the 2026-09 incident fix) was
+ * missing from this list until this same incident's follow-up audit found
+ * it: the guard was firing exactly as designed, but its own safe,
+ * actionable message ("use Manage billing instead") never reached the
+ * browser — `createCheckoutSessionAction` fell through to the generic
+ * "We couldn't start checkout" fallback below instead, making a correctly
+ * working guard look like a mysterious failure.
+ */
+const SAFE_MESSAGE_PATTERN =
+  /^(Unknown plan "|Installation has already been resolved|No billing account yet|You already have a subscription on file)/;
 
 /**
  * DB-only, no-card trial start — NOT called by any production UI as of the
