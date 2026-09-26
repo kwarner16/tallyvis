@@ -63,6 +63,8 @@ export interface PortalSessionResult {
 export interface StripeSubscriptionObject {
   id: string;
   status: string;
+  /** Stripe Customer id — used only for the metadata-fallback backfill in `applyStripeSubscription` (see that function's own comment); every other field mapping goes through `buildSubscriptionPatchFromStripe`. */
+  customer?: string;
   current_period_start?: number;
   current_period_end?: number;
   canceled_at?: number | null;

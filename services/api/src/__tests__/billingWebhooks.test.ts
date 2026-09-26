@@ -224,6 +224,56 @@ describe("handleStripeWebhook — customer.subscription.created (fixes the statu
     expect(final.providerSubscriptionId).toBe("sub_reversed");
   });
 
+  it("backfills billing_customer_id from a subscription-lifecycle event even when checkout.session.completed never arrives at all (2026-09 incident: found live during a real production webhook acceptance test) — otherwise the duplicate-subscription guard, which reads exactly this field, would never fire for a business whose real subscription IS reconciled but whose checkout.session.completed was permanently lost", async () => {
+    const db = getDb();
+    const session = await newBusiness(db);
+    await upsertSubscription(db, session.businessId, { planId: "starter", status: "incomplete" });
+
+    // Only ever a subscription-lifecycle event — checkout.session.completed
+    // is deliberately never sent in this test, simulating it being
+    // permanently lost/undelivered.
+    const subCreated = JSON.stringify({
+      id: "evt_no_checkout_completed_ever",
+      created: NOW_SECONDS,
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_no_checkout_event",
+          customer: "cus_from_subscription_event",
+          status: "trialing",
+          metadata: { businessId: session.businessId, planId: "growth" },
+        },
+      },
+    });
+    await handleStripeWebhook(db, subCreated, signPayload(subCreated), SECRET);
+
+    const after = (await getSubscription(db, session))!;
+    expect(after.status).toBe("trialing");
+    expect(after.billingCustomerId).toBe("cus_from_subscription_event");
+    expect(after.providerSubscriptionId).toBe("sub_no_checkout_event");
+  });
+
+  it("does not overwrite an already-known billing_customer_id from a later subscription event (no redundant/conflicting write)", async () => {
+    const db = getDb();
+    const session = await newBusiness(db);
+    await upsertSubscription(db, session.businessId, {
+      planId: "growth",
+      status: "trialing",
+      billingCustomerId: "cus_already_on_file",
+      providerSubscriptionId: "sub_already_known_2",
+    });
+
+    const payload = JSON.stringify({
+      id: "evt_customer_already_known",
+      created: NOW_SECONDS,
+      type: "customer.subscription.updated",
+      data: { object: { id: "sub_already_known_2", customer: "cus_should_be_ignored", status: "active" } },
+    });
+    await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
+
+    expect((await getSubscription(db, session))?.billingCustomerId).toBe("cus_already_on_file");
+  });
+
   it("does NOT use the metadata fallback when the event's subscription id already matches an existing row by id — no redundant write", async () => {
     const db = getDb();
     const session = await newBusiness(db);

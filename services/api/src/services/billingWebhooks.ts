@@ -195,6 +195,21 @@ async function applyStripeSubscription(db: Queryable, event: StripeEvent, forced
     // omitted to avoid a redundant write) — backfills the column so
     // every later event for this same subscription is found directly.
     providerSubscriptionId: foundByMetadataFallback ? stripeSub.id : undefined,
+    // Backfills `billing_customer_id` from ANY subscription-lifecycle
+    // event whenever it's still missing locally — not gated on
+    // `foundByMetadataFallback` like `providerSubscriptionId` above,
+    // because this gap is broader: `billing_customer_id` is otherwise
+    // ONLY ever set by `checkout.session.completed`, so if that one
+    // specific event is ever permanently lost or delayed indefinitely
+    // (the same class of gap this whole incident is about) while
+    // subscription.created/.updated events land fine, the local row would
+    // stay missing a Customer id forever even though a real Stripe
+    // Customer + subscription genuinely exist — and
+    // `createCheckoutSessionForPlan`'s duplicate-subscription guard reads
+    // exactly this field to decide whether to refuse a second checkout.
+    // Found live during this incident's own production webhook
+    // acceptance test (2026-09 audit), not by inspection.
+    billingCustomerId: existing.billingCustomerId ? undefined : stripeSub.customer,
     trialStartedAt: patch.trialStartedAt,
     trialEndsAt: patch.trialEndsAt,
     currentPeriodStart: patch.currentPeriodStart,
