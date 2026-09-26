@@ -21,6 +21,12 @@ export interface AnalysisLogEvent {
   errorDetail?: string;
   inputTokens?: number;
   outputTokens?: number;
+  /** Anthropic's own `request-id` — see `AiProviderResult.meta.requestId`'s own comment. Present on success; on failure, the same identifier (if the call reached Anthropic at all) is already folded into `errorDetail` instead. */
+  requestId?: string;
+  /** Anthropic's own `stop_reason` for this response (e.g. "tool_use", "end_turn", "refusal"). */
+  stopReason?: string | null;
+  /** Whether the expected tool-use block was present — see `AiProviderResult.meta.toolUseFound`'s own comment. */
+  toolUseFound?: boolean;
   /** Safe, compact per-field structural summary — see `summarizeObservationForLogging` in validateObservation.ts. Only present on a successful analysis (there's no validated observation to summarize on failure). */
   observationSummary?: string;
 }

@@ -51,6 +51,7 @@ export {
   getQuote,
   createQuote,
   createQuotePublic,
+  updateQuotePublic,
   updateQuoteAnalysis,
   recalculateQuoteEstimate,
   updateQuoteCustomer,

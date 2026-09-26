@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { Estimate } from "@tallyvis/types";
+import type { Estimate, PropertyAnalysisResult } from "@tallyvis/types";
 import type { PublicBusinessSummary } from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { reconcilePricingInput, calculateEstimate } from "@tallyvis/pricing";
@@ -11,6 +11,7 @@ import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { getEstimateDisplay } from "@/lib/estimateDisplay";
 import {
   createPublicQuoteAction,
+  updatePublicQuoteAction,
   getPublicActiveConfigurationAction,
   getPublicBusinessAction,
 } from "@/lib/publicActions";
@@ -27,7 +28,18 @@ export default function ResultStepPage() {
   /** Distinct from `analysisError` (the earlier /estimate/analyzing step) — this can fail even for the manual-entry path, which never goes through that step at all. Without this, a rejected promise here previously just left the page spinning forever with no feedback. */
   const [loadError, setLoadError] = useState<string | null>(null);
   const [quoteSaveFailed, setQuoteSaveFailed] = useState(false);
-  const hasCreatedQuote = useRef(false);
+  /**
+   * Tracks the exact `analysis` object last submitted (created or
+   * updated) — NOT just a boolean "have we ever created one" — so a
+   * re-analysis (the customer went back to add another photo, producing a
+   * genuinely new `analysis` reference) is recognized as something to
+   * submit again, while a re-render with the SAME analysis (including
+   * React strict-mode's double effect invocation) is still a no-op.
+   * Replaces the previous plain `hasCreatedQuote` boolean, which had no
+   * way to distinguish those two cases and silently discarded every
+   * re-analysis once the first quote existed (2026-09 incident audit).
+   */
+  const lastSubmittedAnalysis = useRef<PropertyAnalysisResult | null>(null);
 
   useEffect(() => {
     if (!analysis) {
@@ -72,32 +84,40 @@ export default function ResultStepPage() {
 
   // Every completed analysis becomes a quote the business can see, whether
   // or not the customer goes on to click "Request this service" — see
-  // docs/decisions/0008-quote-domain-model.md.
+  // docs/decisions/0008-quote-domain-model.md. If the customer goes BACK
+  // to add another photo (e.g. from the "Add another photo" link below)
+  // and returns here with a genuinely new `analysis`, this UPDATES the
+  // same quote instead of silently discarding the improvement — see
+  // `updatePublicQuoteAction`'s own comment (2026-09 incident audit: the
+  // business was previously stuck seeing only the first, worse-evidence
+  // submission, forever).
   useEffect(() => {
-    if (!analysis || quoteId || hasCreatedQuote.current) return;
-    hasCreatedQuote.current = true;
-    createPublicQuoteAction(
-      {
-        customer: {
-          name: input.contact.name,
-          email: input.contact.email,
-          phone: input.contact.phone || undefined,
-        },
-        property: {
-          propertyType: input.property.propertyType!,
-          stories: input.property.stories!,
-          address: input.property.address.trim(),
-        },
-        servicePreferences: input.services,
-        notes: input.notes,
-        photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
-        analysis,
-        aiObservation: aiObservation ?? undefined,
+    if (!analysis || lastSubmittedAnalysis.current === analysis) return;
+    lastSubmittedAnalysis.current = analysis;
+    const payload = {
+      customer: {
+        name: input.contact.name,
+        email: input.contact.email,
+        phone: input.contact.phone || undefined,
       },
-      embedId ?? undefined,
-    ).then((result) => {
+      property: {
+        propertyType: input.property.propertyType!,
+        stories: input.property.stories!,
+        address: input.property.address.trim(),
+      },
+      servicePreferences: input.services,
+      notes: input.notes,
+      photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
+      analysis,
+      aiObservation: aiObservation ?? undefined,
+    };
+    const action = quoteId
+      ? updatePublicQuoteAction(quoteId, payload, embedId ?? undefined)
+      : createPublicQuoteAction(payload, embedId ?? undefined);
+    action.then((result) => {
       if (result.ok) {
         setQuoteId(result.data.id);
+        setQuoteSaveFailed(false);
         return;
       }
       // The customer still sees their price either way (that's the whole

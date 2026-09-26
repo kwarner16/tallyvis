@@ -185,7 +185,26 @@ export interface BenchmarkMetrics {
 
   casesWithWindowGroundTruth: number;
   aiDeclinedToCountRate: number | null;
-  /** Overcounts are tracked separately from recall precisely so a value >100% recall can never be misread as "good" — see the mission brief's Part 4. */
+  /**
+   * Overcounts are tracked separately from recall precisely so a value
+   * >100% recall can never be misread as "good" — see the mission brief's
+   * Part 4.
+   *
+   * KNOWN CAVEAT (2026-09 "obvious window" incident audit, docs/decisions/
+   * 0025 — confirmed, not yet acted on): this compares the AI's own
+   * `windowCount` (which, per the corrected prompt, honestly means "what's
+   * visible in the photos actually submitted for this case," not the
+   * property's total) against `groundTruth.windowCount` (the property's
+   * real total). A benchmark case built from deliberately partial-coverage
+   * photos will report LOW `avgRawRecall` even when the AI counted
+   * everything visible perfectly — that's the photos' limitation, not a
+   * counting error. This metric is more meaningful for cases whose photos
+   * are known to cover the whole property; a future pass may want a
+   * separate "visible-window detection recall" metric that only ever
+   * compares against how many windows the SUBMITTED photos actually show,
+   * not the property total — not built here per the incident brief's own
+   * "do not rewrite the harness until you establish the semantics."
+   */
   avgRawRecall: number | null;
   overcountRate: number | null;
   avgAbsWindowError: number | null;

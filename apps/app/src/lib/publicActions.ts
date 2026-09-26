@@ -6,6 +6,7 @@ import {
   AiProviderError,
   analyzePropertyPublic,
   createQuotePublic,
+  updateQuotePublic,
   declineQuoteByToken,
   describeEvidenceGaps,
   getActiveConfigurationForBusiness,
@@ -256,6 +257,35 @@ export async function createPublicQuoteAction(
     // by shape (see errorSanitization.ts) rather than trusting every
     // `err.message` unconditionally.
     logUnexpected("createPublicQuoteAction", err);
+    return { ok: false, message: sanitizeForPublicDisplay(err, "Could not save this request. Please try again.") };
+  }
+}
+
+/**
+ * The re-analysis counterpart to `createPublicQuoteAction` — called
+ * instead of it once `/estimate/result` already created a quote earlier in
+ * THIS SAME session (e.g. the customer went back to add another photo).
+ * Without this, the improved analysis had nowhere to go and the business
+ * was stuck seeing the original, worse-evidence submission forever
+ * (2026-09 incident audit). See `updateQuotePublic`'s own comment for why
+ * `quoteId` — a random id this same browser already received from its own
+ * earlier `createPublicQuoteAction` call — is a safe basis for this,
+ * scoped server-side to the SAME embed-resolved business either way.
+ */
+export async function updatePublicQuoteAction(
+  quoteId: string,
+  input: CreateQuoteInput,
+  embedId?: string,
+): Promise<ActionResult<{ id: string }>> {
+  try {
+    const businessId = await requirePublicBusinessId(embedId);
+    const quote = await updateQuotePublic(getDb(), businessId, quoteId, input);
+    return { ok: true, data: { id: quote.id } };
+  } catch (err) {
+    if (err instanceof Error && (err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE || err.message === NO_BUSINESS_CONFIGURED_MESSAGE)) {
+      return { ok: false, message: err.message };
+    }
+    logUnexpected("updatePublicQuoteAction", err);
     return { ok: false, message: sanitizeForPublicDisplay(err, "Could not save this request. Please try again.") };
   }
 }

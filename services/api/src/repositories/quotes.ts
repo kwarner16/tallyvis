@@ -251,6 +251,48 @@ export async function updateQuoteAnalysisAndEstimate(
   return getQuoteById(db, businessId, id);
 }
 
+/**
+ * The public estimator's re-analysis counterpart to
+ * `updateQuoteAnalysisAndEstimate` — used when a customer improves their
+ * own submission (e.g. adds another photo after landing on
+ * `/estimate/result`) rather than a business manually correcting a field.
+ * Unlike the authenticated version, this also re-derives `status` and
+ * replaces `ai_observation_json`: a customer-driven re-analysis can
+ * genuinely resolve the evidence gap that put the quote in `needs_review`
+ * in the first place, which a business's own manual edit never implies
+ * (2026-09 incident audit — see docs/decisions/0025 for the "improved
+ * analysis was silently discarded, business saw a stale first-pass quote
+ * forever" bug this closes).
+ */
+export async function updateQuoteFromReanalysis(
+  db: Queryable,
+  businessId: string,
+  id: string,
+  analysis: PropertyAnalysisResult,
+  estimate: Estimate,
+  pricingConfigId: string,
+  status: QuoteStatus,
+  aiObservation: RawPropertyObservation | undefined,
+): Promise<Quote | undefined> {
+  const now = new Date().toISOString();
+  const result = await db.query(
+    `UPDATE quotes SET analysis_json = $1, estimate_json = $2, pricing_config_id = $3, status = $4, ai_observation_json = $5, updated_at = $6
+     WHERE id = $7 AND business_id = $8`,
+    [
+      JSON.stringify(analysis),
+      JSON.stringify(estimate),
+      pricingConfigId,
+      status,
+      aiObservation ? JSON.stringify(aiObservation) : null,
+      now,
+      id,
+      businessId,
+    ],
+  );
+  if (result.rowCount === 0) return undefined;
+  return getQuoteById(db, businessId, id);
+}
+
 export async function updateQuoteCustomerId(
   db: Queryable,
   businessId: string,

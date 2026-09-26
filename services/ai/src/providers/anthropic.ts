@@ -197,14 +197,26 @@ const SYSTEM_PROMPT = [
   "  \"unrelated_images\" if one or more photos don't appear to show the same property as the others —",
   "  leave it empty if nothing got in the way.",
   "",
-  "This is the single most important rule for windowCount: never let \"evidence.overallEvidence\" and",
-  "your windowCount status contradict each other. If you can clearly count 6 windows but substantial",
-  "parts of the property are obscured, too far away, or simply not shown in any photo, do NOT report",
-  "windowCount as \"observed\" — that would present 6 as if it were the property's true total. Report",
-  "it as \"uncertain\" instead (your best estimate of what you can see, paired with an honest",
-  "\"overallEvidence\": \"insufficient\" or \"usable_with_uncertainty\"), and use \"warnings\" to say what's",
-  "missing, e.g. \"Only the front elevation is visible; the total window count is likely higher.\" Only",
-  "use \"observed\" for windowCount when you're confident the visible windows ARE the property's total.",
+  "This is the single most important rule for windowCount, and it was previously stated backwards —",
+  "read it carefully: \"windowCount\" answers ONE question — \"how many distinct window openings can",
+  "you confidently count in the photos actually provided?\" — never the different question \"what is",
+  "this property's total window count?\". Whether the photos show the WHOLE property is a separate",
+  "judgment, and it belongs ENTIRELY in \"evidence.coverage\"/\"evidence.overallEvidence\" below — never",
+  "folded into windowCount's own status. A single photo showing only one side, or even just one",
+  "close-up window with nothing else of the building visible, is completely normal and still fully",
+  "answerable: if you can clearly see and count exactly 1 window in it, windowCount IS \"observed\"",
+  "with value 1 — that is not a claim the property only has 1 window, only a report of what these",
+  "specific photos show, and \"evidence.coverage\": \"partial\" or \"insufficient\" is what tells the",
+  "business the total may be higher, not a downgraded windowCount status. The same applies at any",
+  "count: if you can clearly count 6 windows across the provided photos, windowCount is \"observed\"",
+  "with value 6 REGARDLESS of whether other parts of the property are obscured, too far away, or not",
+  "shown at all — say that separately via \"evidence\"/\"warnings\" (e.g. \"Only the front elevation is",
+  "visible; the total window count is likely higher\"), never by refusing to report what you did",
+  "count. Reserve \"uncertain\" for windowCount specifically for when you cannot even confidently count",
+  "what IS visible — the windows themselves are ambiguous, overlapping, or too unclear to pin down a",
+  "number — and even then, always attach your best-guess \"value\" rather than omitting it; \"uncertain\"",
+  "means \"this number might be off\", never \"no number.\" Reserve \"unknown\" for windowCount only when",
+  "the photos genuinely show no windows at all, or nothing interpretable as a building.",
   "",
   "You are not setting a price; you are only describing what is visible.",
 ].join("\n");
@@ -353,28 +365,41 @@ export function createAnthropicProvider(config: AnthropicProviderConfig): AiProv
       throw describeFailure(err);
     }
 
+    // `_request_id` is added by the SDK itself onto every successfully
+    // parsed response (see @anthropic-ai/sdk's `WithRequestID`) — safe to
+    // read directly, no `.withResponse()` needed, and the same identifier
+    // Anthropic's own support asks for when diagnosing a specific call.
+    const requestId = (response as Anthropic.Message & { _request_id?: string | null })._request_id ?? undefined;
+    const diagnosticDetail = `requestId=${requestId ?? "unknown"} stopReason=${response.stop_reason ?? "unknown"}`;
+
     const meta = {
       model: response.model,
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
+      requestId,
+      stopReason: response.stop_reason,
     };
 
     if (response.stop_reason === "refusal") {
-      throw new AiProviderError("The AI declined to analyze these photos.", "refusal");
+      throw new AiProviderError("The AI declined to analyze these photos.", "refusal", diagnosticDetail);
     }
 
     const toolUse = response.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use" && block.name === TOOL_NAME,
     );
     if (!toolUse) {
-      throw new AiProviderError("The AI did not return a structured result.", "malformed-response");
+      throw new AiProviderError(
+        "The AI did not return a structured result.",
+        "malformed-response",
+        `${diagnosticDetail} toolUseFound=false`,
+      );
     }
 
     // `toolUse.input` is already JSON-parsed by the SDK for a non-streaming
     // response — still `unknown` from this file's point of view, and still
     // subject to `validateRawPropertyObservation` by the caller before
     // anything trusts its shape.
-    return { raw: toolUse.input, meta };
+    return { raw: toolUse.input, meta: { ...meta, toolUseFound: true } };
   }
 
   return { name: "anthropic", model, analyzeProperty };

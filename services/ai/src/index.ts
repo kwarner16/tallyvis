@@ -1,6 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { PropertyAnalysisResult, PropertyImage, PropertyMetadata } from "@tallyvis/types";
 import type { RawPropertyObservation } from "./types";
-import { AiProviderError, type AiProvider } from "./providers/types";
+import { AiProviderError, type AiProvider, type AiProviderResultMeta } from "./providers/types";
 import { mockProvider } from "./providers/mock";
 import { createAnthropicProvider } from "./providers/anthropic";
 import { validateRawPropertyObservation, summarizeObservationForLogging } from "./validateObservation";
@@ -60,6 +62,55 @@ export interface AnalyzePropertyResult {
 }
 
 /**
+ * Development/benchmark-only diagnostic: writes the EXACT compressed image
+ * bytes about to be sent to the AI provider to a local directory, so a
+ * developer can visually compare "original photo" against "what Anthropic
+ * actually received" (2026-09 "obvious window" incident audit — see
+ * docs/decisions/0025). Deliberately narrow and belt-and-suspenders safe:
+ *
+ * - Off by default — requires `AI_DIAGNOSTIC_IMAGE_DIR` to be explicitly
+ *   set to a local path. No such variable is ever set in any deployed
+ *   (Vercel) environment.
+ * - Hard-blocked whenever `NODE_ENV === "production"`, regardless of the
+ *   env var — a defense-in-depth second gate, not just documentation, so a
+ *   mis-set env var in a real deployment still can't turn this on.
+ * - Writes to LOCAL DISK only — never a network call, never a database
+ *   row, never retained beyond whatever the developer's own filesystem
+ *   already does. Never touches `logAnalysisEvent` — the one line this
+ *   emits names a directory and a count, never a data URI/base64 string.
+ * - One process's temp/benchmark directory, one developer's own local run
+ *   — not a shared or multi-tenant location, so it can't leak one
+ *   business's photo to another the way a shared production log stream
+ *   could.
+ *
+ * A failure here (bad directory, disk full, malformed data URI) must never
+ * break real analysis — swallowed, not rethrown.
+ */
+export function maybeWriteDiagnosticImages(images: PropertyImage[]): void {
+  const dir = process.env.AI_DIAGNOSTIC_IMAGE_DIR;
+  if (!dir || process.env.NODE_ENV === "production") return;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const stamp = Date.now();
+    let written = 0;
+    images.forEach((image, i) => {
+      const match = /^data:image\/([a-zA-Z0-9.+-]+);base64,([\s\S]+)$/.exec(image.url);
+      if (!match?.[1] || !match[2]) return;
+      const [, subtype, data] = match;
+      const ext = subtype === "jpeg" ? "jpg" : subtype.replace(/[^a-z0-9]/gi, "");
+      fs.writeFileSync(path.join(dir, `ai-diagnostic-${stamp}-${i}.${ext}`), Buffer.from(data, "base64"));
+      written++;
+    });
+    if (written > 0) {
+      // Safe: a directory path and a count, never the image content itself.
+      console.log(`[ai-diagnostic] wrote ${written} compressed image(s) to ${dir} for local inspection (dev/test only).`);
+    }
+  } catch {
+    // Never let a diagnostic-write failure affect a real analysis attempt.
+  }
+}
+
+/**
  * The full pipeline against an explicit provider: call it, validate its
  * raw output, reconcile into the app's stable analysis shape, and emit one
  * dev-visibility log line either way (Phase 12 — see the ADR above; never
@@ -74,9 +125,10 @@ export async function runAnalysis(
   images: PropertyImage[],
   metadata: PropertyMetadata,
 ): Promise<AnalyzePropertyResult> {
+  maybeWriteDiagnosticImages(images);
   const startedAt = Date.now();
   let raw: unknown;
-  let meta: { model?: string; inputTokens?: number; outputTokens?: number } | undefined;
+  let meta: AiProviderResultMeta | undefined;
 
   try {
     const result = await provider.analyzeProperty(images, metadata);
@@ -125,6 +177,9 @@ export async function runAnalysis(
       imageCount: images.length,
       errorCategory: "invalid-response",
       errorDetail: validated.errors.join(" "),
+      requestId: meta?.requestId,
+      stopReason: meta?.stopReason,
+      toolUseFound: meta?.toolUseFound,
     });
     throw new AiProviderError(
       `The AI provider returned an invalid result: ${validated.errors.join(" ")}`,
@@ -140,6 +195,9 @@ export async function runAnalysis(
     imageCount: images.length,
     inputTokens: meta?.inputTokens,
     outputTokens: meta?.outputTokens,
+    requestId: meta?.requestId,
+    stopReason: meta?.stopReason,
+    toolUseFound: meta?.toolUseFound,
     observationSummary: summarizeObservationForLogging(validated.value),
   });
 

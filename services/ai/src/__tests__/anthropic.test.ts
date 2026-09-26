@@ -111,6 +111,29 @@ describe("createAnthropicProvider — successful response", () => {
     expect(meta?.model).toBe("claude-sonnet-5");
     expect(meta?.inputTokens).toBe(100);
     expect(meta?.outputTokens).toBe(50);
+    expect(meta?.stopReason).toBe("tool_use");
+    expect(meta?.toolUseFound).toBe(true);
+  });
+
+  /**
+   * 2026-09 "obvious window" incident (docs/decisions/0025), Part 7's own
+   * diagnostic requirements: Anthropic's own request id must be captured
+   * on a SUCCESSFUL response too (previously only ever captured via
+   * `AiProviderError.detail` on a thrown error) — this is exactly the
+   * identifier Anthropic's own support asks for when diagnosing a
+   * specific past call, and without it a "the model returned something
+   * weird but didn't technically error" case had no way to be traced back
+   * to a specific request afterward.
+   */
+  it("captures Anthropic's own request-id header on a successful response", async () => {
+    const baseURL = await listen((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json", "request-id": "req_test_diagnostic_123" });
+      res.end(JSON.stringify(validToolResponse()));
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+
+    const { meta } = await provider.analyzeProperty(images, metadata);
+    expect(meta?.requestId).toBe("req_test_diagnostic_123");
   });
 
   it("sends the API key and never sends it in a way a response could echo back", async () => {
@@ -216,12 +239,24 @@ describe("createAnthropicProvider — successful response", () => {
 
   /**
    * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
-   * — the production 6-vs-14 miscount: the model must be told explicitly
-   * not to report a partial count as "observed" when it knows coverage is
-   * incomplete, and the tool schema must actually require the model to say
-   * so structurally, not just describe it in prose.
+   * — the production 6-vs-14 miscount: the tool schema must require the
+   * model to say structurally, not just in prose, whether the photos show
+   * the WHOLE property. Revised in the 2026-09 "obvious window" incident
+   * audit (docs/decisions/0025): the original fix for 6-vs-14 accidentally
+   * over-corrected by ALSO downgrading windowCount's own "observed" status
+   * whenever coverage was incomplete — which meant even a single,
+   * completely unambiguous window (the ONLY thing in a close-up photo)
+   * could never be "observed", since one photo obviously can't show "the
+   * whole property". The current prompt instead keeps these separate:
+   * windowCount answers "how many are visible in what was submitted" (can
+   * be confidently "observed" even from a single photo), while
+   * `evidence.coverage`/`overallEvidence` — still required, still
+   * structural, not just prose — is what tells the business the total may
+   * be higher. See `scripts/verify-prompt-reasoning.mjs`/`scripts/verify-window-count-against-real-api.mjs`
+   * (this incident's own diagnostic scripts) for empirical before/after
+   * confirmation against the real Anthropic API.
    */
-  it("requires a structured evidence assessment and tells the model not to report a partial count as the property's total", async () => {
+  it("requires a structured evidence assessment, and tells the model windowCount means what's visible in the submitted photos — not the property's total", async () => {
     let receivedBody: string | undefined;
     const baseURL = await listen((req, res) => {
       const chunks: Buffer[] = [];
@@ -237,7 +272,12 @@ describe("createAnthropicProvider — successful response", () => {
 
     const body = JSON.parse(receivedBody!);
     const system = body.system as string;
-    expect(system).toMatch(/do not report\s+windowcount as "observed"/i);
+    // windowCount is "observed" for what's visible, even from a single
+    // photo — the property-total question is answered SEPARATELY, by the
+    // required evidence fields below, never by downgrading windowCount.
+    expect(system).toMatch(/windowcount.*answers one question/is);
+    expect(system).toMatch(/never the different question.*property's total window count/is);
+    expect(system).toMatch(/regardless of whether other parts of the property are obscured/i);
     expect(system).toMatch(/unrelated_images/i);
 
     const tool = body.tools[0];
@@ -249,6 +289,42 @@ describe("createAnthropicProvider — successful response", () => {
       "usable_with_uncertainty",
       "insufficient",
     ]);
+  });
+
+  /**
+   * 2026-09 "obvious window" incident (docs/decisions/0025): a real human
+   * acceptance test submitted exactly one indoor close-up photo of one
+   * clearly visible window and got back no usable windowCount at all —
+   * traced (via `scripts/verify-prompt-reasoning.mjs` against the real Anthropic
+   * API) to the previous wording's "only use observed when confident the
+   * visible windows ARE the property's total", which structurally cannot
+   * ever be true for a single non-overview photo. This asserts the exact
+   * corrected instruction is present, and that "uncertain" is defined to
+   * still carry a best-guess value rather than silently becoming "no
+   * number" — the second, compounding half of the same incident (a real
+   * `analyzeProperty` call against the live API, before this fix, returned
+   * `windowCount: { status: "uncertain", confidence: "medium" }` with NO
+   * `value` field at all for an unambiguous single-window photo).
+   */
+  it("tells the model a single photo of one clearly visible window is fully answerable as 'observed', and that 'uncertain' must still carry a best-guess value", async () => {
+    let receivedBody: string | undefined;
+    const baseURL = await listen((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        receivedBody = Buffer.concat(chunks).toString("utf-8");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(validToolResponse()));
+      });
+    });
+    const provider = createAnthropicProvider({ apiKey: "test-key", baseURL });
+    await provider.analyzeProperty(images, metadata);
+
+    const system = JSON.parse(receivedBody!).system as string;
+    expect(system).toMatch(/close-up\s+window with nothing else of the building visible, is completely normal/i);
+    expect(system).toMatch(/windowcount is "observed"\s+with value 1/i);
+    expect(system).toMatch(/always attach your best-guess "value" rather than omitting it/i);
+    expect(system).toMatch(/uncertain"\s+means\s+"this number might be off",\s+never\s+"no number/i);
   });
 
   /**
@@ -411,6 +487,17 @@ describe("createAnthropicProvider — provider failure modes", () => {
 
     await expect(provider.analyzeProperty(images, metadata)).rejects.toThrow(/did not return a structured result/i);
     await expectCategory(provider.analyzeProperty(images, metadata), "malformed-response");
+
+    // Part 7's own diagnostic requirement: "the model responded but didn't
+    // call the tool" must be distinguishable, from logs alone, from every
+    // other malformed-response cause — see AiProviderError.detail's comment.
+    try {
+      await provider.analyzeProperty(images, metadata);
+      expect.unreachable();
+    } catch (err) {
+      expect((err as InstanceType<typeof AiProviderError>).detail).toMatch(/toolUseFound=false/);
+      expect((err as InstanceType<typeof AiProviderError>).detail).toMatch(/stopReason=end_turn/);
+    }
   });
 
   it("passes through a tool input with a malformed field — the caller's validator degrades it, not a crash here", async () => {

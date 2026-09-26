@@ -3,7 +3,15 @@ import type { PropertyAnalysisResult } from "@tallyvis/types";
 import type { RawPropertyObservation } from "@tallyvis/ai";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
-import { createQuote, createQuotePublic, determineInitialQuoteStatus } from "../services/quotes";
+import {
+  createQuote,
+  createQuotePublic,
+  determineInitialQuoteStatus,
+  getQuote,
+  getQuoteAiObservation,
+  listQuotes,
+  updateQuotePublic,
+} from "../services/quotes";
 import { getDefaultPublicBusiness } from "../services/business";
 
 /**
@@ -154,6 +162,69 @@ describe("createQuotePublic — escalation wired end-to-end", () => {
     });
     const quote = await createQuotePublic(db, business.id, sampleInput(resolvedAfterConfirmation, "high"));
     expect(quote.status).toBe("new");
+  });
+});
+
+describe("updateQuotePublic — re-analysis writes back to the SAME quote (2026-09 incident: a customer going back to add another photo after landing on /estimate/result previously had the improved analysis silently discarded)", () => {
+  it("overwrites the existing quote's analysis/estimate/status rather than creating a second one", async () => {
+    const { db, session } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    const badEvidence = observation({
+      evidence: { coverage: "insufficient", overallEvidence: "insufficient", issues: ["distance"] },
+    });
+    const created = await createQuotePublic(db, business.id, sampleInput(badEvidence, "high"));
+    expect(created.status).toBe("needs_review");
+
+    // The customer went back, added another photo, and got a better result.
+    const improved = observation({ windowCount: { status: "observed", value: 24, confidence: "high" } });
+    const updated = await updateQuotePublic(db, business.id, created.id, sampleInput(improved, "high"));
+
+    expect(updated.id).toBe(created.id);
+    expect(updated.status).toBe("new");
+    expect(updated.analysis.characteristics.windowCount).toBe(18); // sampleInput's own characteristics are unchanged by the observation override — this asserts the SAME analysis object flows through unmodified.
+
+    const observationOnRecord = await getQuoteAiObservation(db, session, created.id);
+    expect(observationOnRecord?.windowCount).toEqual({ status: "observed", value: 24, confidence: "high" });
+
+    // Still exactly one quote for this business — the update replaced the
+    // row in place, it never created a second one.
+    const all = await listQuotes(db, session);
+    expect(all.filter((q) => q.id === created.id)).toHaveLength(1);
+    expect(all).toHaveLength(1);
+  });
+
+  it("re-derives status from the NEW analysis, not the original — a re-analysis can resolve the evidence gap that originally caused needs_review", async () => {
+    const { db } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    const created = await createQuotePublic(db, business.id, sampleInput(observation(), "low"));
+    expect(created.status).toBe("needs_review");
+
+    const updated = await updateQuotePublic(db, business.id, created.id, sampleInput(observation(), "high"));
+    expect(updated.status).toBe("new");
+  });
+
+  it("scopes the update to the resolved business — cannot update a different business's quote even by guessing its id", async () => {
+    const { db, session } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    expect(business.id).toBe(session.businessId);
+    const created = await createQuotePublic(db, business.id, sampleInput(observation(), "high"));
+
+    await expect(
+      updateQuotePublic(db, "business_some_other_business", created.id, sampleInput(observation(), "low")),
+    ).rejects.toThrow(/quote not found/i);
+
+    // The real quote is completely untouched by the failed cross-business attempt.
+    const stillOriginal = await getQuote(db, session, created.id);
+    expect(stillOriginal?.status).toBe(created.status);
+    expect(stillOriginal?.analysis.metadata.confidence).toBe("high");
+  });
+
+  it("throws for a quote id that doesn't exist", async () => {
+    const { db } = await setUp();
+    const business = (await getDefaultPublicBusiness(db))!;
+    await expect(
+      updateQuotePublic(db, business.id, "quote_does_not_exist", sampleInput(observation(), "high")),
+    ).rejects.toThrow(/quote not found/i);
   });
 });
 

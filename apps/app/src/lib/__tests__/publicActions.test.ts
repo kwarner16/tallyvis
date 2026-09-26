@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   analyzePropertyPublic: vi.fn(),
   describeEvidenceGaps: vi.fn((): string[] => []),
   createQuotePublic: vi.fn(),
+  updateQuotePublic: vi.fn(),
   getQuoteByShareToken: vi.fn(),
   acceptQuoteByToken: vi.fn(),
   declineQuoteByToken: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock("@tallyvis/api", () => ({
   analyzePropertyPublic: mocks.analyzePropertyPublic,
   describeEvidenceGaps: mocks.describeEvidenceGaps,
   createQuotePublic: mocks.createQuotePublic,
+  updateQuotePublic: mocks.updateQuotePublic,
   getQuoteByShareToken: mocks.getQuoteByShareToken,
   acceptQuoteByToken: mocks.acceptQuoteByToken,
   declineQuoteByToken: mocks.declineQuoteByToken,
@@ -61,6 +63,7 @@ const {
   verifyEmbedIdAction,
   analyzePublicPropertyAction,
   createPublicQuoteAction,
+  updatePublicQuoteAction,
   getPublicQuoteByTokenAction,
   acceptPublicQuoteAction,
   declinePublicQuoteAction,
@@ -186,6 +189,29 @@ describe("createPublicQuoteAction", () => {
     mocks.resolveEmbedBusiness.mockResolvedValue(undefined);
     const result = await createPublicQuoteAction({} as never, "bad-id");
     expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
+  });
+});
+
+describe("updatePublicQuoteAction (2026-09 incident: re-analysis must write back to the SAME quote, not be silently discarded)", () => {
+  it("returns ok:true with the same quote's id on a successful re-analysis update", async () => {
+    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.updateQuotePublic.mockResolvedValue({ id: "quote_1", businessId: "biz_1", customerId: "cust_1" });
+    const result = await updatePublicQuoteAction("quote_1", {} as never);
+    expect(result).toEqual({ ok: true, data: { id: "quote_1" } });
+    expect(mocks.updateQuotePublic).toHaveBeenCalledWith(expect.anything(), "biz_1", "quote_1", expect.anything());
+  });
+
+  it("returns ok:false instead of throwing when business resolution fails", async () => {
+    mocks.resolveEmbedBusiness.mockResolvedValue(undefined);
+    const result = await updatePublicQuoteAction("quote_1", {} as never, "bad-id");
+    expect(result).toEqual({ ok: false, message: ESTIMATOR_NOT_CONFIGURED_MESSAGE });
+  });
+
+  it("returns a safe generic message (never a raw error) when the update itself fails unexpectedly", async () => {
+    mocks.getDefaultPublicBusiness.mockResolvedValue({ id: "biz_1" });
+    mocks.updateQuotePublic.mockRejectedValue(new Error("db unavailable"));
+    const result = await updatePublicQuoteAction("quote_1", {} as never);
+    expect(result.ok).toBe(false);
   });
 });
 

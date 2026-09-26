@@ -159,6 +159,68 @@ export async function createQuotePublic(db: Queryable, businessId: string, input
 }
 
 /**
+ * Updates the quote `createQuotePublic` already created for THIS SAME
+ * customer session with an improved analysis — e.g. the customer went
+ * back to `/estimate/photos` to add another photo after already landing
+ * on `/estimate/result` once. Without this, a second, better analysis had
+ * nowhere to go: the wizard's own "already created a quote this session"
+ * guard correctly prevents a SECOND quote row, but nothing ever wrote the
+ * improvement back to the first one, so the business was permanently
+ * stuck seeing the customer's ORIGINAL, worse-evidence submission (2026-09
+ * incident audit).
+ *
+ * Scoped by `WHERE id = $1 AND business_id = $2` at the repository layer
+ * exactly like every other public-quote operation — `businessId` is
+ * always server-resolved from the embed id, never client-supplied, so
+ * this can never touch a quote belonging to a different business even if
+ * `quoteId` were guessed. `quoteId` itself is a random UUID the customer's
+ * own browser already received from THIS quote's own creation moments
+ * earlier in the same session (never rendered in a URL, never
+ * bookmarkable) — the same "knowledge of an unguessable id from your own
+ * session is the authorization" pattern `createPublicQuoteAction` already
+ * establishes by handing that id back to an anonymous caller in the first
+ * place; it does not reduce security below what already existed.
+ *
+ * Re-derives `status` via `determineInitialQuoteStatus` (unlike the
+ * authenticated `updateQuoteAnalysis`, which never touches status) —
+ * exactly because the whole point of a customer-driven re-analysis is
+ * that it can resolve the evidence gap that originally caused
+ * `needs_review`, which a business's own manual field edit never implies.
+ */
+export async function updateQuotePublic(
+  db: Queryable,
+  businessId: string,
+  quoteId: string,
+  input: CreateQuoteInput,
+): Promise<Quote> {
+  // Checked FIRST, before any pricing lookup: a wrong/guessed businessId
+  // must fail as "quote not found" (the real, scoping-relevant reason),
+  // never leak a different, businessId-shaped error (e.g. "no pricing
+  // configuration") from a step that only runs for a business that
+  // genuinely owns this quote.
+  const existing = await quotesRepo.getQuoteById(db, businessId, quoteId);
+  if (!existing) throw new Error("Quote not found.");
+
+  const configuration = await pricingService.getActiveConfigurationForBusiness(db, businessId);
+  const pricingInput = reconcilePricingInput(input.servicePreferences, input.analysis.characteristics);
+  const estimate = calculateEstimate(pricingInput, configuration, input.analysis.metadata.confidence);
+  const status = determineInitialQuoteStatus(input.analysis, input.aiObservation);
+
+  const updated = await quotesRepo.updateQuoteFromReanalysis(
+    db,
+    businessId,
+    quoteId,
+    input.analysis,
+    estimate,
+    configuration.id,
+    status,
+    input.aiObservation,
+  );
+  if (!updated) throw new Error("Quote not found.");
+  return updated;
+}
+
+/**
  * Vision V1.1 (docs/decisions/0023-guided-capture-evidence-confidence.md)
  * — "AI → customer resolves uncertainty → deterministic pricing →
  * automatic estimate; business owner is the EXCEPTION path, not the

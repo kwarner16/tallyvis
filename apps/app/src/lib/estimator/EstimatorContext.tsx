@@ -27,17 +27,62 @@ import {
 const STORAGE_KEY = "tallyvis-estimator-draft-v1";
 /**
  * Phase 14 (see docs/decisions/0016-onboarding-billing-embed.md) — kept in
- * a SEPARATE localStorage key from `STORAGE_KEY`, deliberately not cleared
- * by `reset()`: a customer completing one estimate and starting another
- * inside the same embedded iframe session is still on the same business's
+ * a SEPARATE storage key from `STORAGE_KEY`, deliberately not cleared by
+ * `reset()`: a customer completing one estimate and starting another
+ * inside the same embed browsing session is still on the same business's
  * widget, so the embed identity should survive "start a new estimate."
  * Written by `/embed/[embedId]`'s landing page before it redirects into
  * `/estimate/property` — since that redirect fully remounts the
  * `/estimate/*` route tree (a different layout subtree, so a fresh
  * `EstimatorProvider`), React context state alone would not survive the
- * transition; localStorage does.
+ * transition; browser storage does.
+ *
+ * Deliberately `sessionStorage`, not `localStorage` (2026-09 incident —
+ * found via a real production test whose quote landed on the wrong,
+ * long-stale business): `localStorage` persists indefinitely and is
+ * shared across EVERY future tab/visit regardless of how it's reached,
+ * which is exactly what let a stale cached embed id leak into a later,
+ * unrelated top-level visit to the marketing site's own bare `/estimate`
+ * wizard (the original bug this key's own gating logic was fixing,
+ * 2026-09-24). The fix at the time added a `window.self !== window.top`
+ * guard — "only trust the cached id while actually rendered inside an
+ * iframe right now" — which incidentally also broke the legitimate case
+ * of opening `/embed/[embedId]` as a plain top-level page (exactly how a
+ * human naturally smoke-tests "the estimator embedded on my website" by
+ * following the link directly, without an iframe): the id was written,
+ * but `window.self === window.top` for that whole session, so it was
+ * NEVER read back, and every action silently fell through to
+ * `getDefaultPublicBusiness()` (the single oldest business in the entire
+ * database) instead — confirmed against a real quote in production Neon
+ * that landed on exactly that oldest, unrelated business.
+ * `sessionStorage` is scoped to one tab's browsing session regardless of
+ * iframe-ness, which fixes BOTH: reading it back no longer depends on
+ * (and can no longer be defeated by) iframe framing, and it can no
+ * longer bleed into an unrelated LATER tab/session the way `localStorage`
+ * could, so the `window.self !== window.top` guard is removed rather
+ * than kept alongside it — see `readCachedEmbedId`/`writeCachedEmbedId`/
+ * `clearCachedEmbedId` below, factored out as plain, DOM-storage-shaped
+ * functions (same "pure logic, injectable storage" pattern
+ * `imageCompression.ts` already uses) purely so this invariant — no
+ * frame-context branching anywhere in the read/write path — is directly
+ * unit-testable without a real DOM.
  */
 const EMBED_ID_STORAGE_KEY = "tallyvis-estimator-embed-id";
+
+/** Minimal shape these helpers need — satisfied by `window.sessionStorage`/`window.localStorage` and by a plain in-memory fake in tests. */
+type EmbedIdStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+export function readCachedEmbedId(storage: EmbedIdStorage): string | null {
+  return storage.getItem(EMBED_ID_STORAGE_KEY);
+}
+
+export function writeCachedEmbedId(storage: EmbedIdStorage, id: string): void {
+  storage.setItem(EMBED_ID_STORAGE_KEY, id);
+}
+
+export function clearCachedEmbedId(storage: EmbedIdStorage): void {
+  storage.removeItem(EMBED_ID_STORAGE_KEY);
+}
 
 /**
  * Only property/service/contact answers persist across a reload — uploaded
@@ -62,7 +107,7 @@ export interface PhotoRejection {
  */
 export function persistEmbedId(id: string): void {
   try {
-    window.localStorage.setItem(EMBED_ID_STORAGE_KEY, id);
+    writeCachedEmbedId(window.sessionStorage, id);
   } catch {
     // Storage unavailable — the embed simply won't survive a mid-flow refresh; not fatal to this page load.
   }
@@ -165,22 +210,14 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           const persisted = JSON.parse(raw) as PersistedInput;
           setInput((prev) => ({ ...prev, ...persisted }));
         }
-        // Only ever rehydrate a persisted embed id while this page is
-        // ACTUALLY still running inside someone's embed iframe right now
-        // (`window.self !== window.top`) — never for a genuinely top-level
-        // page view. `EMBED_ID_STORAGE_KEY` is deliberately never cleared
-        // by `reset()` (see its own comment: it must survive "start a new
-        // estimate" within the SAME embedded iframe session), which means
-        // without this guard it also survives indefinitely into any LATER,
-        // completely unrelated top-level visit to the bare `/estimate`
-        // wizard in the same browser — a confirmed production bug
-        // (2026-09-24) where the standalone estimator inherited a
-        // business's branding purely because that browser had previously
-        // visited that business's embed. A same-tab in-iframe reload/new
-        // estimate keeps `window.top !== window.self` throughout, so the
-        // legitimate "same embedded session" case this key exists for is
-        // unaffected.
-        const storedEmbedId = window.self !== window.top ? window.localStorage.getItem(EMBED_ID_STORAGE_KEY) : null;
+        // Read back from `sessionStorage` unconditionally — no frame-context
+        // check needed (see `EMBED_ID_STORAGE_KEY`'s own comment for why a
+        // `window.self !== window.top` guard used to be here, and why it's
+        // gone: `sessionStorage`'s own per-tab-session scoping already
+        // prevents the original bug that guard existed for, without also
+        // silently dropping the embed id for a legitimate top-level visit
+        // to `/embed/[embedId]`).
+        const storedEmbedId = readCachedEmbedId(window.sessionStorage);
         if (storedEmbedId) {
           // A cached embed id from an earlier session must be revalidated,
           // not blindly trusted — the underlying business may have been
@@ -198,7 +235,7 @@ export function EstimatorProvider({ children }: { children: ReactNode }) {
           if (stillValid) {
             setEmbedIdState(storedEmbedId);
           } else {
-            window.localStorage.removeItem(EMBED_ID_STORAGE_KEY);
+            clearCachedEmbedId(window.sessionStorage);
           }
         }
       } catch {

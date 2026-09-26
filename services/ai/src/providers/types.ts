@@ -10,13 +10,21 @@ import type { PropertyImage, PropertyMetadata } from "@tallyvis/types";
  * logging `services/ai/src/logging.ts` emits — never persisted, never
  * containing photos, prompts, or credentials.
  */
+export interface AiProviderResultMeta {
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Anthropic's own `request-id` (via the SDK's `_request_id`) — safe, never contains request/response content, and is exactly the identifier Anthropic's own support asks for when diagnosing a specific call (2026-09 incident audit, docs/decisions/0025 Part 7: previously only ever captured on a THROWN provider error, never on a successful-but-suspicious response). */
+  requestId?: string;
+  /** Anthropic's own `stop_reason` for this response (e.g. "tool_use", "end_turn", "refusal") — distinguishes "the model called the tool as instructed" from every other way a response can end. */
+  stopReason?: string | null;
+  /** Whether the expected `report_property_observation` tool-use block was actually present in the response — `false` here (rather than the generic "malformed-response" error) pinpoints "the model responded but didn't call the tool" as its own diagnosable case. */
+  toolUseFound?: boolean;
+}
+
 export interface AiProviderResult {
   raw: unknown;
-  meta?: {
-    model?: string;
-    inputTokens?: number;
-    outputTokens?: number;
-  };
+  meta?: AiProviderResultMeta;
 }
 
 export interface AiProvider {
