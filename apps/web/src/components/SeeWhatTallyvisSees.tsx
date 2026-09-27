@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Container, PropertyPhoto, SectionHeading, buttonVariants } from "@tallyvis/ui";
 import { Reveal } from "./Reveal";
 import { AnalysisStatus } from "./analysis-demo/AnalysisStatus";
+import { CustomerConfirmation } from "./analysis-demo/CustomerConfirmation";
 import { JobCharacteristicsPanel } from "./analysis-demo/JobCharacteristicsPanel";
 import { PricingBreakdown } from "./analysis-demo/PricingBreakdown";
 import { PropertyComparison } from "./analysis-demo/PropertyComparison";
@@ -11,6 +12,8 @@ import {
   ANALYSIS_STEPS,
   DEMO_CHARACTERISTICS,
   DEMO_CONFIDENCE,
+  DEMO_CONFIDENCE_CONFIRMED,
+  DEMO_DETECTED_WINDOW_COUNT,
   LAST_STEP_INDEX,
 } from "./analysis-demo/data";
 import type { AnalysisStage, CharacteristicKey } from "./analysis-demo/types";
@@ -24,6 +27,7 @@ function prefersReducedMotion() {
 export function SeeWhatTallyvisSees() {
   const [stage, setStage] = useState<AnalysisStage>("idle");
   const [stepIndex, setStepIndex] = useState(-1);
+  const [customerConfirmed, setCustomerConfirmed] = useState(false);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   function clearTimers() {
@@ -36,6 +40,7 @@ export function SeeWhatTallyvisSees() {
   function runFullSequence() {
     clearTimers();
     setStepIndex(-1);
+    setCustomerConfirmed(false);
     setStage("analyzing");
 
     ANALYSIS_STEPS.forEach((step, i) => {
@@ -51,6 +56,7 @@ export function SeeWhatTallyvisSees() {
   function jumpToEnd() {
     clearTimers();
     setStepIndex(LAST_STEP_INDEX);
+    setCustomerConfirmed(false);
     setStage("estimate-ready");
   }
 
@@ -72,6 +78,17 @@ export function SeeWhatTallyvisSees() {
   const currentStatus = stepIndex >= 0 ? (ANALYSIS_STEPS[stepIndex]?.status ?? null) : null;
   const isRunning = stage === "analyzing";
   const isDone = stage === "estimate-ready";
+
+  // Before the customer confirms, the panel and price reflect what Tallyvis
+  // actually detected (DEMO_DETECTED_WINDOW_COUNT, one under the real
+  // count) — not the already-corrected final number. See
+  // CustomerConfirmation's own comment for why this matters: showing the
+  // confirmed count from the start would make the "confirm or correct"
+  // step meaningless.
+  const displayCharacteristics = customerConfirmed
+    ? DEMO_CHARACTERISTICS
+    : { ...DEMO_CHARACTERISTICS, windowCount: DEMO_DETECTED_WINDOW_COUNT };
+  const displayConfidence = customerConfirmed ? DEMO_CONFIDENCE_CONFIRMED : DEMO_CONFIDENCE;
 
   return (
     <section id="see-what-tallyvis-sees" className="border-y border-line bg-paper-alt py-24">
@@ -132,12 +149,19 @@ export function SeeWhatTallyvisSees() {
 
           <div className="flex flex-col gap-4 lg:col-span-2">
             <JobCharacteristicsPanel
-              characteristics={DEMO_CHARACTERISTICS}
+              characteristics={displayCharacteristics}
               revealed={revealedCharacteristics}
             />
 
             {isDone ? (
               <>
+                <CustomerConfirmation
+                  detectedCount={DEMO_DETECTED_WINDOW_COUNT}
+                  confirmedCount={DEMO_CHARACTERISTICS.windowCount}
+                  confirmed={customerConfirmed}
+                  onConfirm={() => setCustomerConfirmed(true)}
+                />
+
                 <div
                   className="flex items-center gap-2 text-xs font-medium text-ink-faint"
                   style={{ animation: "fade-in 0.35s ease-out" }}
@@ -158,10 +182,7 @@ export function SeeWhatTallyvisSees() {
                   </svg>
                   Business&rsquo;s pricing rules applied
                 </div>
-                <PricingBreakdown
-                  characteristics={DEMO_CHARACTERISTICS}
-                  confidence={DEMO_CONFIDENCE}
-                />
+                <PricingBreakdown characteristics={displayCharacteristics} confidence={displayConfidence} />
               </>
             ) : null}
           </div>

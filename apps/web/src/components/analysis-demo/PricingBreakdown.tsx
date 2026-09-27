@@ -13,6 +13,12 @@ export interface PricingBreakdownProps {
  * DEMO_CHARACTERISTICS (standing in for future computer-vision output). The
  * math itself is exactly what a real business's pricing engine would produce.
  */
+const CONFIDENCE_NOTE: Record<ConfidenceLevel, string> = {
+  high: "Confirmed, high-confidence details go straight to the business — no manual review needed.",
+  medium: "Medium confidence means a business would review this before it’s sent.",
+  low: "Low confidence means this would be flagged for review, not sent automatically.",
+};
+
 export function PricingBreakdown({ characteristics, confidence }: PricingBreakdownProps) {
   const estimate = calculateWindowCleaningEstimate(
     characteristics,
@@ -49,8 +55,7 @@ export function PricingBreakdown({ characteristics, confidence }: PricingBreakdo
 
       <p className="mt-3 text-xs text-ink-soft">
         This total is generated the same way a real estimate would be: job characteristics run
-        through the business&rsquo;s own pricing rules, not decided by AI. Medium confidence means a
-        business would review this before it&rsquo;s sent.
+        through the business&rsquo;s own pricing rules, not decided by AI. {CONFIDENCE_NOTE[confidence]}
       </p>
     </div>
   );

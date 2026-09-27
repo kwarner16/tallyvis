@@ -50,8 +50,6 @@ export interface AnalysisOverlayProps {
   revealedDetectionIds: Set<string>;
   revealStoryMarker: boolean;
   storyLabel?: string;
-  /** Whether the scan-line sweep should render (only true while a sequence is actively running). */
-  running?: boolean;
 }
 
 /**
@@ -60,13 +58,19 @@ export interface AnalysisOverlayProps {
  * currently "revealed," so a caller can drive either a scripted reveal
  * sequence (the marketing demo) or a static, fully-revealed view (the
  * dashboard's quote visualization) with the same component.
+ *
+ * The scan-line sweep used to live here (a `running` prop), but nested
+ * inside `PropertyComparison`'s draggable clip it was only ever visible
+ * within whatever fraction of the image happened to be revealed — easy to
+ * miss or see cut off mid-sweep. `PropertyComparison` now renders its own
+ * full-width, unclipped sweep instead (2026-09-27 fix); this component only
+ * ever draws detections/story markers.
  */
 export function AnalysisOverlay({
   detections,
   revealedDetectionIds,
   revealStoryMarker,
   storyLabel = "Level 02",
-  running = false,
 }: AnalysisOverlayProps) {
   const visibleDetections = detections.filter((d) => revealedDetectionIds.has(d.id));
 
@@ -95,18 +99,6 @@ export function AnalysisOverlay({
         {visibleDetections.map((d) => (
           <DetectionBox key={d.id} detection={d} />
         ))}
-
-        {running ? (
-          <rect
-            x={40}
-            y={0}
-            width={VIEW_WIDTH - 80}
-            height={2.5}
-            className="fill-accent"
-            opacity={0.85}
-            style={{ animation: "scan-once 2.6s ease-in-out 1 forwards" }}
-          />
-        ) : null}
       </svg>
 
       {revealStoryMarker ? (

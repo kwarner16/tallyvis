@@ -36,7 +36,25 @@ export function BusinessDashboard() {
           />
         </Reveal>
 
-        <Reveal delayMs={100} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Reveal delayMs={100} className="flex flex-col items-center gap-3">
+          <div className="w-full max-w-sm rounded-2xl border border-accent/40 bg-charcoal-900 p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.15em] text-accent-soft">
+                New estimate
+              </p>
+              <span className="rounded-full border border-accent/40 bg-accent-soft/10 px-3 py-1 text-xs font-medium text-accent-soft">
+                Ready for review
+              </span>
+            </div>
+            <p className="text-3xl font-semibold tracking-tight text-paper">$220</p>
+            <p className="mt-1 text-sm text-paper/60">8 windows &middot; customer confirmed</p>
+          </div>
+          <p className="text-center text-sm text-paper/50">
+            That&rsquo;s the estimate from the demo above &mdash; landing straight in your dashboard.
+          </p>
+        </Reveal>
+
+        <Reveal delayMs={140} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {STATS.map((stat) => (
             <div
               key={stat.label}

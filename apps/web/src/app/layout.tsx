@@ -16,11 +16,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Tallyvis — Your job. Seen differently.",
+    default: "Tallyvis — Turn customer photos into quotes.",
     template: "%s — Tallyvis",
   },
   description:
-    "Tallyvis turns customer photos into intelligent, business-specific estimates, so service businesses can quote more jobs without manually inspecting every property.",
+    "Tallyvis embeds on your website, analyzes the photos your customers upload, helps collect the job details, and turns it all into an estimate — priced using your own rules.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

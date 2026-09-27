@@ -12,22 +12,46 @@ import type { AnalysisStep } from "./types";
  * any component below — they already consume the real contract type.
  * =========================================================================
  */
+/**
+ * A small, believable residential job — a single-story home with a normal
+ * window count, not the 27-window/2-story showcase this used to be. Sized
+ * so the total (via the REAL pricing engine — see PricingBreakdown) lands
+ * in a psychologically believable homepage-demo range, not a number that
+ * makes a first-time visitor wonder if Tallyvis is only for large jobs.
+ * This is the CONFIRMED count — see DEMO_DETECTED_WINDOW_COUNT for what
+ * Tallyvis's vision pass actually reports before the customer corrects it.
+ */
 export const DEMO_CHARACTERISTICS: WindowCleaningCharacteristics = {
   vertical: "window-cleaning",
-  windowCount: 27,
+  windowCount: 8,
   windowType: "double-hung",
   paneCount: 0,
-  stories: 2,
-  screens: 12,
+  stories: 1,
+  screens: 2,
   tracks: 0,
-  accessibility: "moderate",
-  condition: "fair",
+  accessibility: "easy",
+  condition: "good",
   hardWaterStaining: false,
-  estimatedLaborHours: 2.4,
+  estimatedLaborHours: 1.3,
   interiorCleaning: false,
 };
 
+/**
+ * What the vision pass actually detects before customer confirmation — one
+ * window under DEMO_CHARACTERISTICS.windowCount, illustrating a real,
+ * everyday failure mode (a window partially hidden behind a tree/car/angle)
+ * honestly rather than hiding it. See SeeWhatTallyvisSees's confirmation
+ * step: the customer corrects 7 -> 8, and the price updates to match —
+ * demonstrating that Tallyvis surfaces uncertainty instead of silently
+ * guessing, without ever showing a raw confidence score or AI schema.
+ */
+export const DEMO_DETECTED_WINDOW_COUNT = 7;
+
+/** Confidence before the customer confirms/corrects the flagged count. */
 export const DEMO_CONFIDENCE: ConfidenceLevel = "medium";
+
+/** Confidence once the customer has confirmed/corrected — matches the real product's behavior (see docs/decisions/0023-guided-capture-evidence-confidence.md): a customer-confirmed characteristic is no longer "uncertain." */
+export const DEMO_CONFIDENCE_CONFIRMED: ConfidenceLevel = "high";
 
 export const DEMO_WINDOW_DETECTIONS: WindowDetection[] = [
   {
@@ -50,17 +74,17 @@ export const ANALYSIS_STEPS: AnalysisStep[] = [
   { atMs: 0, status: "Analyzing image..." },
   { atMs: 500, status: "Detecting windows...", revealDetectionIds: ["window-upper-03"] },
   { atMs: 900, status: "Detecting windows...", revealDetectionIds: ["window-lower-01"] },
-  { atMs: 1250, status: "27 windows detected", revealCharacteristics: ["windows"] },
+  { atMs: 1250, status: "7 windows detected — 1 partially obscured", revealCharacteristics: ["windows"] },
   {
     atMs: 1600,
-    status: "2 stories detected",
+    status: "1 story detected",
     revealCharacteristics: ["stories"],
     revealStoryMarker: true,
   },
-  { atMs: 1950, status: "12 screens detected", revealCharacteristics: ["screens"] },
-  { atMs: 2300, status: "Access: Moderate", revealCharacteristics: ["access", "windowType"] },
-  { atMs: 2650, status: "Estimated labor: ~2.4 hr", revealCharacteristics: ["labor"] },
-  { atMs: 3000, status: "Estimate ready" },
+  { atMs: 1950, status: "2 screens detected", revealCharacteristics: ["screens"] },
+  { atMs: 2300, status: "Access: Easy", revealCharacteristics: ["access", "windowType"] },
+  { atMs: 2650, status: "Estimated labor: ~1.3 hr", revealCharacteristics: ["labor"] },
+  { atMs: 3000, status: "Confirm the flagged window count" },
 ];
 
 export const LAST_STEP_INDEX = ANALYSIS_STEPS.length - 1;

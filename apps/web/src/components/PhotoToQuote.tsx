@@ -4,24 +4,19 @@ import { Reveal } from "./Reveal";
 const STAGES = [
   {
     index: "01",
-    title: "Photo",
-    description: "The customer uploads photos of the property — no site visit required yet.",
+    title: "Upload",
+    description: "The customer uploads a few photos of the property — no site visit required.",
   },
   {
     index: "02",
-    title: "Vision",
-    description: "Tallyvis analyzes the images to identify the physical details of the job.",
+    title: "Analyze & confirm",
+    description:
+      "Tallyvis identifies the job details and asks the customer to confirm anything it isn't sure about.",
   },
   {
     index: "03",
-    title: "Understanding",
-    description:
-      "Tallyvis identifies structured job characteristics: window count, type, stories, access, and more.",
-  },
-  {
-    index: "04",
-    title: "Estimate",
-    description: "The business's own pricing rules turn those characteristics into a quote.",
+    title: "Quote",
+    description: "Your own pricing rules turn those details into a real estimate, sent to you.",
   },
 ];
 
@@ -33,7 +28,7 @@ export function PhotoToQuote() {
           <SectionHeading
             eyebrow="How it works"
             heading="From photo to quote."
-            description="One continuous pipeline turns a handful of photos into a real, business-configured price."
+            description="A simple three-step flow turns a handful of photos into a real, business-priced estimate."
           />
         </Reveal>
 
@@ -42,7 +37,7 @@ export function PhotoToQuote() {
             aria-hidden="true"
             className="pointer-events-none absolute left-0 right-0 top-5 hidden h-px bg-line lg:block"
           />
-          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4 lg:gap-8">
+          <div className="grid gap-10 sm:grid-cols-3 lg:gap-8">
             {STAGES.map((stage, i) => (
               <Reveal key={stage.index} delayMs={i * 90}>
                 <div className="flex flex-col gap-4">

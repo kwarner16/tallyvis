@@ -7,13 +7,19 @@ interface Row {
   value: string;
 }
 
+const ACCESS_LABELS: Record<WindowCleaningCharacteristics["accessibility"], string> = {
+  easy: "Easy",
+  moderate: "Moderate",
+  difficult: "Difficult",
+};
+
 function buildRows(characteristics: WindowCleaningCharacteristics): Row[] {
   return [
     { key: "windows", label: "Windows detected", value: String(characteristics.windowCount) },
     { key: "stories", label: "Stories", value: String(characteristics.stories) },
     { key: "screens", label: "Screens", value: String(characteristics.screens) },
     { key: "windowType", label: "Window type", value: "Double-hung" },
-    { key: "access", label: "Access", value: "Moderate" },
+    { key: "access", label: "Access", value: ACCESS_LABELS[characteristics.accessibility] },
     { key: "labor", label: "Estimated labor", value: `~${characteristics.estimatedLaborHours} hr` },
   ];
 }

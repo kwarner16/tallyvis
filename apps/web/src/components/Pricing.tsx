@@ -76,7 +76,7 @@ export function Pricing() {
                   className: "w-full",
                 })}
               >
-                Get started
+                Start free
               </Link>
             </div>
           ))}

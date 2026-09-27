@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { AnalysisOverlay, PropertyPhoto } from "@tallyvis/ui";
+import { AnalysisOverlay, PropertyPhoto, VIEW_HEIGHT, VIEW_WIDTH } from "@tallyvis/ui";
 import { DEMO_WINDOW_DETECTIONS } from "./data";
 
 export interface PropertyComparisonProps {
@@ -15,6 +15,15 @@ export interface PropertyComparisonProps {
  * Analysis" on top, clipped to the divider position. Works with mouse,
  * touch (via Pointer Events), and keyboard (arrow keys / Home / End on the
  * focused handle).
+ *
+ * The orange scan-line sweep (while `running`) is rendered here as its own
+ * full-width, unclipped SVG layer on top of everything else — not nested
+ * inside the clipped "Analysis" pane above, where it used to live. Clipped,
+ * it was only visible within whatever fraction of the image the divider
+ * happened to be revealing at the time (25%? the whole thing? cut off
+ * mid-sweep at the divider edge) — easy to miss entirely if a visitor had
+ * dragged the handle toward "Original." An unclipped overlay sweeps the
+ * complete photo every time, regardless of divider position.
  */
 export function PropertyComparison({
   revealedDetectionIds,
@@ -88,9 +97,26 @@ export function PropertyComparison({
           detections={DEMO_WINDOW_DETECTIONS}
           revealedDetectionIds={revealedDetectionIds}
           revealStoryMarker={revealStoryMarker}
-          running={running}
         />
       </div>
+
+      {running ? (
+        <svg
+          viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+          className="pointer-events-none absolute inset-0 h-full w-full"
+          aria-hidden="true"
+        >
+          <rect
+            x={0}
+            y={0}
+            width={VIEW_WIDTH}
+            height={3}
+            className="fill-accent"
+            opacity={0.9}
+            style={{ animation: "scan-once 2.6s ease-in-out 1 forwards" }}
+          />
+        </svg>
+      ) : null}
 
       <div
         aria-hidden="true"

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { buttonVariants } from "@tallyvis/ui";
-import { ESTIMATOR_URL, LOGIN_URL, SIGNUP_URL } from "@/lib/urls";
+import { LOGIN_URL, SIGNUP_URL } from "@/lib/urls";
 
 const NAV_LINKS = [
   { label: "Product", href: "/#see-what-tallyvis-sees" },
@@ -56,11 +56,8 @@ export function Nav() {
           >
             Log in
           </a>
-          <a href={SIGNUP_URL} className={buttonVariants({ variant: "outline" })}>
-            Sign up
-          </a>
-          <a href={ESTIMATOR_URL} className={buttonVariants({ variant: "primary" })}>
-            Try the Estimator
+          <a href={SIGNUP_URL} className={buttonVariants({ variant: "primary" })}>
+            Start free
           </a>
         </div>
 
@@ -114,16 +111,9 @@ export function Nav() {
             <a
               href={SIGNUP_URL}
               onClick={() => setOpen(false)}
-              className={buttonVariants({ variant: "outline", className: "w-full" })}
-            >
-              Sign up
-            </a>
-            <a
-              href={ESTIMATOR_URL}
-              onClick={() => setOpen(false)}
               className={buttonVariants({ variant: "primary", className: "w-full" })}
             >
-              Try the Estimator
+              Start free
             </a>
           </div>
         </div>
