@@ -10,6 +10,7 @@ export const metadata: Metadata = {
 };
 
 const EFFECTIVE_DATE = "September 23, 2026";
+const LAST_UPDATED = "September 30, 2026";
 
 export default function PrivacyPage() {
   return (
@@ -17,7 +18,7 @@ export default function PrivacyPage() {
       eyebrow="Legal"
       heading="Privacy Policy"
       effectiveDate={EFFECTIVE_DATE}
-      lastUpdated={EFFECTIVE_DATE}
+      lastUpdated={LAST_UPDATED}
     >
       <p>
         Tallyvis (&ldquo;Tallyvis,&rdquo; &ldquo;we,&rdquo; &ldquo;us,&rdquo; or &ldquo;our&rdquo;)
@@ -184,7 +185,79 @@ export default function PrivacyPage() {
         and secure the Services.
       </p>
 
-      <h2>2. How We Use Information</h2>
+      <h2>2. Mobile Phone Numbers and SMS Communications</h2>
+      <p>
+        If you voluntarily provide a mobile phone number and affirmatively opt in to receive SMS
+        (text message) communications &mdash; for example, by checking an unchecked opt-in
+        checkbox presented in the Tallyvis public estimator &mdash; Tallyvis and/or the service
+        business you are interacting with may use that number to send you communications
+        associated with the service you requested. Depending on the service business&rsquo;s use
+        of the Services, these messages may include things like:
+      </p>
+      <ul>
+        <li>Quote or estimate updates</li>
+        <li>Appointment confirmations</li>
+        <li>Appointment reminders</li>
+        <li>Estimated arrival notifications</li>
+        <li>Service-related updates</li>
+        <li>Post-service follow-ups</li>
+        <li>Thank-you messages</li>
+        <li>Review requests</li>
+      </ul>
+      <p>
+        <strong>SMS consent is optional.</strong> Providing a mobile phone number does not, by
+        itself, constitute consent to receive SMS communications, and opting in to SMS is never a
+        condition of purchasing or receiving services from Tallyvis or any business using
+        Tallyvis.
+      </p>
+      <p>Message frequency may vary depending on your requested service and your interactions with the applicable business. Message and data rates may apply.</p>
+      <p>
+        You may withdraw SMS consent at any time using the opt-out mechanism made available as
+        part of the applicable messaging program, including by replying STOP where supported.
+        Withdrawing SMS consent does not cancel or otherwise affect your underlying service,
+        account, estimate, quote, or appointment.
+      </p>
+      <h3>SMS Consent Records</h3>
+      <p>When you opt in to SMS communications, we record:</p>
+      <ul>
+        <li>The mobile phone number provided</li>
+        <li>SMS consent status</li>
+        <li>The date and time consent was given (consent timestamp)</li>
+        <li>The source through which consent was captured (for example, the public estimator)</li>
+        <li>The version of the SMS consent disclosure presented to you at the time you opted in</li>
+      </ul>
+      <p>
+        We use these records to determine whether a business may send you SMS communications, to
+        demonstrate compliance with applicable telecommunications and messaging-program
+        requirements, and to manage opt-in/opt-out status.
+      </p>
+      <h3>SMS Consent Is Not Shared for Marketing</h3>
+      <p>
+        <strong>
+          We do not sell or share your SMS opt-in data or personal information with third parties
+          or affiliates for marketing or promotional purposes.
+        </strong>{" "}
+        Mobile phone numbers, SMS consent status, consent timestamps, consent source, and related
+        opt-in records are not sold, rented, or transferred to third parties, affiliates, or lead
+        generators for their own marketing or promotional purposes.
+      </p>
+      <p>
+        SMS consent belongs to the particular service business you opted in with when
+        interacting with that business through the Services. Opting in to SMS communications from
+        one business using Tallyvis does not constitute, and is not treated as, consent to receive
+        SMS communications from any other, unrelated business using Tallyvis.
+      </p>
+      <p>
+        Mobile numbers and SMS consent records may still be processed by service providers (such
+        as SMS delivery/telecommunications providers and hosting/database providers) strictly as
+        necessary to operate the Services and deliver the communications you requested, consistent
+        with Section 5 (&ldquo;How We Share Information&rdquo;) below. This limited operational
+        processing is not marketing or promotional sharing, and it does not make SMS consent
+        transferable to another business or to a third party for that third party&rsquo;s own
+        marketing purposes.
+      </p>
+
+      <h2>3. How We Use Information</h2>
       <p>We may use information collected through Tallyvis to:</p>
       <ul>
         <li>Provide and operate the Services</li>
@@ -206,7 +279,7 @@ export default function PrivacyPage() {
       </ul>
       <p>We do not sell personal information as a core part of our business model.</p>
 
-      <h2>3. Artificial Intelligence</h2>
+      <h2>4. Artificial Intelligence</h2>
       <p>
         Certain Tallyvis features use artificial intelligence to analyze information supplied
         through the Services.
@@ -226,7 +299,7 @@ export default function PrivacyPage() {
         AI or machine-learning models.
       </p>
 
-      <h2>4. How We Share Information</h2>
+      <h2>5. How We Share Information</h2>
       <p>
         We may disclose information to service providers that assist us in operating Tallyvis,
         such as providers of:
@@ -242,7 +315,10 @@ export default function PrivacyPage() {
       </ul>
       <p>
         These providers are permitted to process information only as appropriate to perform
-        services for Tallyvis and subject to applicable contractual or legal restrictions.
+        services for Tallyvis and subject to applicable contractual or legal restrictions. This
+        service-provider disclosure is operational only: as described in Section 2 above, mobile
+        phone numbers and SMS consent records are never sold, rented, or disclosed to any of these
+        providers, or anyone else, for their own marketing or promotional purposes.
       </p>
       <p>We may also disclose information when reasonably necessary to:</p>
       <ul>
@@ -256,7 +332,7 @@ export default function PrivacyPage() {
         </li>
       </ul>
 
-      <h2>5. Data Retention</h2>
+      <h2>6. Data Retention</h2>
       <p>
         We retain information for as long as reasonably necessary to provide the Services,
         maintain legitimate business records, comply with legal obligations, resolve disputes, and
@@ -268,7 +344,7 @@ export default function PrivacyPage() {
         to legal, security, backup, and operational requirements.
       </p>
 
-      <h2>6. Data Security</h2>
+      <h2>7. Data Security</h2>
       <p>
         Tallyvis uses reasonable administrative, technical, and organizational safeguards designed
         to protect information against unauthorized access, disclosure, alteration, or
@@ -283,7 +359,7 @@ export default function PrivacyPage() {
         completely secure.
       </p>
 
-      <h2>7. User Choices and Data Deletion</h2>
+      <h2>8. User Choices and Data Deletion</h2>
       <p>
         Depending on the Services being used, users may be able to review or modify certain
         account information from within Tallyvis.
@@ -305,7 +381,7 @@ export default function PrivacyPage() {
         requesting deletion of your data, see <Link href="/data">Manage Your Data</Link>.
       </p>
 
-      <h2>8. Business Customers and Their Customers</h2>
+      <h2>9. Business Customers and Their Customers</h2>
       <p>Tallyvis provides software to independent businesses.</p>
       <p>
         When a business uses Tallyvis to collect or process information about its own customers,
@@ -318,7 +394,7 @@ export default function PrivacyPage() {
         requests where applicable.
       </p>
 
-      <h2>9. Children&rsquo;s Privacy</h2>
+      <h2>10. Children&rsquo;s Privacy</h2>
       <p>
         Tallyvis is intended for business and commercial use and is not directed toward children
         under 13.
@@ -332,7 +408,7 @@ export default function PrivacyPage() {
         law, we will take appropriate steps to delete it.
       </p>
 
-      <h2>10. Third-Party Services</h2>
+      <h2>11. Third-Party Services</h2>
       <p>Tallyvis may integrate with or link to third-party services.</p>
       <p>
         Those services operate under their own terms and privacy practices. Tallyvis is not
@@ -340,7 +416,7 @@ export default function PrivacyPage() {
         required by applicable law.
       </p>
 
-      <h2>11. Changes to This Privacy Policy</h2>
+      <h2>12. Changes to This Privacy Policy</h2>
       <p>
         We may update this Privacy Policy as Tallyvis evolves or as legal, regulatory, or
         technical requirements change.
@@ -351,7 +427,7 @@ export default function PrivacyPage() {
         notice when appropriate.
       </p>
 
-      <h2>12. Contact Us</h2>
+      <h2>13. Contact Us</h2>
       <p>
         Questions, requests, or concerns regarding this Privacy Policy or Tallyvis&rsquo;s data
         practices may be submitted through the contact information provided on Tallyvis.com. See{" "}
