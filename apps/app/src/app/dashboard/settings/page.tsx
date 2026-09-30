@@ -1,9 +1,10 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { getPlan, TRIAL_DAYS } from "@tallyvis/config";
+import { getPlan } from "@tallyvis/config";
 import { getCurrentBusiness, getCurrentUser, getSubscription, resolveEffectiveStatus } from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { requireContext } from "@/lib/session";
+import { grantedTrialDays } from "@/lib/trialDisplay";
 import { SettingsPageClient } from "@/components/dashboard/SettingsPageClient";
 import { ManageBillingButton } from "@/components/dashboard/ManageBillingButton";
 import { DangerZoneClient } from "@/components/dashboard/DangerZoneClient";
@@ -114,7 +115,7 @@ export default async function SettingsPage() {
             </div>
             {effectiveStatus === "trialing" && subscription.trialEndsAt ? (
               <p className="text-sm text-ink-soft">
-                7-day trial (up to {TRIAL_DAYS} days) — ends{" "}
+                {grantedTrialDays(subscription.trialStartedAt, subscription.trialEndsAt)}-day trial — ends{" "}
                 {new Date(subscription.trialEndsAt).toLocaleDateString(undefined, { month: "long", day: "numeric" })}.
               </p>
             ) : null}

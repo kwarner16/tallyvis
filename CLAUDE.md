@@ -227,6 +227,23 @@ notifications & website embedding) — complete.**
     the dev provider, trial/access-gate logic, embed resolution, webhook
     signature/event handling against hand-built payloads) vs. what
     remains architecture-only pending real Resend/Stripe credentials.
+    A later hardening/growth pass (ADR 0028) added a mirrored
+    `SmsProvider` abstraction (dev console provider + a real Twilio
+    integration, also unverified live) powering an optional new-quote SMS
+    alert to the business's own configured notification number; extended
+    the embed install page with a WordPress/GoDaddy/Shopify/Custom-HTML/
+    iframe picker (the iframe snippet points at the same `/embed/[embedId]`
+    route `embed.js` already used internally); made the dashboard quote
+    detail page mobile-first (an at-a-glance summary card, real `tel:`/
+    `mailto:` links, a sticky mobile action bar); moved the promotional
+    trial length and the installation fee out of hardcoded copy and into
+    `packages/config`'s `trial.ts`/`plans.ts` (a 30-day promo through
+    December 31, 2026, falling back to 7 days; no installation fee
+    presented to new customers for now, though the paid-installation code
+    path remains dormant); and gave `apps/web` a real SEO foundation
+    (`robots.ts`/`sitemap.ts`, canonical URLs, Open Graph/JSON-LD, two
+    landing pages, and a small `/guides` section) where none existed
+    before.
 15. Integrations and additional verticals
 
 ## Product ownership
