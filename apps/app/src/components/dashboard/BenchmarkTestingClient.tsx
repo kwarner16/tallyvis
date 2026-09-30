@@ -540,24 +540,26 @@ export function BenchmarkTestingClient({
 
           <section className="flex flex-col gap-3 rounded-2xl border border-line bg-paper p-5">
             <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Evidence-warning effectiveness</p>
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-ink-faint">
-                  <th className="pb-1">Evidence tier</th>
-                  <th className="pb-1">Cases</th>
-                  <th className="pb-1">Within ±1</th>
-                </tr>
-              </thead>
-              <tbody>
-                {evidenceRows.map((row) => (
-                  <tr key={row.tier} className="border-t border-line">
-                    <td className="py-1 text-ink">{row.label}</td>
-                    <td className="py-1 text-ink-soft">{row.count}</td>
-                    <td className="py-1 text-ink-soft">{pct(row.within1Rate)}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-ink-faint">
+                    <th className="pb-1">Evidence tier</th>
+                    <th className="pb-1">Cases</th>
+                    <th className="pb-1">Within ±1</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {evidenceRows.map((row) => (
+                    <tr key={row.tier} className="border-t border-line">
+                      <td className="py-1 text-ink">{row.label}</td>
+                      <td className="py-1 text-ink-soft">{row.count}</td>
+                      <td className="py-1 text-ink-soft">{pct(row.within1Rate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
 
           <section className="flex flex-col gap-3 rounded-2xl border border-line bg-paper p-5">
@@ -581,26 +583,28 @@ export function BenchmarkTestingClient({
           {metrics.byCondition.length > 0 ? (
             <section className="flex flex-col gap-3 rounded-2xl border border-line bg-paper p-5">
               <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">By condition</p>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-ink-faint">
-                    <th className="pb-1">Condition</th>
-                    <th className="pb-1">n</th>
-                    <th className="pb-1">Avg error</th>
-                    <th className="pb-1">±1</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {metrics.byCondition.map((row) => (
-                    <tr key={row.condition} className="border-t border-line">
-                      <td className="py-1 text-ink">{CONDITION_LABELS[row.condition]}</td>
-                      <td className="py-1 text-ink-soft">{row.count}</td>
-                      <td className="py-1 text-ink-soft">{num(row.avgAbsWindowError, 1)}</td>
-                      <td className="py-1 text-ink-soft">{pct(row.within1Rate)}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-ink-faint">
+                      <th className="pb-1">Condition</th>
+                      <th className="pb-1">n</th>
+                      <th className="pb-1">Avg error</th>
+                      <th className="pb-1">±1</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {metrics.byCondition.map((row) => (
+                      <tr key={row.condition} className="border-t border-line">
+                        <td className="py-1 text-ink">{CONDITION_LABELS[row.condition]}</td>
+                        <td className="py-1 text-ink-soft">{row.count}</td>
+                        <td className="py-1 text-ink-soft">{num(row.avgAbsWindowError, 1)}</td>
+                        <td className="py-1 text-ink-soft">{pct(row.within1Rate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </section>
           ) : null}
         </div>

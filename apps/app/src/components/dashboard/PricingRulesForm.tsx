@@ -56,7 +56,7 @@ export function PricingRulesForm({ rules, onChange, onSave, dirty, errors }: Pri
 
       <div>
         <p className="mb-3 text-sm font-medium text-ink">Difficulty multipliers</p>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {(["easy", "moderate", "difficult"] as const).map((level) => (
             <label key={level} className="flex flex-col gap-1">
               <span className="text-xs font-medium capitalize text-ink-soft">{level}</span>

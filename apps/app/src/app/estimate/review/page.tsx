@@ -120,6 +120,7 @@ export default function ReviewStepPage() {
             <input
               id="contact-name"
               type="text"
+              autoComplete="name"
               value={input.contact.name}
               onChange={(e) => updateContact({ name: e.target.value })}
               placeholder="Jane Smith"
@@ -133,6 +134,7 @@ export default function ReviewStepPage() {
             <input
               id="contact-email"
               type="email"
+              autoComplete="email"
               value={input.contact.email}
               onChange={(e) => updateContact({ email: e.target.value })}
               placeholder="jane@example.com"
@@ -146,6 +148,7 @@ export default function ReviewStepPage() {
             <input
               id="contact-phone"
               type="tel"
+              autoComplete="tel"
               value={input.contact.phone}
               onChange={(e) => updateContact({ phone: e.target.value })}
               placeholder="(555) 010-0110"

@@ -118,7 +118,7 @@ export function PhotoUpload() {
                 type="button"
                 onClick={() => removePhoto(photo.id)}
                 aria-label={`Remove photo ${photo.name}`}
-                className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-ink/70 text-paper opacity-90 transition-opacity hover:bg-ink focus-visible:opacity-100"
+                className="absolute right-1 top-1 flex h-8 w-8 items-center justify-center rounded-full bg-ink/70 text-paper opacity-90 transition-opacity hover:bg-ink focus-visible:opacity-100"
               >
                 <svg
                   aria-hidden="true"
@@ -126,7 +126,7 @@ export function PhotoUpload() {
                   fill="none"
                   stroke="currentColor"
                   strokeWidth={2}
-                  className="h-3.5 w-3.5"
+                  className="h-4 w-4"
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
                 </svg>

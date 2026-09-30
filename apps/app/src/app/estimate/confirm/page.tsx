@@ -53,7 +53,7 @@ function Stepper({
         type="button"
         aria-label="Decrease"
         onClick={() => onChange(Math.max(min, value - 1))}
-        className="flex h-9 w-9 items-center justify-center rounded-full border border-line text-lg font-medium text-ink hover:bg-paper-alt"
+        className="flex h-11 w-11 items-center justify-center rounded-full border border-line text-lg font-medium text-ink hover:bg-paper-alt"
       >
         −
       </button>
@@ -62,7 +62,7 @@ function Stepper({
         type="button"
         aria-label="Increase"
         onClick={() => onChange(Math.min(max, value + 1))}
-        className="flex h-9 w-9 items-center justify-center rounded-full border border-line text-lg font-medium text-ink hover:bg-paper-alt"
+        className="flex h-11 w-11 items-center justify-center rounded-full border border-line text-lg font-medium text-ink hover:bg-paper-alt"
       >
         +
       </button>

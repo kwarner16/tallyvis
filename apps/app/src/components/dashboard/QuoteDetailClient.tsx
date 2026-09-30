@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { CustomerInput, PricingConfiguration, Quote, QuoteStatus, WindowCleaningCharacteristics } from "@tallyvis/types";
+import { canTransitionQuoteStatus } from "@tallyvis/types";
+import { buttonVariants } from "@tallyvis/ui";
 import type { JobOutcome, ObservationComparisonRow } from "@tallyvis/api";
 import {
   recalculateQuoteEstimateAction,
@@ -21,6 +23,20 @@ import { QuoteVisual } from "@/components/dashboard/QuoteVisual";
 import { QuoteActions } from "@/components/dashboard/QuoteActions";
 import { ShareQuotePanel } from "@/components/dashboard/ShareQuotePanel";
 import { JobOutcomePanel } from "@/components/dashboard/JobOutcomePanel";
+
+/**
+ * The single most important action for the mobile sticky action bar below
+ * — mirrors `QuoteActions.tsx`'s own primary-variant entries (approve,
+ * then send), in priority order, so the bar always surfaces whichever one
+ * `canTransitionQuoteStatus` currently allows, or none at all (e.g. a
+ * "sent" quote awaiting the customer's own response has no primary action
+ * — only "Reject", which stays a deliberate, non-primary override,
+ * available in the full desktop Actions card below).
+ */
+const QUOTE_PRIMARY_ACTIONS: { label: string; target: QuoteStatus }[] = [
+  { label: "Approve estimate", target: "approved" },
+  { label: "Send estimate", target: "sent" },
+];
 
 export interface QuoteDetailClientProps {
   initialQuote: Quote;
@@ -95,9 +111,17 @@ export function QuoteDetailClient({
   const display = getEstimateDisplay(quote.estimate);
   const { characteristics, metadata } = quote.analysis;
   const estimateChanged = previousTotal !== null && previousTotal !== quote.estimate.total;
+  const displayAmount = display.kind === "exact" ? `$${display.amount.toFixed(2)}` : `$${display.low}–$${display.high}`;
+  const submittedAt = new Date(quote.createdAt).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const primaryAction = QUOTE_PRIMARY_ACTIONS.find((action) => canTransitionQuoteStatus(quote.status, action.target));
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-8 pb-20 lg:pb-0">
       <div className="flex flex-col gap-2">
         <Link href="/dashboard/quotes" className="w-fit text-sm text-ink-faint hover:text-ink">
           &larr; All quotes
@@ -113,6 +137,36 @@ export function QuoteDetailClient({
             <QuoteStatusBadge status={quote.status} />
           </div>
         </div>
+      </div>
+
+      {/*
+        Mobile-first "at a glance" summary (lg:hidden — the 3-column grid
+        just below already shows this on wider screens where there's room
+        to spare). This is the whole point of the SMS→tap→login→"see
+        customer/job info" path: everything a business owner needs to
+        decide whether to call or approve, scannable with zero scrolling,
+        with real tel:/mailto: links instead of plain text.
+      */}
+      <div className="flex flex-col gap-2 rounded-2xl border border-line bg-paper p-5 lg:hidden">
+        <div className="flex flex-wrap items-center gap-2">
+          <QuoteStatusBadge status={quote.status} />
+          <ConfidenceBadge confidence={metadata.confidence} showHint />
+        </div>
+        <p className="text-sm text-ink-soft">{quote.property.address || "No address on file"}</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          {quote.customer.phone ? (
+            <a href={`tel:${quote.customer.phone}`} className="font-medium text-accent-strong hover:text-accent">
+              {quote.customer.phone}
+            </a>
+          ) : null}
+          {quote.customer.email ? (
+            <a href={`mailto:${quote.customer.email}`} className="font-medium text-accent-strong hover:text-accent">
+              {quote.customer.email}
+            </a>
+          ) : null}
+        </div>
+        <p className="text-2xl font-semibold tracking-tight text-ink">{displayAmount}</p>
+        <p className="text-xs text-ink-faint">Submitted {submittedAt}</p>
       </div>
 
       {actionMessage ? (
@@ -141,9 +195,17 @@ export function QuoteDetailClient({
             ) : null}
           </div>
           <p className="text-sm font-medium text-ink">{quote.customer.name || "—"}</p>
-          <p className="text-sm text-ink-soft">{quote.customer.email || "No email on file"}</p>
+          {quote.customer.email ? (
+            <a href={`mailto:${quote.customer.email}`} className="block text-sm text-accent-strong hover:text-accent">
+              {quote.customer.email}
+            </a>
+          ) : (
+            <p className="text-sm text-ink-soft">No email on file</p>
+          )}
           {quote.customer.phone ? (
-            <p className="text-sm text-ink-soft">{quote.customer.phone}</p>
+            <a href={`tel:${quote.customer.phone}`} className="block text-sm text-accent-strong hover:text-accent">
+              {quote.customer.phone}
+            </a>
           ) : null}
         </div>
 
@@ -308,6 +370,38 @@ export function QuoteDetailClient({
           />
         </div>
       </div>
+
+      {/*
+        Sticky mobile-only action bar (hidden at lg: and up, where the full
+        Actions card above is already comfortably reachable without
+        scrolling past much). Keeps the single most important action — and
+        a one-tap call to the customer — available without hunting through
+        the AI-analysis/photos content above on a phone. `pb-20 lg:pb-0` on
+        the page's outer wrapper reserves room so this bar never overlaps
+        the JobOutcomePanel's own bottom content.
+      */}
+      {primaryAction || quote.customer.phone ? (
+        <div className="fixed inset-x-0 bottom-0 z-10 flex items-center gap-3 border-t border-line bg-paper px-4 py-3 shadow-[0_-2px_12px_rgba(0,0,0,0.06)] lg:hidden">
+          {quote.customer.phone ? (
+            <a
+              href={`tel:${quote.customer.phone}`}
+              aria-label="Call customer"
+              className={buttonVariants({ variant: "outline", className: "shrink-0 px-4" })}
+            >
+              Call
+            </a>
+          ) : null}
+          {primaryAction ? (
+            <button
+              type="button"
+              onClick={() => handleTransition(primaryAction.target)}
+              className={buttonVariants({ variant: "primary", className: "flex-1" })}
+            >
+              {primaryAction.label}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
