@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { PlaceholderPage } from "@/components/PlaceholderPage";
 
-export const metadata: Metadata = { title: "About" };
+export const metadata: Metadata = {
+  title: "About",
+  description: "What Tallyvis is, and the idea behind it: AI determines the job, your own pricing rules determine the price.",
+  alternates: { canonical: "/about" },
+};
 
 export default function AboutPage() {
   return (

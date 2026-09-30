@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Terms of Service",
   description:
     "The terms governing access to and use of the Tallyvis website, applications, AI features, integrations, and related services.",
+  alternates: { canonical: "/terms" },
 };
 
 const EFFECTIVE_DATE = "September 23, 2026";

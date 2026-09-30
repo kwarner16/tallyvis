@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   title: "Manage Your Data",
   description:
     "How to revoke Google access, delete your Tallyvis account, and request deletion of personal information Tallyvis maintains, including data obtained through Google integrations.",
+  alternates: { canonical: "/data" },
 };
 
 export default function ManageYourDataPage() {

@@ -3,7 +3,11 @@ import Link from "next/link";
 import { Container, Eyebrow } from "@tallyvis/ui";
 import { ContactForm } from "@/components/ContactForm";
 
-export const metadata: Metadata = { title: "Contact" };
+export const metadata: Metadata = {
+  title: "Contact",
+  description: "Get in touch with Tallyvis.",
+  alternates: { canonical: "/contact" },
+};
 
 export default function ContactPage() {
   return (

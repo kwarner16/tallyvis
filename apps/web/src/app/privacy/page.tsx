@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
     "How Tallyvis collects, uses, discloses, and protects information, including Google user data accessed through Tallyvis integrations.",
+  alternates: { canonical: "/privacy" },
 };
 
 const EFFECTIVE_DATE = "September 23, 2026";

@@ -6,6 +6,9 @@ const PRODUCT_LINKS = [
   { label: "How It Works", href: "/#from-photo-to-quote" },
   { label: "Industries", href: "/#industries" },
   { label: "Pricing", href: "/#pricing" },
+  { label: "AI Window Cleaning Estimator", href: "/ai-window-cleaning-estimator" },
+  { label: "Quote Software", href: "/window-cleaning-quote-software" },
+  { label: "Guides", href: "/guides" },
   { label: "About", href: "/about" },
 ];
 
