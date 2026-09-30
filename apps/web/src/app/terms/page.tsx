@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { LegalPage } from "@/components/LegalPage";
 
 export const metadata: Metadata = {
@@ -9,6 +10,7 @@ export const metadata: Metadata = {
 };
 
 const EFFECTIVE_DATE = "September 23, 2026";
+const LAST_UPDATED = "September 30, 2026";
 
 export default function TermsPage() {
   return (
@@ -16,7 +18,7 @@ export default function TermsPage() {
       eyebrow="Legal"
       heading="Terms of Service"
       effectiveDate={EFFECTIVE_DATE}
-      lastUpdated={EFFECTIVE_DATE}
+      lastUpdated={LAST_UPDATED}
     >
       <p>
         These Terms of Service (&ldquo;Terms&rdquo;) govern your access to and use of the Tallyvis
@@ -133,7 +135,62 @@ export default function TermsPage() {
         law.
       </p>
 
-      <h2>7. Google and Third-Party Integrations</h2>
+      <h2>7. SMS / Text Messaging Terms</h2>
+      <p>
+        Tallyvis and service businesses using the Tallyvis platform may operate an SMS (text
+        message) communications program. Tallyvis provides the technology used to present the
+        opt-in, capture consent, and facilitate related communications; the service business you
+        are interacting with is responsible for the messages it sends you through the program.
+        SMS consent is collected in connection with the particular service business you are
+        interacting with, and consent given to one business using Tallyvis is not treated as
+        consent to receive messages from any other, unrelated business using Tallyvis.
+      </p>
+      <p>
+        If you explicitly opt in (for example, by checking the SMS opt-in checkbox presented in
+        the Tallyvis public estimator), you may receive transactional or service-related text
+        messages regarding interactions you initiated with the applicable service business,
+        which may include:
+      </p>
+      <ul>
+        <li>Quote or estimate updates</li>
+        <li>Appointment confirmations and reminders</li>
+        <li>Estimated arrival notifications</li>
+        <li>Service updates</li>
+        <li>Post-service follow-ups</li>
+        <li>Thank-you messages</li>
+        <li>Review requests</li>
+      </ul>
+      <ul>
+        <li>Participation in the SMS program is voluntary.</li>
+        <li>Consent to receive SMS messages is not a condition of purchase.</li>
+        <li>
+          Message frequency varies depending on your interaction, quote, appointment, or service
+          with the applicable business.
+        </li>
+        <li>Message and data rates may apply.</li>
+        <li>Reply STOP to unsubscribe from SMS communications where supported.</li>
+        <li>Reply HELP for assistance where supported.</li>
+        <li>
+          Opting out of SMS does not automatically cancel an estimate, quote, appointment,
+          service, or other relationship with the applicable service business.
+        </li>
+        <li>
+          Only opt in using a mobile number you are authorized to use. Wireless carriers, message
+          providers, and telecommunications services may process messages as necessary for
+          transmission. Carriers are not liable for delayed or undelivered messages.
+        </li>
+      </ul>
+      <p>
+        For more information about how mobile phone numbers and SMS consent records are
+        collected, used, and protected, see the Tallyvis{" "}
+        <Link href="/privacy">Privacy Policy</Link>.
+      </p>
+      <p>
+        Questions about the SMS program may be submitted through the contact information provided
+        on Tallyvis.com. See Section 24 (&ldquo;Contact&rdquo;) below.
+      </p>
+
+      <h2>8. Google and Third-Party Integrations</h2>
       <p>Tallyvis may allow users to connect services provided by Google or other third parties.</p>
       <p>
         Use of these integrations may be subject to additional terms and privacy policies
@@ -150,7 +207,7 @@ export default function TermsPage() {
       </p>
       <p>Users may disconnect supported integrations or revoke authorization through the applicable third-party service.</p>
 
-      <h2>8. Acceptable Use</h2>
+      <h2>9. Acceptable Use</h2>
       <p>You may not use Tallyvis to:</p>
       <ul>
         <li>Violate applicable laws or regulations</li>
@@ -170,7 +227,7 @@ export default function TermsPage() {
         users, customers, infrastructure, or third parties.
       </p>
 
-      <h2>9. Subscription Plans and Fees</h2>
+      <h2>10. Subscription Plans and Fees</h2>
       <p>Certain Tallyvis features require a paid subscription or other payment.</p>
       <p>
         Pricing, available features, usage limits, setup charges, trial periods, and other
@@ -186,7 +243,7 @@ export default function TermsPage() {
         for fees associated with your account.
       </p>
 
-      <h2>10. Free Trials</h2>
+      <h2>11. Free Trials</h2>
       <p>Tallyvis may offer free trials.</p>
       <p>
         Trial duration, eligibility, feature availability, and conversion to a paid subscription
@@ -198,7 +255,7 @@ export default function TermsPage() {
       </p>
       <p>Tallyvis may modify or discontinue promotional trial offers for future users.</p>
 
-      <h2>11. Cancellation</h2>
+      <h2>12. Cancellation</h2>
       <p>You may cancel a recurring subscription using available account-management functionality or by contacting Tallyvis.</p>
       <p>
         Cancellation generally prevents future renewal charges but does not automatically entitle
@@ -206,7 +263,7 @@ export default function TermsPage() {
         provided by Tallyvis.
       </p>
 
-      <h2>12. Intellectual Property</h2>
+      <h2>13. Intellectual Property</h2>
       <p>
         Tallyvis and its licensors retain all rights in the Services, including software,
         interfaces, branding, designs, documentation, models, systems, and other technology,
@@ -221,7 +278,7 @@ export default function TermsPage() {
         authorization except as permitted by applicable law.
       </p>
 
-      <h2>13. Feedback</h2>
+      <h2>14. Feedback</h2>
       <p>
         If you voluntarily provide suggestions, ideas, or feedback regarding Tallyvis, you grant
         Tallyvis permission to use that feedback to develop and improve the Services without an
@@ -232,7 +289,7 @@ export default function TermsPage() {
         customer data to Tallyvis.
       </p>
 
-      <h2>14. Service Availability</h2>
+      <h2>15. Service Availability</h2>
       <p>We work to maintain reliable Services, but uninterrupted availability cannot be guaranteed.</p>
       <p>Tallyvis may occasionally be unavailable because of:</p>
       <ul>
@@ -246,7 +303,7 @@ export default function TermsPage() {
       </ul>
       <p>Features may also change as Tallyvis evolves.</p>
 
-      <h2>15. Beta and Experimental Features</h2>
+      <h2>16. Beta and Experimental Features</h2>
       <p>Certain features may be identified as beta, preview, experimental, or early access.</p>
       <p>Such features may contain errors, change substantially, or be discontinued.</p>
       <p>
@@ -254,7 +311,7 @@ export default function TermsPage() {
         appropriate independent safeguards.
       </p>
 
-      <h2>16. Disclaimers</h2>
+      <h2>17. Disclaimers</h2>
       <p>
         TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SERVICES ARE PROVIDED &ldquo;AS
         IS&rdquo; AND &ldquo;AS AVAILABLE.&rdquo;
@@ -269,7 +326,7 @@ export default function TermsPage() {
       </p>
       <p>Some jurisdictions do not allow certain warranty disclaimers, so portions of this section may not apply to you.</p>
 
-      <h2>17. Limitation of Liability</h2>
+      <h2>18. Limitation of Liability</h2>
       <p>
         TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, TALLYVIS WILL NOT BE LIABLE FOR
         INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR LOST
@@ -283,7 +340,7 @@ export default function TermsPage() {
       </p>
       <p>These limitations apply only to the extent permitted by applicable law.</p>
 
-      <h2>18. Indemnification</h2>
+      <h2>19. Indemnification</h2>
       <p>
         To the extent permitted by applicable law, you agree to indemnify and hold harmless
         Tallyvis and its owners, officers, employees, contractors, and affiliates from claims,
@@ -292,7 +349,7 @@ export default function TermsPage() {
         you provide to your own customers.
       </p>
 
-      <h2>19. Termination</h2>
+      <h2>20. Termination</h2>
       <p>You may stop using Tallyvis at any time.</p>
       <p>Tallyvis may suspend or terminate access when reasonably necessary because of:</p>
       <ul>
@@ -306,7 +363,7 @@ export default function TermsPage() {
       <p>Where reasonable and appropriate, we may provide notice or an opportunity to resolve the issue.</p>
       <p>Sections that by their nature should survive termination will remain effective after termination.</p>
 
-      <h2>20. Changes to These Terms</h2>
+      <h2>21. Changes to These Terms</h2>
       <p>We may update these Terms as Tallyvis develops.</p>
       <p>The updated Terms will display a revised &ldquo;Last Updated&rdquo; date.</p>
       <p>For material changes, we may provide additional notice where appropriate or required by law.</p>
@@ -315,14 +372,14 @@ export default function TermsPage() {
         to the extent permitted by applicable law.
       </p>
 
-      <h2>21. Governing Law</h2>
+      <h2>22. Governing Law</h2>
       <p>
         These Terms will be governed by applicable United States law and the law of the state in
         which Tallyvis is legally established, without regard to conflict-of-law principles,
         except where applicable consumer-protection law requires otherwise.
       </p>
 
-      <h2>22. Entire Agreement</h2>
+      <h2>23. Entire Agreement</h2>
       <p>
         These Terms, together with the Tallyvis Privacy Policy and any additional terms expressly
         applicable to a particular service or subscription, constitute the agreement governing
@@ -333,7 +390,7 @@ export default function TermsPage() {
         the extent permitted by law.
       </p>
 
-      <h2>23. Contact</h2>
+      <h2>24. Contact</h2>
       <p>Questions regarding these Terms may be submitted through the contact information provided on TallyVis.com.</p>
       <p>
         <strong>Website:</strong> tallyvis.com
