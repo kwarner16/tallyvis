@@ -3,9 +3,11 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { SMS_CONSENT_DISCLOSURE_TEXT } from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { isContactComplete, isPropertyComplete } from "@/lib/estimator/types";
+import { PRIVACY_URL, TERMS_URL } from "@/lib/urls";
 
 const PROPERTY_TYPE_LABELS: Record<string, string> = {
   "single-family": "Single-family home",
@@ -154,6 +156,36 @@ export default function ReviewStepPage() {
               placeholder="(555) 010-0110"
               className="rounded-lg border border-line bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong sm:max-w-xs"
             />
+
+            {/*
+              Twilio A2P 10DLC compliance (see
+              docs/decisions/0029-sms-consent-and-a2p-10dlc.md) — unchecked by
+              default, entirely optional, and never required to request a
+              quote (see canAnalyze below, which never reads this field).
+              Placed directly under the phone field it's about, with a
+              native checkbox + label pairing (id/htmlFor) so it's reachable
+              and operable by keyboard/screen reader alone.
+            */}
+            <div className="flex items-start gap-3 pt-1">
+              <input
+                id="contact-sms-consent"
+                type="checkbox"
+                checked={input.contact.smsConsent}
+                onChange={(e) => updateContact({ smsConsent: e.target.checked })}
+                className="mt-0.5 h-5 w-5 shrink-0 rounded border-line text-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+              />
+              <label htmlFor="contact-sms-consent" className="text-xs leading-relaxed text-ink-soft">
+                {SMS_CONSENT_DISCLOSURE_TEXT} See our{" "}
+                <a href={PRIVACY_URL} target="_blank" rel="noreferrer" className="font-medium text-accent-strong underline underline-offset-2 hover:text-accent">
+                  Privacy Policy
+                </a>{" "}
+                and{" "}
+                <a href={TERMS_URL} target="_blank" rel="noreferrer" className="font-medium text-accent-strong underline underline-offset-2 hover:text-accent">
+                  Terms of Service
+                </a>
+                .
+              </label>
+            </div>
           </div>
         </div>
       </div>

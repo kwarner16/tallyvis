@@ -40,6 +40,10 @@ interface QuoteRow {
   customer_address: string | null;
   customer_created_at: string;
   customer_updated_at: string;
+  customer_sms_consent: boolean;
+  customer_sms_consent_at: string | null;
+  customer_sms_consent_source: string | null;
+  customer_sms_consent_disclosure_version: string | null;
   /** Customer interaction/response tracking. Nullable: set only as the corresponding event actually happens. */
   first_viewed_at: string | null;
   last_viewed_at: string | null;
@@ -63,7 +67,11 @@ const SELECT_QUOTE_WITH_CUSTOMER = `
     c.phone AS customer_phone,
     c.address AS customer_address,
     c.created_at AS customer_created_at,
-    c.updated_at AS customer_updated_at
+    c.updated_at AS customer_updated_at,
+    c.sms_consent AS customer_sms_consent,
+    c.sms_consent_at AS customer_sms_consent_at,
+    c.sms_consent_source AS customer_sms_consent_source,
+    c.sms_consent_disclosure_version AS customer_sms_consent_disclosure_version
   FROM quotes q
   JOIN customers c ON c.id = q.customer_id
 `;
@@ -82,6 +90,10 @@ function toQuote(row: QuoteRow): Quote {
       address: row.customer_address ?? undefined,
       createdAt: row.customer_created_at,
       updatedAt: row.customer_updated_at,
+      smsConsent: row.customer_sms_consent,
+      smsConsentAt: row.customer_sms_consent_at ?? undefined,
+      smsConsentSource: row.customer_sms_consent_source ?? undefined,
+      smsConsentDisclosureVersion: row.customer_sms_consent_disclosure_version ?? undefined,
     },
     property: {
       propertyType: row.property_type as Property["propertyType"],

@@ -10,9 +10,17 @@ export { type SmsMessage, type SmsProvider } from "./types";
  * Phase 15 (see docs/decisions/0028-mobile-sms-embed-and-growth-updates.md)
  * — the SMS provider abstraction, mirroring `../index.ts`'s
  * `resolveEmailProvider`/`sendEmail` exactly. This file is the only place
- * `SMS_PROVIDER`/`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_FROM_NUMBER`
- * are read — every caller only ever calls `sendSms()` below, never a
- * provider directly.
+ * `SMS_PROVIDER`/`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/
+ * `TWILIO_MESSAGING_SERVICE_SID`/`TWILIO_FROM_NUMBER` are read — every
+ * caller only ever calls `sendSms()` below, never a provider directly.
+ *
+ * `TWILIO_MESSAGING_SERVICE_SID` is preferred over `TWILIO_FROM_NUMBER`
+ * when both are set — see `providers/twilio.ts`'s own comment: sending
+ * through a Messaging Service (what A2P 10DLC campaign registration is
+ * built around anyway) is what gets Twilio's own STOP/HELP keyword
+ * handling and Advanced Opt-Out enforcement, since this codebase has no
+ * inbound Twilio webhook of its own (see
+ * docs/decisions/0029-sms-consent-and-a2p-10dlc.md).
  */
 function resolveSmsProvider(): SmsProvider {
   const selected = process.env.SMS_PROVIDER?.trim() || "dev";
@@ -20,14 +28,15 @@ function resolveSmsProvider(): SmsProvider {
   if (selected === "twilio") {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
     const fromNumber = process.env.TWILIO_FROM_NUMBER;
-    if (!accountSid || !authToken || !fromNumber) {
+    if (!accountSid || !authToken || (!messagingServiceSid && !fromNumber)) {
       throw new NotificationError(
-        "SMS is not configured for this environment (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER missing).",
+        "SMS is not configured for this environment (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN and one of TWILIO_MESSAGING_SERVICE_SID/TWILIO_FROM_NUMBER are required).",
         "not-configured",
       );
     }
-    return createTwilioProvider({ accountSid, authToken, fromNumber });
+    return createTwilioProvider({ accountSid, authToken, messagingServiceSid, fromNumber });
   }
   throw new NotificationError(`Unknown SMS_PROVIDER "${selected}". Expected "dev" or "twilio".`, "not-configured");
 }

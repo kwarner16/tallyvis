@@ -11,6 +11,10 @@ interface CustomerRow {
   address: string | null;
   created_at: string;
   updated_at: string;
+  sms_consent: boolean;
+  sms_consent_at: string | null;
+  sms_consent_source: string | null;
+  sms_consent_disclosure_version: string | null;
 }
 
 function toCustomer(row: CustomerRow): Customer {
@@ -23,18 +27,51 @@ function toCustomer(row: CustomerRow): Customer {
     address: row.address ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    smsConsent: row.sms_consent,
+    smsConsentAt: row.sms_consent_at ?? undefined,
+    smsConsentSource: row.sms_consent_source ?? undefined,
+    smsConsentDisclosureVersion: row.sms_consent_disclosure_version ?? undefined,
   };
+}
+
+/**
+ * The extra fields only the SERVICE layer may set — never forwarded
+ * directly from a caller's `CustomerInput` (see that type's own comment).
+ * `source`/`disclosureVersion` are only meaningful (and only ever passed)
+ * alongside `input.smsConsent === true`; this repository function is the
+ * one place `sms_consent_at` is actually stamped, always from the
+ * server's own clock, never a client-supplied timestamp.
+ */
+export interface CreateCustomerInput extends CustomerInput {
+  smsConsentSource?: string;
+  smsConsentDisclosureVersion?: string;
 }
 
 /** Every query below is scoped by `businessId` — the multi-tenant boundary — never by `id` alone. */
 
-export async function createCustomer(db: Queryable, businessId: string, input: CustomerInput): Promise<Customer> {
+export async function createCustomer(db: Queryable, businessId: string, input: CreateCustomerInput): Promise<Customer> {
   const id = makeId("customer");
   const now = new Date().toISOString();
+  const smsConsent = input.smsConsent === true;
+  const smsConsentAt = smsConsent ? now : null;
+  const smsConsentSource = smsConsent ? input.smsConsentSource ?? null : null;
+  const smsConsentDisclosureVersion = smsConsent ? input.smsConsentDisclosureVersion ?? null : null;
+
   await db.query(
-    `INSERT INTO customers (id, business_id, name, email, phone, address, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, NULL, $6, $6)`,
-    [id, businessId, input.name, input.email, input.phone ?? null, now],
+    `INSERT INTO customers (id, business_id, name, email, phone, address, created_at, updated_at, sms_consent, sms_consent_at, sms_consent_source, sms_consent_disclosure_version)
+     VALUES ($1, $2, $3, $4, $5, NULL, $6, $6, $7, $8, $9, $10)`,
+    [
+      id,
+      businessId,
+      input.name,
+      input.email,
+      input.phone ?? null,
+      now,
+      smsConsent,
+      smsConsentAt,
+      smsConsentSource,
+      smsConsentDisclosureVersion,
+    ],
   );
   return toCustomer({
     id,
@@ -45,6 +82,10 @@ export async function createCustomer(db: Queryable, businessId: string, input: C
     address: null,
     created_at: now,
     updated_at: now,
+    sms_consent: smsConsent,
+    sms_consent_at: smsConsentAt,
+    sms_consent_source: smsConsentSource,
+    sms_consent_disclosure_version: smsConsentDisclosureVersion,
   });
 }
 

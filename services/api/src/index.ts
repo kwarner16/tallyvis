@@ -39,6 +39,7 @@ export {
   getCustomer,
   findOrCreateCustomer,
   updateCustomer,
+  isCustomerSmsEligible,
 } from "./services/customers";
 
 export {

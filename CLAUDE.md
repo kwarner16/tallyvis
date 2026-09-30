@@ -243,7 +243,18 @@ notifications & website embedding) — complete.**
     path remains dormant); and gave `apps/web` a real SEO foundation
     (`robots.ts`/`sitemap.ts`, canonical URLs, Open Graph/JSON-LD, two
     landing pages, and a small `/guides` section) where none existed
-    before.
+    before. A follow-up pass (ADR 0029) added explicit, unchecked-by-default
+    SMS consent capture to the public estimator's contact step for Twilio
+    A2P 10DLC registration — `customers.sms_consent`/`sms_consent_at`/
+    `sms_consent_source`/`sms_consent_disclosure_version`, stamped
+    server-side, never inferred from a phone number's mere presence and
+    never grantable by an authenticated business on a customer's behalf —
+    plus `isCustomerSmsEligible` as the required gate for any future
+    customer-facing SMS feature (none exists yet, found and reported rather
+    than assumed). No inbound Twilio STOP/HELP webhook exists either;
+    `providers/twilio.ts` now prefers a `TWILIO_MESSAGING_SERVICE_SID` over
+    a bare `TWILIO_FROM_NUMBER` so Twilio's own default keyword handling
+    applies once one is configured, rather than Tallyvis building its own.
 15. Integrations and additional verticals
 
 ## Product ownership

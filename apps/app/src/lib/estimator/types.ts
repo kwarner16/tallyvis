@@ -31,11 +31,19 @@ export interface UploadedPhoto {
   sizeBytes: number;
 }
 
-/** Minimal contact capture — collected on Review so the business has someone to follow up with. */
+/**
+ * Minimal contact capture — collected on Review so the business has
+ * someone to follow up with. `smsConsent` (Twilio A2P 10DLC compliance —
+ * see docs/decisions/0029-sms-consent-and-a2p-10dlc.md) is a separate,
+ * always-optional, unchecked-by-default flag: a customer can decline it
+ * and still request a quote normally — see `isContactComplete` below,
+ * which deliberately never requires it.
+ */
 export interface ContactDetails {
   name: string;
   email: string;
   phone: string;
+  smsConsent: boolean;
 }
 
 export interface CustomerInput {
@@ -56,7 +64,7 @@ export const EMPTY_CUSTOMER_INPUT: CustomerInput = {
   },
   photos: [],
   notes: "",
-  contact: { name: "", email: "", phone: "" },
+  contact: { name: "", email: "", phone: "", smsConsent: false },
 };
 
 export function isPropertyComplete(property: PropertyDetails): boolean {

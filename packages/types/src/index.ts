@@ -259,11 +259,25 @@ export interface ServicePreferences {
  * the caller doesn't get to decide it (see `Customer`). Used wherever a UI
  * gathers a customer's details as part of creating something else (a
  * quote), not managing the customer record directly.
+ *
+ * `smsConsent` (Twilio A2P 10DLC compliance — see
+ * docs/decisions/0029-sms-consent-and-a2p-10dlc.md) is the one piece of
+ * consent a caller may legitimately supply: whether the person entering
+ * these details just checked the SMS opt-in box themselves, right now.
+ * Everything else about consent (when it was recorded, by what mechanism,
+ * under which disclosure) is determined server-side — see `Customer`'s own
+ * fields below — never trusted from client input beyond this one boolean.
+ * Only the public estimator's own contact step may meaningfully set this;
+ * an authenticated business creating/editing a customer on someone else's
+ * behalf can never grant consent for them (see
+ * `services/api/src/services/customers.ts`'s `findOrCreateCustomer`/
+ * `updateCustomer`, which never forward it).
  */
 export interface CustomerInput {
   name: string;
   email: string;
   phone?: string;
+  smsConsent?: boolean;
 }
 
 /**
@@ -282,7 +296,41 @@ export interface Customer extends CustomerInput {
   address?: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Always present (defaults to `false`) — whether this customer
+   * affirmatively opted in to receiving service-related SMS. The mere
+   * presence of `phone` above is never sufficient on its own; any code
+   * that would text a customer must check this flag (see
+   * `services/api/src/services/customers.ts`'s `isCustomerSmsEligible`).
+   */
+  smsConsent: boolean;
+  /** Server-recorded timestamp of when `smsConsent` was set true — never client-supplied, and never present when `smsConsent` is false. */
+  smsConsentAt?: string;
+  /** How consent was captured, e.g. `"public_estimator"` — see `SMS_CONSENT_SOURCE_PUBLIC_ESTIMATOR`. Absent when `smsConsent` is false. */
+  smsConsentSource?: string;
+  /** Which version of `SMS_CONSENT_DISCLOSURE_TEXT` was shown at the moment consent was recorded — see that constant's own comment for why this is tracked. Absent when `smsConsent` is false. */
+  smsConsentDisclosureVersion?: string;
 }
+
+/**
+ * Twilio A2P 10DLC compliance (see
+ * docs/decisions/0029-sms-consent-and-a2p-10dlc.md) — the single source of
+ * truth for the SMS opt-in disclosure, shared by the public estimator's
+ * consent checkbox (`apps/app/src/app/estimate/review/page.tsx`) and by
+ * `services/api`'s consent recording (`Customer.smsConsentDisclosureVersion`
+ * stamps whichever version was live at the moment a customer checked the
+ * box). Bump `SMS_CONSENT_DISCLOSURE_VERSION` whenever the wording below
+ * changes materially, so an already-recorded consent's stored version
+ * always reflects the exact text that customer actually saw — never
+ * silently reinterpreted against newer wording after the fact.
+ */
+export const SMS_CONSENT_DISCLOSURE_VERSION = "2026-09-30.v1";
+
+export const SMS_CONSENT_DISCLOSURE_TEXT =
+  "By checking this box, I agree to receive SMS messages related to my quote and requested service, including quote updates, appointment confirmations and reminders, estimated arrival notifications, service updates, and post-service follow-ups. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase.";
+
+/** Recorded on `Customer.smsConsentSource` — the only legitimate consent-granting surface today. See `CustomerInput.smsConsent`'s own comment for why an authenticated business can never set this on a customer's behalf. */
+export const SMS_CONSENT_SOURCE_PUBLIC_ESTIMATOR = "public_estimator";
 
 export interface Property {
   propertyType: PropertyType;

@@ -108,6 +108,12 @@ export default function ResultStepPage() {
         name: input.contact.name,
         email: input.contact.email,
         phone: input.contact.phone || undefined,
+        // Twilio A2P 10DLC compliance (see
+        // docs/decisions/0029-sms-consent-and-a2p-10dlc.md) — only ever
+        // meaningful server-side when a phone number was also given (see
+        // createCustomerForBusiness's own guard); sent as typed, never
+        // inferred from phone presence.
+        smsConsent: input.contact.smsConsent,
       },
       property: {
         propertyType: input.property.propertyType!,

@@ -1,5 +1,8 @@
 export const MARKETING_URL = process.env.NEXT_PUBLIC_MARKETING_URL ?? "http://localhost:3000";
 export const CONTACT_URL = `${MARKETING_URL}/contact`;
+/** Reused by the public estimator's SMS consent disclosure (see docs/decisions/0029-sms-consent-and-a2p-10dlc.md) — links to apps/web's existing legal pages rather than duplicating them here. */
+export const PRIVACY_URL = `${MARKETING_URL}/privacy`;
+export const TERMS_URL = `${MARKETING_URL}/terms`;
 
 /** This app's own absolute URL — needed to build a customer-facing share link that resolves correctly for a visitor on a different device/browser, not just a relative path. Same env var/default apps/web's urls.ts uses for the same purpose in reverse. */
 export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3001";

@@ -24,7 +24,20 @@ import { NotificationError } from "../../types";
 export interface TwilioProviderConfig {
   accountSid: string;
   authToken: string;
-  fromNumber: string;
+  /**
+   * Exactly one of these two is required (enforced by `../index.ts`'s
+   * `resolveSmsProvider`, not here) — `messagingServiceSid` is strongly
+   * preferred: Twilio's A2P 10DLC campaign registration is itself built
+   * around a Messaging Service, and sending through one is what actually
+   * gets you Twilio's own STOP/HELP keyword handling and Advanced Opt-Out
+   * enforcement for free (see docs/decisions/0029-sms-consent-and-a2p-10dlc.md
+   * — TallyVis has no inbound webhook of its own). `fromNumber` (a bare
+   * long code, no Messaging Service) is kept only as a lower-effort local/
+   * dev-testing fallback; it does NOT get Twilio's automatic opt-out
+   * handling the same way.
+   */
+  messagingServiceSid?: string;
+  fromNumber?: string;
   baseUrl?: string;
 }
 
@@ -38,6 +51,10 @@ export function createTwilioProvider(config: TwilioProviderConfig): SmsProvider 
   const authHeader = `Basic ${Buffer.from(`${config.accountSid}:${config.authToken}`).toString("base64")}`;
 
   async function send(message: SmsMessage): Promise<{ providerMessageId?: string }> {
+    const requestBody = new URLSearchParams({ To: message.to, Body: message.body });
+    if (config.messagingServiceSid) requestBody.set("MessagingServiceSid", config.messagingServiceSid);
+    else if (config.fromNumber) requestBody.set("From", config.fromNumber);
+
     let response: Response;
     try {
       response = await fetch(`${baseUrl}/2010-04-01/Accounts/${config.accountSid}/Messages.json`, {
@@ -46,7 +63,7 @@ export function createTwilioProvider(config: TwilioProviderConfig): SmsProvider 
           Authorization: authHeader,
           "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: new URLSearchParams({ To: message.to, From: config.fromNumber, Body: message.body }),
+        body: requestBody,
       });
     } catch {
       throw new NotificationError("Could not reach the SMS provider.", "provider-error");
