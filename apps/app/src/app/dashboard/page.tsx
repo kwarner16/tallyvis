@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { Quote } from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
 import { getActiveConfiguration, getCurrentBusiness, getSubscription, listQuotes, resolveEffectiveStatus } from "@tallyvis/api";
-import { TRIAL_DAYS } from "@tallyvis/config";
+import { getTrialDaysForNewSubscription } from "@tallyvis/config";
 import { requireContext } from "@/lib/session";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { QuoteList } from "@/components/dashboard/QuoteList";
@@ -69,7 +69,9 @@ export default async function DashboardHomePage() {
       {!subscription ? (
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-accent bg-accent-soft p-5">
           <div>
-            <p className="text-sm font-semibold text-accent-strong">Start your {TRIAL_DAYS}-day free trial</p>
+            <p className="text-sm font-semibold text-accent-strong">
+              Start your {getTrialDaysForNewSubscription()}-day free trial
+            </p>
             <p className="text-sm text-ink-soft">Choose a plan to unlock the full Tallyvis dashboard.</p>
           </div>
           <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "primary" })}>

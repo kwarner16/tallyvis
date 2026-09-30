@@ -71,9 +71,6 @@ export function isPlanId(id: string): id is PlanId {
   return PLANS.some((plan) => plan.id === id);
 }
 
-/** Every new subscription's trial length — see docs/decisions/0016. Card required upfront (via Stripe Checkout); Stripe owns the trial clock once a real subscription exists — see docs/decisions/0018-stripe-v1-hardening.md. */
-export const TRIAL_DAYS = 7;
-
 /**
  * The optional, one-time professional installation fee — deliberately
  * modeled separately from the recurring plan subscription (see

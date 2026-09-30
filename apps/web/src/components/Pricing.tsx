@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PLANS } from "@tallyvis/config";
+import { PLANS, getTrialDaysForNewSubscription } from "@tallyvis/config";
 import { Container, SectionHeading, buttonVariants } from "@tallyvis/ui";
 import { Reveal } from "./Reveal";
 import { SIGNUP_URL } from "@/lib/urls";
@@ -14,6 +14,13 @@ import { SIGNUP_URL } from "@/lib/urls";
  * Every "Get started" link now goes to signup with the chosen plan
  * preserved (`?plan=...`) — `apps/app`'s signup page carries it through to
  * the dashboard's onboarding prompt, which preselects it.
+ *
+ * Trial length reads `getTrialDaysForNewSubscription()` (same authoritative
+ * policy `apps/app`'s onboarding/billing reads) instead of a hardcoded
+ * "7-day" — this was previously a literal that had drifted out of sync with
+ * `@tallyvis/config`'s own trial constant. There is currently no
+ * installation/setup fee to mention here — see
+ * docs/decisions/0028-mobile-sms-embed-and-growth-updates.md.
  */
 
 const ENTERPRISE_TIER = {
@@ -24,6 +31,7 @@ const ENTERPRISE_TIER = {
 };
 
 export function Pricing() {
+  const trialDays = getTrialDaysForNewSubscription();
   return (
     <section id="pricing" className="border-t border-line bg-paper-alt py-24">
       <Container className="flex flex-col gap-12">
@@ -31,7 +39,7 @@ export function Pricing() {
           <SectionHeading
             eyebrow="Early pricing"
             heading="Starting plans."
-            description="Every plan includes a 7-day free trial. Pricing reflects where the product is today and will evolve as Tallyvis grows. A one-time website installation fee may apply."
+            description={`Every plan includes a ${trialDays}-day free trial. Pricing reflects where the product is today and will evolve as Tallyvis grows.`}
           />
         </Reveal>
 

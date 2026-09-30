@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { PLANS, TRIAL_DAYS, type PlanId } from "@tallyvis/config";
+import { PLANS, type PlanId } from "@tallyvis/config";
 import { buttonVariants, cn } from "@tallyvis/ui";
 import { createCheckoutSessionAction } from "@/lib/subscriptionActions";
 
@@ -12,7 +12,10 @@ import { createCheckoutSessionAction } from "@/lib/subscriptionActions";
  * used by apps/web's marketing pricing section, never duplicated here.
  *
  * There is now exactly ONE production path here: Stripe Checkout, card
- * required, Stripe-owned 7-day trial clock. The previous "start a trial
+ * required, Stripe-owned trial clock (length set by
+ * `packages/config/src/trial.ts`'s `getTrialDaysForNewSubscription`,
+ * passed down as the `trialDays` prop so this client component never reads
+ * the clock itself). The previous "start a trial
  * with no card" button has been retired from this UI (the underlying
  * DB-only `startTrial` still exists server-side for tests/internal use —
  * see `services/subscriptions.ts`'s own comment — but a real signup can no
@@ -23,9 +26,11 @@ import { createCheckoutSessionAction } from "@/lib/subscriptionActions";
 export function PlanSelector({
   initialPlanId,
   billingIsConfigured,
+  trialDays,
 }: {
   initialPlanId?: PlanId;
   billingIsConfigured: boolean;
+  trialDays: number;
 }) {
   const [selected, setSelected] = useState<PlanId>(initialPlanId ?? "growth");
   const [starting, setStarting] = useState(false);
@@ -96,7 +101,7 @@ export function PlanSelector({
           your trial.
         </p>
         <p className="mt-1">
-          Every plan includes a <span className="font-medium text-ink">{TRIAL_DAYS}-day free trial</span> —
+          Every plan includes a <span className="font-medium text-ink">{trialDays}-day free trial</span> —
           full dashboard access starting now. A card is required to start; billing begins automatically
           when the trial ends unless you cancel first.
         </p>
@@ -109,7 +114,7 @@ export function PlanSelector({
           disabled={starting || !billingIsConfigured}
           className={buttonVariants({ variant: "primary" })}
         >
-          {starting ? "Starting checkout…" : `Start ${TRIAL_DAYS}-day free trial`}
+          {starting ? "Starting checkout…" : `Start ${trialDays}-day free trial`}
         </button>
       </div>
       {!billingIsConfigured ? (

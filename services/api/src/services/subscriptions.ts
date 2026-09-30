@@ -1,4 +1,9 @@
-import { getPlan, isPlanId, TRIAL_DAYS, PROFESSIONAL_INSTALLATION_FEE } from "@tallyvis/config";
+import {
+  getPlan,
+  isPlanId,
+  getTrialDaysForNewSubscription,
+  PROFESSIONAL_INSTALLATION_FEE,
+} from "@tallyvis/config";
 import type { AuthSession } from "../auth/session";
 import type { Queryable } from "../db/pg/client";
 import * as subscriptionsRepo from "../repositories/subscriptions";
@@ -244,7 +249,7 @@ export async function startTrial(db: Queryable, session: AuthSession, planId: st
   const alreadyEntitled = existing && (existing.status === "trialing" || existing.status === "active");
 
   const now = new Date();
-  const trialEndsAt = new Date(now.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+  const trialEndsAt = new Date(now.getTime() + getTrialDaysForNewSubscription(now) * 24 * 60 * 60 * 1000);
 
   // Every field left out below is preserved as-is by `upsertSubscription`'s
   // COALESCE-based partial-patch update (see that function's own comment)
@@ -359,7 +364,7 @@ export async function createCheckoutSessionForPlan(
       priceId,
       customerId: existing?.billingCustomerId,
       customerEmail: existing?.billingCustomerId ? undefined : business.email,
-      trialDays: TRIAL_DAYS,
+      trialDays: getTrialDaysForNewSubscription(),
       successUrl: urls.successUrl,
       cancelUrl: urls.cancelUrl,
       metadata: { businessId: session.businessId, planId: plan.id },

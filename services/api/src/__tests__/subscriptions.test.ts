@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PROFESSIONAL_INSTALLATION_FEE } from "@tallyvis/config";
+import { PROFESSIONAL_INSTALLATION_FEE, getTrialDaysForNewSubscription } from "@tallyvis/config";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { createQuote } from "../services/quotes";
@@ -59,7 +59,7 @@ async function setUp() {
 }
 
 describe("startTrial", () => {
-  it("creates a trialing subscription with a 7-day window for a valid plan", async () => {
+  it("creates a trialing subscription with the current policy's trial window for a valid plan", async () => {
     const { db, session } = await setUp();
     const before = Date.now();
 
@@ -70,7 +70,7 @@ describe("startTrial", () => {
     expect(subscription.trialStartedAt).toBeTruthy();
     expect(subscription.trialEndsAt).toBeTruthy();
     const trialMs = new Date(subscription.trialEndsAt!).getTime() - new Date(subscription.trialStartedAt!).getTime();
-    expect(trialMs).toBeCloseTo(7 * 24 * 60 * 60 * 1000, -3);
+    expect(trialMs).toBeCloseTo(getTrialDaysForNewSubscription() * 24 * 60 * 60 * 1000, -3);
     expect(new Date(subscription.trialEndsAt!).getTime()).toBeGreaterThan(before);
   });
 
@@ -122,7 +122,7 @@ describe("startTrial — hardening: repeated/duplicate plan selection", () => {
     expect(second.id).toBe(first.id);
   });
 
-  it("DOES grant a fresh 7-day trial when reactivating a canceled/expired subscription", async () => {
+  it("DOES grant a fresh trial (the current policy's length) when reactivating a canceled/expired subscription", async () => {
     const { db, session } = await setUp();
     await startTrial(db, session, "starter");
 
@@ -133,7 +133,7 @@ describe("startTrial — hardening: repeated/duplicate plan selection", () => {
     expect(reactivated.status).toBe("trialing");
     const freshTrialMs =
       new Date(reactivated.trialEndsAt!).getTime() - new Date(reactivated.trialStartedAt!).getTime();
-    expect(freshTrialMs).toBeCloseTo(7 * 24 * 60 * 60 * 1000, -3);
+    expect(freshTrialMs).toBeCloseTo(getTrialDaysForNewSubscription() * 24 * 60 * 60 * 1000, -3);
     expect(new Date(reactivated.trialEndsAt!).getTime()).toBeGreaterThan(Date.now());
   });
 
@@ -394,13 +394,42 @@ describe("createCheckoutSessionForPlan", () => {
     // could have supplied a different price.
     expect(callArg.priceId).toBe("price_test_pro");
     expect(callArg.mode).toBe("subscription");
-    expect(callArg.trialDays).toBe(7);
+    expect(callArg.trialDays).toBe(getTrialDaysForNewSubscription());
     // Business identity in the metadata is the session's own businessId —
     // `createCheckoutSessionForPlan`'s signature has no businessId
     // parameter a caller could substitute here.
     expect(callArg.metadata.businessId).toBe(session.businessId);
 
     expect((await getSubscription(db, session))?.providerCheckoutSessionId).toBe("cs_test_mocked");
+  });
+
+  it("passes the 30-day promotional trial length through Dec 31, 2026, and 7 days from Jan 1, 2027 on — the exact policy boundary from packages/config/src/trial.ts", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi.spyOn(billing, "createCheckoutSession").mockResolvedValue({
+      id: "cs_test_mocked",
+      url: "https://checkout.stripe.example/cs_test_mocked",
+    });
+
+    try {
+      vi.useFakeTimers();
+
+      vi.setSystemTime(new Date("2026-12-31T23:59:59.999Z"));
+      await createCheckoutSessionForPlan(db, session, "pro", {
+        successUrl: "https://x/success",
+        cancelUrl: "https://x/cancel",
+      });
+      expect(spy.mock.calls[0]![0].trialDays).toBe(30);
+
+      vi.setSystemTime(new Date("2027-01-01T00:00:00.000Z"));
+      await createCheckoutSessionForPlan(db, session, "pro", {
+        successUrl: "https://x/success",
+        cancelUrl: "https://x/cancel",
+      });
+      expect(spy.mock.calls[1]![0].trialDays).toBe(7);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses customer_email (no customerId) for a business's first-ever checkout", async () => {

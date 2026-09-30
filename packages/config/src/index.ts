@@ -2,13 +2,14 @@ import type { PricingConfiguration, WindowCleaningPricingRules } from "@tallyvis
 
 export {
   PLANS,
-  TRIAL_DAYS,
   PROFESSIONAL_INSTALLATION_FEE,
   getPlan,
   isPlanId,
   type Plan,
   type PlanId,
 } from "./plans";
+
+export { TRIAL_POLICY, TRIAL_DAYS, getTrialDaysForNewSubscription } from "./trial";
 
 export {
   normalizeHexColor,

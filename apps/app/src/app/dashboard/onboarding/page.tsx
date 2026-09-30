@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { isPlanId } from "@tallyvis/config";
+import { isPlanId, getTrialDaysForNewSubscription } from "@tallyvis/config";
 import { billingConfigured } from "@tallyvis/api";
 import { requireContext } from "@/lib/session";
 import { INTENDED_PLAN_COOKIE_NAME } from "@/lib/constants";
@@ -27,17 +27,18 @@ export default async function OnboardingPage() {
   const store = await cookies();
   const rawIntendedPlan = store.get(INTENDED_PLAN_COOKIE_NAME)?.value;
   const intendedPlanId = rawIntendedPlan && isPlanId(rawIntendedPlan) ? rawIntendedPlan : undefined;
+  const trialDays = getTrialDaysForNewSubscription();
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Choose your plan</h1>
         <p className="text-ink-soft">
-          Every plan includes a <span className="font-medium text-ink">7-day free trial</span>. A card
-          is required to start — you won&rsquo;t be charged until the trial ends.
+          Every plan includes a <span className="font-medium text-ink">{trialDays}-day free trial</span>. A
+          card is required to start — you won&rsquo;t be charged until the trial ends.
         </p>
       </div>
-      <PlanSelector initialPlanId={intendedPlanId} billingIsConfigured={billingConfigured()} />
+      <PlanSelector initialPlanId={intendedPlanId} billingIsConfigured={billingConfigured()} trialDays={trialDays} />
     </div>
   );
 }

@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { getPlan, TRIAL_DAYS } from "@tallyvis/config";
+import { getPlan } from "@tallyvis/config";
 import { billingConfigured, getSubscriptionReconciled, listBillingCharges, resolveEffectiveStatus } from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { requireContext } from "@/lib/session";
 import { InstallationChoice } from "@/components/dashboard/InstallationChoice";
 import { ManageBillingButton } from "@/components/dashboard/ManageBillingButton";
+import { grantedTrialDays } from "@/lib/trialDisplay";
 
 const STATUS_LABELS: Record<string, string> = {
   trialing: "Trialing",
@@ -20,6 +21,7 @@ const CHARGE_STATUS_LABELS: Record<string, string> = { pending: "Pending", paid:
 function daysRemainingUntil(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
 }
+
 
 /**
  * Phase 14 — subscription/trial status + the one-time installation fee,
@@ -101,7 +103,7 @@ export default async function BillingPage({
         {trialDaysRemaining !== null ? (
           <p className="mt-3 text-sm text-ink-soft">
             {trialDaysRemaining > 0
-              ? `${trialDaysRemaining} of ${TRIAL_DAYS} trial days remaining.`
+              ? `${trialDaysRemaining} of ${grantedTrialDays(subscription.trialStartedAt, subscription.trialEndsAt!)} trial days remaining.`
               : "Your trial ends today."}
           </p>
         ) : null}
@@ -165,7 +167,7 @@ export default async function BillingPage({
           <ul className="mt-3 flex flex-col gap-2">
             <li className="flex items-center justify-between text-sm">
               <span className="text-ink-soft">
-                {installationCharge.amountCents === 0 ? "Self-install" : "Professional installation & setup"}
+                {installationCharge.amountCents === 0 ? "Installation" : "Professional installation & setup"}
               </span>
               <span className="flex items-center gap-3">
                 <span className="font-mono text-ink">${(installationCharge.amountCents / 100).toFixed(2)}</span>
@@ -176,10 +178,7 @@ export default async function BillingPage({
             </li>
           </ul>
         )}
-        <p className="mt-3 text-xs text-ink-faint">
-          Separate from your recurring plan — a one-time choice for getting the estimator installed on
-          your website.
-        </p>
+        <p className="mt-3 text-xs text-ink-faint">No setup fee right now — see the Website page to get connected.</p>
       </div>
     </div>
   );

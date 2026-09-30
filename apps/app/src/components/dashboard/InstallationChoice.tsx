@@ -2,45 +2,36 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { PROFESSIONAL_INSTALLATION_FEE } from "@tallyvis/config";
 import { buttonVariants } from "@tallyvis/ui";
-import { createInstallationCheckoutSessionAction, chooseSelfInstallAction } from "@/lib/subscriptionActions";
+import { chooseSelfInstallAction } from "@/lib/subscriptionActions";
 
 /**
- * Phase 14 Stripe V1 hardening (see docs/decisions/0018): the one-time
- * professional installation fee is optional and entirely separate from
- * the recurring plan — a business either pays $299 for Tallyvis to install
- * the estimator, or installs it themselves for free. Shown only when
- * neither choice has been made yet (see `/dashboard/billing`, which reads
- * `listBillingCharges` and only renders this when there's no
- * "website_installation" charge on file).
+ * Phase 14 Stripe V1 hardening (see docs/decisions/0018) introduced a paid
+ * "professional installation" choice alongside free self-install. That paid
+ * choice has since been removed from this UI (see
+ * docs/decisions/0028-mobile-sms-embed-and-growth-updates.md) — for now,
+ * Kyle is personally helping early customers install and verify Tallyvis as
+ * part of onboarding, so there's no setup fee to present. The underlying
+ * Stripe checkout path for a paid installation
+ * (`createInstallationCheckoutSessionAction`/`PROFESSIONAL_INSTALLATION_FEE`)
+ * still exists server-side, unreferenced, in case the fee is reinstated
+ * later — nothing here calls it. Shown only when no installation charge is
+ * on file yet (see `/dashboard/billing`, which reads `listBillingCharges`).
  */
 export function InstallationChoice() {
   const router = useRouter();
-  const [pending, setPending] = useState<"professional" | "self" | null>(null);
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleProfessional() {
-    setPending("professional");
-    setError(null);
-    const result = await createInstallationCheckoutSessionAction();
-    if (result.ok) {
-      window.location.href = result.data.url;
-    } else {
-      setError(result.message);
-      setPending(null);
-    }
-  }
-
-  async function handleSelfInstall() {
-    setPending("self");
+  async function handleGetStarted() {
+    setPending(true);
     setError(null);
     const result = await chooseSelfInstallAction();
     if (result.ok) {
       router.refresh();
     } else {
       setError(result.message);
-      setPending(null);
+      setPending(false);
     }
   }
 
@@ -49,30 +40,20 @@ export function InstallationChoice() {
       {error ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       ) : null}
-      <div className="flex flex-wrap gap-3">
+      <div>
         <button
           type="button"
-          onClick={handleProfessional}
-          disabled={pending !== null}
+          onClick={handleGetStarted}
+          disabled={pending}
           className={buttonVariants({ variant: "primary" })}
         >
-          {pending === "professional"
-            ? "Starting checkout…"
-            : `Professional installation — $${(PROFESSIONAL_INSTALLATION_FEE.amountCents / 100).toFixed(0)}`}
-        </button>
-        <button
-          type="button"
-          onClick={handleSelfInstall}
-          disabled={pending !== null}
-          className={buttonVariants({ variant: "outline" })}
-        >
-          {pending === "self" ? "Saving…" : "Self-install — Free"}
+          {pending ? "Saving…" : "Get started — no charge"}
         </button>
       </div>
       <p className="text-xs text-ink-faint">
-        Optional, one-time, and separate from your recurring plan. Choose professional installation and
-        the Tallyvis team gets the estimator live on your website; choose self-install and follow the
-        embed instructions yourself at no cost.
+        No installation fee right now — Kyle will personally help you get the estimator live on your
+        website. Head to the Website page for the install snippet, or reach out and he&rsquo;ll walk
+        through it with you.
       </p>
     </div>
   );
