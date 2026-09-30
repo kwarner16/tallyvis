@@ -5,13 +5,37 @@ import type { CSSProperties } from "react";
 import type { Business } from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
 import { deriveEstimatorTheme, normalizeHexColor } from "@tallyvis/config";
-import { updateBusinessAction } from "@/lib/businessActions";
+import { updateBusinessAction, updateSmsNotificationSettingsAction } from "@/lib/businessActions";
 
 export function SettingsPageClient({ initialBusiness }: { initialBusiness: Business }) {
   const [business, setBusiness] = useState(initialBusiness);
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  const [smsEnabled, setSmsEnabled] = useState(initialBusiness.smsNotificationsEnabled);
+  const [notificationPhone, setNotificationPhone] = useState(initialBusiness.notificationPhone ?? "");
+  const [smsSaving, setSmsSaving] = useState(false);
+  const [smsJustSaved, setSmsJustSaved] = useState(false);
+  const [smsError, setSmsError] = useState<string | null>(null);
+
+  async function handleSaveSms() {
+    setSmsSaving(true);
+    setSmsError(null);
+    const result = await updateSmsNotificationSettingsAction({
+      enabled: smsEnabled,
+      notificationPhone: notificationPhone.trim() || undefined,
+    });
+    if (result.ok) {
+      setSmsEnabled(result.data.smsNotificationsEnabled);
+      setNotificationPhone(result.data.notificationPhone ?? "");
+      setSmsJustSaved(true);
+      setTimeout(() => setSmsJustSaved(false), 2500);
+    } else {
+      setSmsError(result.message);
+    }
+    setSmsSaving(false);
+  }
 
   /** Live, unsaved preview of the estimator theme this brand color would produce — see @tallyvis/config's deriveEstimatorTheme, the same function the estimator itself uses. `null` while the typed value isn't yet a valid six-digit hex, so the preview falls back to the neutral default rather than showing something misleading. */
   const previewTheme = useMemo(() => deriveEstimatorTheme(business.brandColor), [business.brandColor]);
@@ -115,6 +139,61 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
           className={buttonVariants({ variant: "primary", className: "self-start" })}
         >
           {saving ? "Saving…" : "Save settings"}
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-paper p-6 sm:max-w-lg">
+        <div>
+          <h2 className="text-lg font-semibold text-ink">SMS notifications</h2>
+          <p className="text-sm text-ink-soft">
+            Get a text as soon as a customer submits a quote through your estimator — handy for
+            checking new leads from your phone between jobs.
+          </p>
+        </div>
+
+        {smsJustSaved ? (
+          <p className="rounded-lg border border-accent bg-accent-soft px-3 py-2 text-sm text-accent-strong">
+            Saved.
+          </p>
+        ) : null}
+        {smsError ? (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{smsError}</p>
+        ) : null}
+
+        <label className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={smsEnabled}
+            onChange={(e) => setSmsEnabled(e.target.checked)}
+            className="h-5 w-5 rounded border-line text-accent-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+          />
+          <span className="text-sm font-medium text-ink">New quote SMS notifications</span>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-ink">Notification phone number</span>
+          <input
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            value={notificationPhone}
+            onChange={(e) => setNotificationPhone(e.target.value)}
+            placeholder="(555) 123-4567"
+            className="rounded-lg border border-line bg-paper px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong"
+          />
+          <span className="text-xs text-ink-faint">
+            Where alerts are sent — not shown to customers. This can be different from your public
+            business phone number above.
+          </span>
+        </label>
+
+        <button
+          type="button"
+          onClick={handleSaveSms}
+          disabled={smsSaving}
+          className={buttonVariants({ variant: "primary", className: "self-start" })}
+        >
+          {smsSaving ? "Saving…" : "Save SMS settings"}
         </button>
       </div>
 

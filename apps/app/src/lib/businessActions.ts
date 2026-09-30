@@ -6,8 +6,10 @@ import {
   completeOnboarding,
   setPassword,
   updateCurrentBusiness,
+  updateSmsNotificationSettings,
   type CompleteOnboardingInput,
   type UpdateBusinessInput,
+  type UpdateSmsNotificationSettingsInput,
 } from "@tallyvis/api";
 import { requireContext } from "./session";
 import type { ActionResult } from "./actionResult";
@@ -28,6 +30,26 @@ export async function updateBusinessAction(input: UpdateBusinessInput): Promise<
     return { ok: true, data: business };
   } catch (err) {
     return { ok: false, message: err instanceof Error ? err.message : "Could not save settings." };
+  }
+}
+
+/**
+ * Phase 15 (see docs/decisions/0028-mobile-sms-embed-and-growth-updates.md)
+ * — `updateSmsNotificationSettings` only ever throws its own hand-written
+ * validation messages (a genuinely unparseable phone number, or enabling
+ * with no phone on file at all) — safe to show verbatim, same reasoning as
+ * `updateBusinessAction` above.
+ */
+export async function updateSmsNotificationSettingsAction(
+  input: UpdateSmsNotificationSettingsInput,
+): Promise<ActionResult<Business>> {
+  const { db, session } = await requireContext();
+  try {
+    const business = await updateSmsNotificationSettings(db, session, input);
+    revalidatePath("/dashboard/settings");
+    return { ok: true, data: business };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Could not save SMS settings." };
   }
 }
 

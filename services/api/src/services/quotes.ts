@@ -13,9 +13,11 @@ import type { RawPropertyObservation } from "@tallyvis/ai";
 import type { AuthSession } from "../auth/session";
 import type { Queryable } from "../db/pg/client";
 import * as quotesRepo from "../repositories/quotes";
+import { getBusinessById } from "../repositories/businesses";
 import * as customersService from "./customers";
 import * as pricingService from "./pricing";
 import { getSubscription, getSubscriptionByBusinessId, hasProductAccess } from "./subscriptions";
+import { sendNewQuoteSmsAlert } from "./quoteSmsAlert";
 
 export interface CreateQuoteInput {
   customer: CustomerInput;
@@ -188,10 +190,38 @@ async function requirePublicProductAccess(db: Queryable, businessId: string): Pr
  * already holds would turn this endpoint into a lookup for that customer's
  * real name, phone, and address — see `createCustomerForBusiness`.
  */
-export async function createQuotePublic(db: Queryable, businessId: string, input: CreateQuoteInput): Promise<Quote> {
+/**
+ * `buildQuoteUrl` and `onSmsNotified` are both optional and both purely
+ * about the Phase 15 new-quote SMS alert (see
+ * docs/decisions/0028-mobile-sms-embed-and-growth-updates.md) — every
+ * existing caller (tests, and any future one that doesn't care about SMS)
+ * can omit them unchanged. When `buildQuoteUrl` IS supplied, this looks up
+ * the business's own SMS settings and — only if enabled with a valid
+ * number — fires `sendNewQuoteSmsAlert`, handing its `finished` promise to
+ * `onSmsNotified` so the caller (apps/app) can register it with Next's
+ * `after()`. Never awaited here: an SMS provider failure must never delay
+ * or fail quote creation itself.
+ */
+export async function createQuotePublic(
+  db: Queryable,
+  businessId: string,
+  input: CreateQuoteInput,
+  buildQuoteUrl?: (quoteId: string) => string,
+  onSmsNotified?: (finished: Promise<void>) => void,
+): Promise<Quote> {
   await requirePublicProductAccess(db, businessId);
   const customer = await customersService.createCustomerForBusiness(db, businessId, input.customer);
-  return persistPricedQuote(db, businessId, customer.id, input);
+  const quote = await persistPricedQuote(db, businessId, customer.id, input);
+
+  if (buildQuoteUrl) {
+    const business = await getBusinessById(db, businessId);
+    if (business) {
+      const { finished } = sendNewQuoteSmsAlert(business, quote, buildQuoteUrl);
+      onSmsNotified?.(finished);
+    }
+  }
+
+  return quote;
 }
 
 /**

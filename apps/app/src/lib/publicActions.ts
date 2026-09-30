@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import { demoPricingConfiguration } from "@tallyvis/config";
 import type { Business, PricingConfiguration, Quote } from "@tallyvis/types";
 import {
@@ -25,6 +26,7 @@ import {
 import { describeAiErrorCategory } from "./aiErrorMessages";
 import { sanitizeForPublicDisplay } from "./errorSanitization";
 import { ESTIMATOR_NOT_CONFIGURED_MESSAGE, DEMO_ESTIMATE_NOT_SAVED_MESSAGE } from "./publicBusinessErrors";
+import { buildQuoteDashboardUrl } from "./urls";
 import type { ActionResult } from "./actionResult";
 
 /**
@@ -287,7 +289,13 @@ export async function createPublicQuoteAction(
   if (!embedId) return { ok: false, message: DEMO_ESTIMATE_NOT_SAVED_MESSAGE };
   try {
     const businessId = await requirePublicBusinessId(embedId);
-    const quote = await createQuotePublic(getDb(), businessId, input);
+    const quote = await createQuotePublic(getDb(), businessId, input, buildQuoteDashboardUrl, (finished) => {
+      // Same reasoning as requestPasswordResetAction's identical `after`
+      // registration: keeps this serverless function alive long enough for
+      // the SMS send to actually complete without making the customer's
+      // browser wait for it.
+      after(() => finished);
+    });
     return { ok: true, data: { id: quote.id } };
   } catch (err) {
     if (err instanceof Error && err.message === ESTIMATOR_NOT_CONFIGURED_MESSAGE) {

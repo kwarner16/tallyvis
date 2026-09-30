@@ -218,6 +218,22 @@ export interface Business {
    * again. See docs/decisions and the 2026-09 onboarding-gap fix.
    */
   needsOnboarding: boolean;
+  /**
+   * Phase 15 (see docs/decisions/0028-mobile-sms-embed-and-growth-updates.md)
+   * — whether this business wants an SMS alert sent to `notificationPhone`
+   * whenever a real customer submits a new quote through the public
+   * estimator. Defaults to false for every business — an explicit opt-in,
+   * never inferred from having a phone number on file.
+   */
+  smsNotificationsEnabled: boolean;
+  /**
+   * The BUSINESS's own phone number to alert, in normalized E.164 form
+   * (see `services/api/src/services/business.ts`'s `normalizePhoneNumber`).
+   * Deliberately distinct from `phone` (the business's public-facing
+   * contact number shown to customers) and from any customer's own phone
+   * number — never populated from either of those automatically.
+   */
+  notificationPhone?: string;
 }
 
 export type PropertyType = "single-family" | "townhouse" | "other";

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
-import { getCurrentBusiness, updateCurrentBusiness } from "../services/business";
+import {
+  getCurrentBusiness,
+  updateCurrentBusiness,
+  updateSmsNotificationSettings,
+  normalizePhoneNumber,
+} from "../services/business";
 
 const getDb = useTestDb();
 
@@ -114,5 +119,71 @@ describe("updateCurrentBusiness", () => {
         logoUrl: "javascript:alert(1)",
       }),
     ).rejects.toThrow(/http/);
+  });
+});
+
+describe("normalizePhoneNumber", () => {
+  it("assumes US/+1 for a bare 10-digit number, in whatever formatting", () => {
+    expect(normalizePhoneNumber("5551234567")).toBe("+15551234567");
+    expect(normalizePhoneNumber("(555) 123-4567")).toBe("+15551234567");
+    expect(normalizePhoneNumber("555.123.4567")).toBe("+15551234567");
+  });
+
+  it("accepts an 11-digit number already carrying a US country code", () => {
+    expect(normalizePhoneNumber("15551234567")).toBe("+15551234567");
+    expect(normalizePhoneNumber("1 (555) 123-4567")).toBe("+15551234567");
+  });
+
+  it("accepts an already-E.164 number as-is", () => {
+    expect(normalizePhoneNumber("+15551234567")).toBe("+15551234567");
+    expect(normalizePhoneNumber("+442071838750")).toBe("+442071838750");
+  });
+
+  it("rejects anything that isn't a plausible phone number", () => {
+    expect(normalizePhoneNumber("not a phone number")).toBeNull();
+    expect(normalizePhoneNumber("123")).toBeNull();
+    expect(normalizePhoneNumber("")).toBeNull();
+    expect(normalizePhoneNumber("+0123456789")).toBeNull();
+  });
+});
+
+describe("updateSmsNotificationSettings", () => {
+  it("saves a normalized notification phone number with SMS enabled", async () => {
+    const { db, session } = await setUp();
+    const updated = await updateSmsNotificationSettings(db, session, {
+      enabled: true,
+      notificationPhone: "(555) 987-6543",
+    });
+    expect(updated.smsNotificationsEnabled).toBe(true);
+    expect(updated.notificationPhone).toBe("+15559876543");
+  });
+
+  it("defaults to disabled with no notification phone for a newly-created business", async () => {
+    const { db, session } = await setUp();
+    const business = await getCurrentBusiness(db, session);
+    expect(business.smsNotificationsEnabled).toBe(false);
+    expect(business.notificationPhone).toBeUndefined();
+  });
+
+  it("rejects turning notifications on with no valid phone number on file", async () => {
+    const { db, session } = await setUp();
+    await expect(updateSmsNotificationSettings(db, session, { enabled: true })).rejects.toThrow(
+      /notification phone number/,
+    );
+  });
+
+  it("rejects an unparseable phone number rather than silently disabling", async () => {
+    const { db, session } = await setUp();
+    await expect(
+      updateSmsNotificationSettings(db, session, { enabled: true, notificationPhone: "not a phone number" }),
+    ).rejects.toThrow(/valid phone number/);
+  });
+
+  it("allows saving disabled with no phone number, and clearing a previously-saved one", async () => {
+    const { db, session } = await setUp();
+    await updateSmsNotificationSettings(db, session, { enabled: true, notificationPhone: "5551234567" });
+    const cleared = await updateSmsNotificationSettings(db, session, { enabled: false, notificationPhone: "" });
+    expect(cleared.smsNotificationsEnabled).toBe(false);
+    expect(cleared.notificationPhone).toBeUndefined();
   });
 });

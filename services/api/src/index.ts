@@ -24,11 +24,13 @@ export {
 export {
   getCurrentBusiness,
   updateCurrentBusiness,
+  updateSmsNotificationSettings,
   completeOnboarding,
   getDefaultPublicBusiness,
   resolveEmbedBusiness,
   resolvePublicBusinessSummary,
   type UpdateBusinessInput,
+  type UpdateSmsNotificationSettingsInput,
   type CompleteOnboardingInput,
 } from "./services/business";
 

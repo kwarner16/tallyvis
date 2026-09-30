@@ -22,6 +22,12 @@ export function middleware(request: NextRequest) {
   const hasSessionCookie = request.cookies.has(SESSION_COOKIE_NAME);
   if (!hasSessionCookie) {
     const loginUrl = new URL("/login", request.url);
+    // Carries the originally-requested dashboard path through login so a
+    // deep link (e.g. an SMS "review this quote" link) survives an
+    // intervening sign-in instead of dropping the visitor on the generic
+    // dashboard home — see logInAction's matching allowlist check, which
+    // re-validates this before ever redirecting to it.
+    loginUrl.searchParams.set("redirect", request.nextUrl.pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
   return NextResponse.next();

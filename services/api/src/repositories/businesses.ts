@@ -16,6 +16,8 @@ interface BusinessRow {
   brand_color: string | null;
   embed_last_seen_at: string | null;
   needs_onboarding: boolean;
+  sms_notifications_enabled: boolean;
+  notification_phone: string | null;
 }
 
 function toBusiness(row: BusinessRow): Business {
@@ -32,6 +34,8 @@ function toBusiness(row: BusinessRow): Business {
     brandColor: row.brand_color ?? undefined,
     embedLastSeenAt: row.embed_last_seen_at ?? undefined,
     needsOnboarding: row.needs_onboarding,
+    smsNotificationsEnabled: row.sms_notifications_enabled,
+    notificationPhone: row.notification_phone ?? undefined,
   };
 }
 
@@ -71,6 +75,8 @@ export async function createBusiness(db: Queryable, input: CreateBusinessInput):
     createdAt,
     publicEmbedId,
     needsOnboarding,
+    smsNotificationsEnabled: false,
+    notificationPhone: undefined,
   };
 }
 
@@ -115,6 +121,27 @@ export async function updateBusiness(db: Queryable, id: string, input: UpdateBus
     `UPDATE businesses SET name = $1, email = $2, phone = $3, service_area = $4, logo_url = $5, brand_color = $6 WHERE id = $7`,
     [input.name, input.email, input.phone, input.serviceArea, input.logoUrl ?? null, input.brandColor ?? null, id],
   );
+  const updated = await getBusinessById(db, id);
+  if (!updated) throw new Error(`Business "${id}" not found after update.`);
+  return updated;
+}
+
+export interface UpdateSmsNotificationSettingsInput {
+  enabled: boolean;
+  /** Already-normalized E.164, or `undefined` to clear it — never raw user input (see `services/business.ts`'s `normalizePhoneNumber`, which every caller must run first). */
+  notificationPhone?: string;
+}
+
+export async function updateSmsNotificationSettings(
+  db: Queryable,
+  id: string,
+  input: UpdateSmsNotificationSettingsInput,
+): Promise<Business> {
+  await db.query(`UPDATE businesses SET sms_notifications_enabled = $1, notification_phone = $2 WHERE id = $3`, [
+    input.enabled,
+    input.notificationPhone ?? null,
+    id,
+  ]);
   const updated = await getBusinessById(db, id);
   if (!updated) throw new Error(`Business "${id}" not found after update.`);
   return updated;

@@ -20,6 +20,19 @@ function ResetSuccessBanner() {
   );
 }
 
+/**
+ * Carries the deep-link path middleware.ts attached to `/login?redirect=...`
+ * (e.g. from an SMS "review this quote" link) through the login form as a
+ * hidden field, so `logInAction` can send the visitor back to it instead of
+ * the generic dashboard home. Rendered outside the form-state-bearing
+ * elements so it's present on first paint, not just after a failed submit.
+ */
+function RedirectField() {
+  const redirectTo = useSearchParams().get("redirect");
+  if (!redirectTo) return null;
+  return <input type="hidden" name="redirect" value={redirectTo} />;
+}
+
 const INPUT_CLASS =
   "rounded-lg border border-line bg-paper px-4 py-2.5 text-sm text-ink placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-strong";
 
@@ -49,6 +62,9 @@ export default function LoginPage() {
       </div>
 
       <form action={formAction} className="flex flex-col gap-4">
+        <Suspense fallback={null}>
+          <RedirectField />
+        </Suspense>
         <div className="flex flex-col gap-2">
           <label htmlFor="email" className="text-sm font-medium text-ink">
             Email

@@ -8,3 +8,15 @@ export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3001
 export function buildQuoteShareUrl(token: string): string {
   return `${APP_URL}/quote/${token}`;
 }
+
+/**
+ * The new-quote SMS alert's "Review" link (see
+ * docs/decisions/0028-mobile-sms-embed-and-growth-updates.md) — a plain
+ * authenticated dashboard route, never a bearer token. Opening it while
+ * logged out goes through normal sign-in, which carries this exact path
+ * back via `redirect=` (see `middleware.ts` and `authActions.ts`'s
+ * `logInAction`).
+ */
+export function buildQuoteDashboardUrl(quoteId: string): string {
+  return `${APP_URL}/dashboard/quotes/${quoteId}`;
+}

@@ -10,12 +10,42 @@ import {
   getBusinessByPublicEmbedId,
   touchEmbedLastSeen,
   updateBusiness,
+  updateSmsNotificationSettings as updateSmsNotificationSettingsRepo,
   type UpdateBusinessInput,
 } from "../repositories/businesses";
 
 export type { UpdateBusinessInput };
 
 const EMAIL_PATTERN = /\S+@\S+\.\S+/;
+
+/** A bare 10-digit US number, or one already prefixed with a leading "1" (11 digits). Matches the vertical's current US-only market — see this function's own comment. */
+const US_PHONE_PATTERN = /^\d{10}$/;
+const US_PHONE_WITH_COUNTRY_CODE_PATTERN = /^1\d{10}$/;
+const E164_PATTERN = /^\+[1-9]\d{6,14}$/;
+
+/**
+ * Normalizes a business's own SMS-notification phone number to E.164, or
+ * returns `null` if the input isn't a plausible phone number at all.
+ * Deliberately never silently drops/ignores an unparseable value — the
+ * caller (`updateSmsNotificationSettings` below) rejects it with an error
+ * the business owner can act on, rather than storing something that will
+ * quietly fail every future send.
+ *
+ * Bare 10-digit numbers are assumed US/+1 — Tallyvis is a US-only product
+ * today (see CLAUDE.md's phase roadmap); an already-E.164 `+`-prefixed
+ * number is accepted as-is (still validated against a plausible shape) so
+ * this doesn't block a future international number once that changes.
+ */
+export function normalizePhoneNumber(input: string): string | null {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("+")) {
+    return E164_PATTERN.test(trimmed) ? trimmed : null;
+  }
+  const digits = trimmed.replace(/[^\d]/g, "");
+  if (US_PHONE_PATTERN.test(digits)) return `+1${digits}`;
+  if (US_PHONE_WITH_COUNTRY_CODE_PATTERN.test(digits)) return `+${digits}`;
+  return null;
+}
 
 /**
  * Validates and normalizes in one pass — `brandColor` in particular must
@@ -80,6 +110,46 @@ export async function updateCurrentBusiness(
   input: UpdateBusinessInput,
 ): Promise<Business> {
   return updateBusiness(db, session.businessId, normalizeUpdateBusinessInput(input));
+}
+
+export interface UpdateSmsNotificationSettingsInput {
+  enabled: boolean;
+  /** Raw, as typed by the business owner — normalized/validated here, never trusted as-is. Pass `undefined`/empty to clear it. */
+  notificationPhone?: string;
+}
+
+/**
+ * The dashboard Settings page's "SMS notifications" form. Rejects an
+ * unparseable phone number outright (rather than silently disabling
+ * notifications) so a typo surfaces immediately instead of as a silent,
+ * permanently-missed alert later. Enabling notifications with no phone
+ * number on file at all is also rejected — see
+ * docs/decisions/0028-mobile-sms-embed-and-growth-updates.md: SMS must
+ * never fire without both an explicit opt-in AND a valid number.
+ */
+export async function updateSmsNotificationSettings(
+  db: Queryable,
+  session: AuthSession,
+  input: UpdateSmsNotificationSettingsInput,
+): Promise<Business> {
+  const trimmedPhone = input.notificationPhone?.trim();
+  let normalizedPhone: string | undefined;
+  if (trimmedPhone) {
+    const normalized = normalizePhoneNumber(trimmedPhone);
+    if (!normalized) {
+      throw new Error("Enter a valid phone number, like (555) 123-4567.");
+    }
+    normalizedPhone = normalized;
+  }
+
+  if (input.enabled && !normalizedPhone) {
+    throw new Error("Add a notification phone number before turning SMS alerts on.");
+  }
+
+  return updateSmsNotificationSettingsRepo(db, session.businessId, {
+    enabled: input.enabled,
+    notificationPhone: normalizedPhone,
+  });
 }
 
 export interface CompleteOnboardingInput {

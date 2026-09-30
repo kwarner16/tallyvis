@@ -29,7 +29,15 @@ const mocks = vi.hoisted(() => ({
   acceptQuoteByToken: vi.fn(),
   declineQuoteByToken: vi.fn(),
   requestQuoteChangesByToken: vi.fn(),
+  after: vi.fn(),
 }));
+
+// `createPublicQuoteAction` registers the SMS alert's `finished` promise
+// with Next's `after()` (see publicActions.ts) — real outside a request
+// scope, `after()` throws ("called outside a request scope"), so it's
+// mocked here exactly like `@tallyvis/api` is: this file tests
+// publicActions.ts's own logic, not Next's request lifecycle.
+vi.mock("next/server", () => ({ after: mocks.after }));
 
 class FakeAiProviderError extends Error {
   category: string;

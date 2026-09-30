@@ -62,10 +62,25 @@ export async function signUpAction(
   redirect("/dashboard");
 }
 
+/**
+ * Only ever honors a same-origin, dashboard-relative path — never an
+ * absolute URL or protocol-relative one (`//evil.example`) — so a
+ * `?redirect=` query param on the public `/login` page can never be turned
+ * into an open redirect. Anything that doesn't match is silently ignored in
+ * favor of the generic dashboard home.
+ */
+function sanitizeDashboardRedirect(value: FormDataEntryValue | null): string | undefined {
+  if (typeof value !== "string" || !value.startsWith("/dashboard") || value.startsWith("//")) {
+    return undefined;
+  }
+  return value;
+}
+
 export async function logInAction(
   _prevState: AuthActionState,
   formData: FormData,
 ): Promise<AuthActionState> {
+  const redirectTo = sanitizeDashboardRedirect(formData.get("redirect"));
   try {
     const { token } = await logIn(getDb(), {
       email: String(formData.get("email") ?? ""),
@@ -75,7 +90,7 @@ export async function logInAction(
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Could not log in." };
   }
-  redirect("/dashboard");
+  redirect(redirectTo ?? "/dashboard");
 }
 
 export async function logOutAction(): Promise<void> {
