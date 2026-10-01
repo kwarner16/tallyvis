@@ -16,12 +16,77 @@
       // them (confirmed via `turbo run build --dry=json`, not assumed).
       // NEXT_PUBLIC_* must be declared here because Next.js inlines them
       // into the client bundle at build time, not read at request time.
-      "env": ["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_MARKETING_URL", "DATABASE_URL", "DIRECT_URL"]
+      //
+      // Everything below NEXT_PUBLIC_*/DATABASE_URL/DIRECT_URL is a
+      // server-only var `services/api`/`services/ai` read at runtime
+      // (never a NEXT_PUBLIC_* name, so Next.js never inlines any of it
+      // into client-side JS regardless of this list) — declared here for
+      // the same reason: Vercel's build step needs them visible to `next
+      // build`, or it warns (as it did — see
+      // docs/decisions/0030-turborepo-env-declarations.md) that they "will
+      // not be available to your application and may cause your build to
+      // fail." Only VARIABLE NAMES live here, never values — those stay in
+      // Vercel's own env var store / each package's untracked .env.local.
+      // Grouped by the feature that reads them; see .env.example for what
+      // each one does and which provider it configures.
+      "env": [
+        "NEXT_PUBLIC_APP_URL",
+        "NEXT_PUBLIC_MARKETING_URL",
+        "DATABASE_URL",
+        "DIRECT_URL",
+        "AI_PROVIDER",
+        "AI_PROVIDER_API_KEY",
+        "AI_PROVIDER_MODEL",
+        "EMAIL_PROVIDER",
+        "RESEND_API_KEY",
+        "EMAIL_FROM_ADDRESS",
+        "SMS_PROVIDER",
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN",
+        "TWILIO_MESSAGING_SERVICE_SID",
+        "TWILIO_FROM_NUMBER",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "STRIPE_PRICE_STARTER",
+        "STRIPE_PRICE_GROWTH",
+        "STRIPE_PRICE_PRO",
+        "STRIPE_PRICE_INSTALLATION"
+      ]
     },
     "dev": {
       "cache": false,
       "persistent": true,
-      "env": ["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_MARKETING_URL", "DATABASE_URL", "DIRECT_URL"]
+      // Mirrors "build" above for the same reason, even though `next dev`
+      // also loads .env.local directly off disk (so this list is only
+      // load-bearing for a non-local/CI `turbo run dev`) — kept in sync so
+      // the two never silently drift apart.
+      "env": [
+        "NEXT_PUBLIC_APP_URL",
+        "NEXT_PUBLIC_MARKETING_URL",
+        "DATABASE_URL",
+        "DIRECT_URL",
+        "AI_PROVIDER",
+        "AI_PROVIDER_API_KEY",
+        "AI_PROVIDER_MODEL",
+        "EMAIL_PROVIDER",
+        "RESEND_API_KEY",
+        "EMAIL_FROM_ADDRESS",
+        "SMS_PROVIDER",
+        "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN",
+        "TWILIO_MESSAGING_SERVICE_SID",
+        "TWILIO_FROM_NUMBER",
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "STRIPE_SECRET_KEY",
+        "STRIPE_WEBHOOK_SECRET",
+        "STRIPE_PRICE_STARTER",
+        "STRIPE_PRICE_GROWTH",
+        "STRIPE_PRICE_PRO",
+        "STRIPE_PRICE_INSTALLATION"
+      ]
     },
     "lint": {
       "dependsOn": ["^build"]
