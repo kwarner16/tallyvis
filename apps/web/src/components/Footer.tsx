@@ -9,6 +9,7 @@ const PRODUCT_LINKS = [
   { label: "AI Window Cleaning Estimator", href: "/ai-window-cleaning-estimator" },
   { label: "Quote Software", href: "/window-cleaning-quote-software" },
   { label: "Guides", href: "/guides" },
+  { label: "Install Guide", href: "/install" },
   { label: "About", href: "/about" },
 ];
 

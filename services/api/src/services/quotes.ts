@@ -58,6 +58,46 @@ const MAX_SERVICE_ADDRESS_LENGTH = 300;
 const CONTROL_CHARACTERS = /[\x00-\x1F\x7F]/;
 
 /**
+ * Pre-launch audit (2026-10 — see docs/decisions/0033-pre-launch-audit.md):
+ * `createQuotePublic`/`updateQuotePublic` are reachable by anyone (no
+ * session, no auth) — the browser's own upload UI caps photos at 6,
+ * compressed to ~450KB each (`apps/app/src/lib/imageCompression.ts`'s
+ * `windowCleaningEstimatorConfig.maxPhotos`/`COMPRESSION_TARGET_BYTES`),
+ * but nothing server-side enforced that before this — a caller invoking
+ * the Server Action directly, bypassing the browser entirely, could submit
+ * an unbounded number of arbitrarily large "photo" strings straight into
+ * Postgres. These ceilings are deliberately generous (2x the current UI's
+ * photo count, ~10x the per-photo compression target) so legitimate
+ * product tuning of the client-side limits never needs a matching server
+ * change — this is a sanity ceiling against abuse, not a business rule.
+ */
+const MAX_QUOTE_PHOTOS = 12;
+const MAX_PHOTO_URL_LENGTH = 8_000_000;
+
+function validatePhotos(photos: unknown): QuotePhoto[] {
+  if (!Array.isArray(photos)) {
+    throw new Error("Photos must be a list.");
+  }
+  if (photos.length > MAX_QUOTE_PHOTOS) {
+    throw new Error(`Too many photos — at most ${MAX_QUOTE_PHOTOS} are allowed.`);
+  }
+  for (const photo of photos) {
+    if (
+      typeof photo !== "object" ||
+      photo === null ||
+      typeof (photo as { id?: unknown }).id !== "string" ||
+      typeof (photo as { url?: unknown }).url !== "string"
+    ) {
+      throw new Error("Each photo must have an id and a url.");
+    }
+    if ((photo as { url: string }).url.length > MAX_PHOTO_URL_LENGTH) {
+      throw new Error("One of the uploaded photos is too large.");
+    }
+  }
+  return photos as QuotePhoto[];
+}
+
+/**
  * The one place a service address is validated, regardless of whether the
  * quote is coming from the public estimator or the business's own "New
  * quote" dashboard flow — both funnel through `persistPricedQuote` below.
@@ -384,6 +424,7 @@ async function persistPricedQuote(
   input: CreateQuoteInput,
 ): Promise<Quote> {
   const address = validateServiceAddress(input.property.address);
+  const photos = validatePhotos(input.photos);
   const configuration = await pricingService.getActiveConfigurationForBusiness(db, businessId);
   const pricingInput = reconcilePricingInput(input.servicePreferences, input.analysis.characteristics);
   const estimate = calculateEstimate(pricingInput, configuration, input.analysis.metadata.confidence);
@@ -392,9 +433,9 @@ async function persistPricedQuote(
     customerId,
     pricingConfigId: configuration.id,
     property: { ...input.property, address },
+    photos,
     servicePreferences: input.servicePreferences,
     notes: input.notes,
-    photos: input.photos,
     analysis: input.analysis,
     estimate,
     status: determineInitialQuoteStatus(input.analysis, input.aiObservation),

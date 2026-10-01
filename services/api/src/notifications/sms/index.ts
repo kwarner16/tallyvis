@@ -11,21 +11,42 @@ export { type SmsMessage, type SmsProvider } from "./types";
  * — the SMS provider abstraction, mirroring `../index.ts`'s
  * `resolveEmailProvider`/`sendEmail` exactly. This file is the only place
  * `SMS_PROVIDER`/`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/
- * `TWILIO_MESSAGING_SERVICE_SID`/`TWILIO_FROM_NUMBER` are read — every
- * caller only ever calls `sendSms()` below, never a provider directly.
+ * `TWILIO_MESSAGING_SERVICE_SID`/`TWILIO_FROM_NUMBER`/`SMS_A2P_APPROVED` are
+ * read — every caller only ever calls `sendSms()` below, never a provider
+ * directly.
  *
  * `TWILIO_MESSAGING_SERVICE_SID` is preferred over `TWILIO_FROM_NUMBER`
  * when both are set — see `providers/twilio.ts`'s own comment: sending
  * through a Messaging Service (what A2P 10DLC campaign registration is
  * built around anyway) is what gets Twilio's own STOP/HELP keyword
- * handling and Advanced Opt-Out enforcement, since this codebase has no
- * inbound Twilio webhook of its own (see
- * docs/decisions/0029-sms-consent-and-a2p-10dlc.md).
+ * handling and Advanced Opt-Out enforcement.
+ *
+ * `SMS_A2P_APPROVED` (pre-launch hardening, 2026-10 — see
+ * docs/decisions/0033-pre-launch-audit.md) is a SEPARATE, explicit kill
+ * switch from `SMS_PROVIDER`/the `TWILIO_*` credentials: TallyVis's A2P
+ * 10DLC campaign is not yet approved, and real Twilio credentials can be
+ * configured in Vercel (e.g. to test Console/webhook setup — see
+ * docs/decisions/0032-sms-stop-start-sync.md's "Manual Twilio Console
+ * actions") WITHOUT that meaning production should actually send through
+ * them yet. Even with `SMS_PROVIDER=twilio` and valid credentials, a real
+ * send is refused unless `SMS_A2P_APPROVED` is literally `"true"` — set it
+ * only once the campaign is genuinely approved (see that ADR for the full
+ * post-approval checklist). Every caller of `sendSms` already treats a
+ * thrown `NotificationError` as "could not send this time" (logged,
+ * swallowed, never fails the quote/job action it's attached to — see
+ * `customerSms.ts`'s `dispatch`/`quoteSmsAlert.ts`'s identical pattern),
+ * so this gate fails safe without breaking the surrounding workflow.
  */
 function resolveSmsProvider(): SmsProvider {
   const selected = process.env.SMS_PROVIDER?.trim() || "dev";
   if (selected === "dev") return devSmsProvider;
   if (selected === "twilio") {
+    if (process.env.SMS_A2P_APPROVED?.trim() !== "true") {
+      throw new NotificationError(
+        "SMS sending is disabled pending Twilio A2P 10DLC campaign approval. Set SMS_A2P_APPROVED=true once the campaign is approved.",
+        "not-configured",
+      );
+    }
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
@@ -94,7 +115,16 @@ export async function sendSms(message: SmsMessage, kind: string): Promise<{ prov
   }
 }
 
-/** Whether SMS is currently the dev/console-log provider rather than a real one — same reasoning as `isUsingDevEmailProvider`. */
+/**
+ * Whether SMS sends currently go nowhere real — either because the
+ * dev/console-log provider is selected, OR because `SMS_PROVIDER=twilio`
+ * but the `SMS_A2P_APPROVED` gate above isn't open yet. Surfaced to the UI
+ * (same reasoning as `isUsingDevEmailProvider`) so a "not actually
+ * sending" disclaimer stays accurate regardless of which of the two
+ * reasons applies.
+ */
 export function isUsingDevSmsProvider(): boolean {
-  return (process.env.SMS_PROVIDER?.trim() || "dev") !== "twilio";
+  const selected = process.env.SMS_PROVIDER?.trim() || "dev";
+  if (selected !== "twilio") return true;
+  return process.env.SMS_A2P_APPROVED?.trim() !== "true";
 }

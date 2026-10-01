@@ -7,7 +7,14 @@ import { buttonVariants } from "@tallyvis/ui";
 import { deriveEstimatorTheme, normalizeHexColor } from "@tallyvis/config";
 import { updateBusinessAction, updateSmsNotificationSettingsAction } from "@/lib/businessActions";
 
-export function SettingsPageClient({ initialBusiness }: { initialBusiness: Business }) {
+export function SettingsPageClient({
+  initialBusiness,
+  smsSendingActive,
+}: {
+  initialBusiness: Business;
+  /** Whether a real SMS could currently be sent (real provider configured AND the A2P 10DLC campaign-approval gate is open — see services/api's notifications/sms/index.ts). `false` until the campaign is approved, even if a business turns this setting on. */
+  smsSendingActive: boolean;
+}) {
   const [business, setBusiness] = useState(initialBusiness);
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
@@ -150,6 +157,15 @@ export function SettingsPageClient({ initialBusiness }: { initialBusiness: Busin
             checking new leads from your phone between jobs.
           </p>
         </div>
+
+        {!smsSendingActive ? (
+          <p className="rounded-lg border border-line bg-paper-alt px-3 py-2 text-sm text-ink-soft">
+            SMS notifications aren&rsquo;t sending yet — TallyVis&rsquo;s SMS program is still
+            pending carrier approval. You can save your settings now and texts will start
+            automatically once it&rsquo;s approved; in the meantime, new quotes still appear on
+            your dashboard right away.
+          </p>
+        ) : null}
 
         {smsJustSaved ? (
           <p className="rounded-lg border border-accent bg-accent-soft px-3 py-2 text-sm text-accent-strong">

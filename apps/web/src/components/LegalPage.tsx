@@ -39,7 +39,9 @@ export function LegalPage({ eyebrow, heading, effectiveDate, lastUpdated, childr
             [&_h3]:mt-2 [&_h3]:text-base [&_h3]:font-semibold [&_h3]:text-ink
             [&_p]:leading-relaxed
             [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-6
+            [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-6
             [&_li]:leading-relaxed
+            [&_code]:rounded [&_code]:bg-paper-alt [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[0.9em]
             [&_strong]:font-semibold [&_strong]:text-ink
             [&_a]:font-medium [&_a]:text-accent-strong [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:text-accent"
         >

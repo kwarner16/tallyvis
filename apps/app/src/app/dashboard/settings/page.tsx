@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { getPlan } from "@tallyvis/config";
-import { getCurrentBusiness, getCurrentUser, getSubscription, resolveEffectiveStatus } from "@tallyvis/api";
+import { getCurrentBusiness, getCurrentUser, getSubscription, isUsingDevSmsProvider, resolveEffectiveStatus } from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { requireContext } from "@/lib/session";
 import { grantedTrialDays } from "@/lib/trialDisplay";
@@ -135,7 +135,7 @@ export default async function SettingsPage() {
         )}
       </div>
 
-      <SettingsPageClient initialBusiness={business} />
+      <SettingsPageClient initialBusiness={business} smsSendingActive={!isUsingDevSmsProvider()} />
 
       <DangerZoneClient />
     </div>

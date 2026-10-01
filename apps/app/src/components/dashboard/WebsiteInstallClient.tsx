@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Business } from "@tallyvis/types";
 import { buttonVariants, cn } from "@tallyvis/ui";
 import { buildIframeSnippet, buildScriptSnippet } from "@/lib/embedSnippets";
+import { INSTALL_GUIDE_URL } from "@/lib/urls";
 
 /**
  * Phase 14 — "Website → Install Tallyvis" (see
@@ -120,6 +121,14 @@ export function WebsiteInstallClient({ business, appOrigin }: { business: Busine
           Choose your website, then copy the snippet below — no rebuild required. No installation fee
           right now; reach out and Kyle will personally help if you get stuck.
         </p>
+        <a
+          href={INSTALL_GUIDE_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="text-sm font-medium text-accent-strong hover:underline"
+        >
+          View the full installation guide →
+        </a>
       </div>
 
       <div className="rounded-2xl border border-line bg-paper p-6">

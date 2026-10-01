@@ -3,6 +3,8 @@ export const CONTACT_URL = `${MARKETING_URL}/contact`;
 /** Reused by the public estimator's SMS consent disclosure (see docs/decisions/0029-sms-consent-and-a2p-10dlc.md) — links to apps/web's existing legal pages rather than duplicating them here. */
 export const PRIVACY_URL = `${MARKETING_URL}/privacy`;
 export const TERMS_URL = `${MARKETING_URL}/terms`;
+/** The customer-facing estimator installation guide (pre-launch audit, 2026-10 — see docs/decisions/0033-pre-launch-audit.md). Linked from the dashboard's "Website → Install Tallyvis" page, same cross-app pattern as PRIVACY_URL/TERMS_URL above. */
+export const INSTALL_GUIDE_URL = `${MARKETING_URL}/install`;
 
 /** This app's own absolute URL — needed to build a customer-facing share link that resolves correctly for a visitor on a different device/browser, not just a relative path. Same env var/default apps/web's urls.ts uses for the same purpose in reverse. */
 export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3001";

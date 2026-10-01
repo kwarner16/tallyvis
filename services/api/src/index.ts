@@ -164,6 +164,7 @@ export {
 export { requestPasswordReset, resetPassword } from "./services/passwordReset";
 
 export { NotificationError, isUsingDevEmailProvider, type NotificationErrorCategory } from "./notifications";
+export { isUsingDevSmsProvider } from "./notifications/sms";
 
 export { sendQuoteEmail, type QuoteEmailResult } from "./services/quoteEmail";
 
