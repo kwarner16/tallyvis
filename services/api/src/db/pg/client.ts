@@ -173,15 +173,47 @@ async function assertSchemaUpToDate(pool: Pool): Promise<void> {
  */
 export function getDb(): Queryable {
   const p = getRawPool();
-  schemaCheckPromise ??= assertSchemaUpToDate(p);
+  if (!schemaCheckPromise) {
+    // Deliberately only CACHES a successful check — a rejected one is
+    // never reused. `assertSchemaUpToDate` can legitimately fail for a
+    // purely transient reason (this specific warm process started up and
+    // ran its one-time check in the brief window before `db:migrate` was
+    // run against this database) that resolves itself moments later with
+    // no code change at all. Caching the REJECTION just as permanently as
+    // a resolution would mean — found as a real incident, 2026-10 — a
+    // warm instance stays poisoned, throwing this same stale error on
+    // every database call (including, specifically, the login Server
+    // Action, which surfaced it verbatim as a login failure with no
+    // credentials ever actually checked) for its entire remaining
+    // lifetime, even though the database has been correctly migrated the
+    // whole time.
+    //
+    // `attempt` is the exact promise this specific check run — captured
+    // here, not read back from the shared `schemaCheckPromise` variable,
+    // so the cleanup below only ever clears the slot if nothing newer has
+    // already replaced it (a second, later attempt's own success/failure
+    // must never be clobbered by an earlier attempt's delayed rejection).
+    const attempt: Promise<void> = assertSchemaUpToDate(p);
+    schemaCheckPromise = attempt;
+    attempt.catch(() => {
+      if (schemaCheckPromise === attempt) schemaCheckPromise = undefined;
+    });
+  }
+  // Pinned to whatever promise was live at THIS getDb() call, immune to a
+  // later reset of the shared slot above — every repository call does a
+  // fresh getDb() immediately before using it (see this function's own
+  // top comment), so this is never held across an await boundary where a
+  // concurrent reset could otherwise make a stale closure read `undefined`
+  // instead of the real promise.
+  const currentCheck = schemaCheckPromise;
   const wrapped = poolQueryable(p);
   return {
     query: async (text, params = []) => {
-      await schemaCheckPromise;
+      await currentCheck;
       return wrapped.query(text, params);
     },
     transaction: async (fn) => {
-      await schemaCheckPromise;
+      await currentCheck;
       return wrapped.transaction(fn);
     },
   };
