@@ -296,6 +296,20 @@ export function billingConfigured(): boolean {
  * `checkout.session.completed` used to hardcode "active" even when Stripe
  * actually started a trial).
  */
+/**
+ * Trial-abuse hardening (2026-10 — see
+ * docs/decisions/0034-trial-eligibility.md): whether this business may
+ * still be granted a free trial. Deliberately NOT inferred from current
+ * subscription status (a `canceled`/`expired` status, or no subscription
+ * row at all after account history, says nothing about whether a trial
+ * was ever actually granted) — the one and only signal is the durable,
+ * never-cleared `trialUsedAt` marker. `undefined` (no subscription row
+ * yet at all) means genuinely eligible: a brand-new business.
+ */
+export function isTrialEligible(subscription: Subscription | undefined): boolean {
+  return !subscription?.trialUsedAt;
+}
+
 export async function createCheckoutSessionForPlan(
   db: Queryable,
   session: AuthSession,
@@ -359,12 +373,22 @@ export async function createCheckoutSessionForPlan(
       );
     }
 
+    // Server-authoritative, re-derived from this business's OWN persisted
+    // history on every single call — never trusted from the client, and
+    // never inferred from `existing.status` (a business whose status is
+    // "canceled"/"expired" right now, or who has no subscription row at
+    // all after some other history, is not necessarily trial-eligible —
+    // only the durable `trialUsedAt` marker decides). See
+    // `isTrialEligible`'s own comment.
+    const grantTrial = isTrialEligible(existing);
+    const now = new Date().toISOString();
+
     const result = await providerCreateCheckoutSession({
       mode: "subscription",
       priceId,
       customerId: existing?.billingCustomerId,
       customerEmail: existing?.billingCustomerId ? undefined : business.email,
-      trialDays: getTrialDaysForNewSubscription(),
+      trialDays: grantTrial ? getTrialDaysForNewSubscription() : undefined,
       successUrl: urls.successUrl,
       cancelUrl: urls.cancelUrl,
       metadata: { businessId: session.businessId, planId: plan.id },
@@ -375,6 +399,14 @@ export async function createCheckoutSessionForPlan(
       planId: plan.id,
       status: existing?.status ?? "incomplete",
       providerCheckoutSessionId: result.id,
+      // Stamped ONLY the first time a trial is actually granted (this
+      // call's own `grantTrial` decision) — omitted (never explicitly
+      // cleared) on every other call, so once set it can never be unset.
+      // Stamped here, synchronously with Stripe confirming the session was
+      // created, rather than waiting on the webhook — this is the one
+      // place eligibility is decided, so recording the consequence must
+      // not depend on a webhook that could be delayed or lost.
+      trialUsedAt: grantTrial ? now : undefined,
     });
 
     return { url: result.url };

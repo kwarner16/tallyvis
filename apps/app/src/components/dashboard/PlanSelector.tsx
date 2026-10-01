@@ -27,10 +27,13 @@ export function PlanSelector({
   initialPlanId,
   billingIsConfigured,
   trialDays,
+  trialEligible,
 }: {
   initialPlanId?: PlanId;
   billingIsConfigured: boolean;
   trialDays: number;
+  /** Whether this business can still be granted a free trial — server-computed (see the onboarding page), never decided by this client component. Purely cosmetic here: the authoritative check re-runs inside createCheckoutSessionForPlan regardless of what this prop says. */
+  trialEligible: boolean;
 }) {
   const [selected, setSelected] = useState<PlanId>(initialPlanId ?? "growth");
   const [starting, setStarting] = useState(false);
@@ -93,18 +96,29 @@ export function PlanSelector({
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       ) : null}
 
-      {/* Makes the choice and its consequence explicit before the button is clicked — which plan, what it costs, how long the trial is, and that a card is required. */}
+      {/* Makes the choice and its consequence explicit before the button is clicked — which plan, what it costs, whether a trial applies, and that a card is required. */}
       <div className="rounded-xl border border-line bg-paper-alt px-4 py-3 text-sm text-ink-soft">
-        <p>
-          You&rsquo;re selecting <span className="font-medium text-ink">{selectedPlan?.name}</span> —
-          <span className="font-medium text-ink"> ${((selectedPlan?.monthlyPriceCents ?? 0) / 100).toFixed(0)}/month</span> after
-          your trial.
-        </p>
-        <p className="mt-1">
-          Every plan includes a <span className="font-medium text-ink">{trialDays}-day free trial</span> —
-          full dashboard access starting now. A card is required to start; billing begins automatically
-          when the trial ends unless you cancel first.
-        </p>
+        {trialEligible ? (
+          <>
+            <p>
+              You&rsquo;re selecting <span className="font-medium text-ink">{selectedPlan?.name}</span> —
+              <span className="font-medium text-ink"> ${((selectedPlan?.monthlyPriceCents ?? 0) / 100).toFixed(0)}/month</span> after
+              your trial.
+            </p>
+            <p className="mt-1">
+              Every plan includes a <span className="font-medium text-ink">{trialDays}-day free trial</span> —
+              full dashboard access starting now. A card is required to start; billing begins automatically
+              when the trial ends unless you cancel first.
+            </p>
+          </>
+        ) : (
+          <p>
+            You&rsquo;re selecting <span className="font-medium text-ink">{selectedPlan?.name}</span> —
+            <span className="font-medium text-ink"> ${((selectedPlan?.monthlyPriceCents ?? 0) / 100).toFixed(0)}/month</span>.
+            Your free trial has already been used, so a card is required and billing begins
+            immediately — there&rsquo;s no trial period on this subscription.
+          </p>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -114,7 +128,7 @@ export function PlanSelector({
           disabled={starting || !billingIsConfigured}
           className={buttonVariants({ variant: "primary" })}
         >
-          {starting ? "Starting checkout…" : `Start ${trialDays}-day free trial`}
+          {starting ? "Starting checkout…" : trialEligible ? `Start ${trialDays}-day free trial` : "Subscribe now"}
         </button>
       </div>
       {!billingIsConfigured ? (

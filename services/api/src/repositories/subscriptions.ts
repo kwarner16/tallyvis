@@ -21,6 +21,16 @@ export interface Subscription {
   status: SubscriptionStatus;
   trialStartedAt?: string;
   trialEndsAt?: string;
+  /**
+   * Permanent, one-time marker: when this business was FIRST EVER granted
+   * a free trial — see docs/decisions/0034-trial-eligibility.md. Unlike
+   * `trialStartedAt` (which reflects the most recent trial and would be
+   * overwritten by a second one), this is set exactly once and never
+   * cleared or overwritten again, by any code path, regardless of
+   * cancellation, subscription deletion, or resubscription. Absent means
+   * this business has never been granted a trial.
+   */
+  trialUsedAt?: string;
   currentPeriodStart?: string;
   currentPeriodEnd?: string;
   billingCustomerId?: string;
@@ -46,6 +56,7 @@ interface SubscriptionRow {
   status: string;
   trial_started_at: string | null;
   trial_ends_at: string | null;
+  trial_used_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
   billing_customer_id: string | null;
@@ -68,6 +79,7 @@ function toSubscription(row: SubscriptionRow): Subscription {
     status: row.status as SubscriptionStatus,
     trialStartedAt: row.trial_started_at ?? undefined,
     trialEndsAt: row.trial_ends_at ?? undefined,
+    trialUsedAt: row.trial_used_at ?? undefined,
     currentPeriodStart: row.current_period_start ?? undefined,
     currentPeriodEnd: row.current_period_end ?? undefined,
     billingCustomerId: row.billing_customer_id ?? undefined,
@@ -94,6 +106,8 @@ export interface UpsertSubscriptionInput {
   status: SubscriptionStatus;
   trialStartedAt?: string;
   trialEndsAt?: string;
+  /** See `Subscription.trialUsedAt`'s own comment. COALESCE-preserve like every other field here — pass this only once, from `createCheckoutSessionForPlan`, the first time a trial is actually granted; omit it on every other call so it is never cleared. */
+  trialUsedAt?: string;
   currentPeriodStart?: string;
   currentPeriodEnd?: string;
   billingCustomerId?: string;
@@ -166,23 +180,25 @@ export async function upsertSubscription(
       `UPDATE subscriptions SET
          plan_id = $1, status = $2,
          trial_started_at = COALESCE($3, trial_started_at),
-         trial_ends_at = COALESCE($4, trial_ends_at),
-         current_period_start = COALESCE($5, current_period_start),
-         current_period_end = COALESCE($6, current_period_end),
-         billing_customer_id = COALESCE($7, billing_customer_id),
-         provider_subscription_id = COALESCE($8, provider_subscription_id),
-         provider_checkout_session_id = COALESCE($9, provider_checkout_session_id),
-         canceled_at = CASE WHEN $17 THEN NULL ELSE COALESCE($10, canceled_at) END,
-         cancel_at_period_end = COALESCE($11, cancel_at_period_end),
-         cancel_at = CASE WHEN $11 = FALSE THEN NULL ELSE COALESCE($12, cancel_at) END,
-         last_webhook_event_id = COALESCE($13, last_webhook_event_id),
-         last_webhook_event_created_at = COALESCE($14, last_webhook_event_created_at),
-         updated_at = $15
-       WHERE business_id = $16`,
+         trial_used_at = COALESCE($4, trial_used_at),
+         trial_ends_at = COALESCE($5, trial_ends_at),
+         current_period_start = COALESCE($6, current_period_start),
+         current_period_end = COALESCE($7, current_period_end),
+         billing_customer_id = COALESCE($8, billing_customer_id),
+         provider_subscription_id = COALESCE($9, provider_subscription_id),
+         provider_checkout_session_id = COALESCE($10, provider_checkout_session_id),
+         canceled_at = CASE WHEN $18 THEN NULL ELSE COALESCE($11, canceled_at) END,
+         cancel_at_period_end = COALESCE($12, cancel_at_period_end),
+         cancel_at = CASE WHEN $12 = FALSE THEN NULL ELSE COALESCE($13, cancel_at) END,
+         last_webhook_event_id = COALESCE($14, last_webhook_event_id),
+         last_webhook_event_created_at = COALESCE($15, last_webhook_event_created_at),
+         updated_at = $16
+       WHERE business_id = $17`,
       [
         input.planId,
         input.status,
         input.trialStartedAt ?? null,
+        input.trialUsedAt ?? null,
         input.trialEndsAt ?? null,
         input.currentPeriodStart ?? null,
         input.currentPeriodEnd ?? null,
@@ -202,18 +218,19 @@ export async function upsertSubscription(
   } else {
     await db.query(
       `INSERT INTO subscriptions (
-         id, business_id, plan_id, status, trial_started_at, trial_ends_at,
+         id, business_id, plan_id, status, trial_started_at, trial_used_at, trial_ends_at,
          current_period_start, current_period_end, billing_customer_id,
          provider_subscription_id, provider_checkout_session_id, canceled_at,
          cancel_at_period_end, cancel_at,
          last_webhook_event_id, last_webhook_event_created_at, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
       [
         makeId("subscription"),
         businessId,
         input.planId,
         input.status,
         input.trialStartedAt ?? null,
+        input.trialUsedAt ?? null,
         input.trialEndsAt ?? null,
         input.currentPeriodStart ?? null,
         input.currentPeriodEnd ?? null,

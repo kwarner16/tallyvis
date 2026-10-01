@@ -173,6 +173,7 @@ export {
   getSubscriptionReconciled,
   resolveEffectiveStatus,
   hasProductAccess,
+  isTrialEligible,
   startTrial,
   listBillingCharges,
   billingConfigured,

@@ -1,8 +1,10 @@
+import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROFESSIONAL_INSTALLATION_FEE, getTrialDaysForNewSubscription } from "@tallyvis/config";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { createQuote } from "../services/quotes";
+import { handleStripeWebhook } from "../services/billingWebhooks";
 import {
   chooseSelfInstall,
   createBillingPortalSession,
@@ -10,10 +12,12 @@ import {
   createInstallationCheckoutSession,
   getSubscription,
   hasProductAccess,
+  isTrialEligible,
   listBillingCharges,
   resolveEffectiveStatus,
   startTrial,
 } from "../services/subscriptions";
+import { upsertSubscription } from "../repositories/subscriptions";
 import type { Subscription } from "../repositories/subscriptions";
 
 const getDb = useTestDb();
@@ -405,6 +409,20 @@ describe("createCheckoutSessionForPlan", () => {
 
   it("passes the 30-day promotional trial length through Dec 31, 2026, and 7 days from Jan 1, 2027 on — the exact policy boundary from packages/config/src/trial.ts", async () => {
     const { db, session } = await setUp();
+    // A SECOND, distinct business for the post-promo call — not the same
+    // business reused (2026-10 trial-eligibility hardening: a business
+    // only ever gets ONE trial, ever, so reusing the same business for a
+    // second createCheckoutSessionForPlan call would correctly receive
+    // trialDays: undefined the second time regardless of date, which
+    // would defeat the point of this test — see
+    // docs/decisions/0034-trial-eligibility.md). Each business here is
+    // exercising the date-boundary policy exactly once, which is this
+    // test's actual subject.
+    const { session: secondSession } = await signUp(db, {
+      businessName: "Shiny Panes",
+      ownerEmail: "owner-boundary@example.com",
+      password: "correct-horse-battery",
+    });
     const billing = await import("../billing");
     const spy = vi.spyOn(billing, "createCheckoutSession").mockResolvedValue({
       id: "cs_test_mocked",
@@ -422,7 +440,7 @@ describe("createCheckoutSessionForPlan", () => {
       expect(spy.mock.calls[0]![0].trialDays).toBe(30);
 
       vi.setSystemTime(new Date("2027-01-01T00:00:00.000Z"));
-      await createCheckoutSessionForPlan(db, session, "pro", {
+      await createCheckoutSessionForPlan(db, secondSession, "pro", {
         successUrl: "https://x/success",
         cancelUrl: "https://x/cancel",
       });
@@ -747,6 +765,176 @@ describe("createCheckoutSessionForPlan", () => {
       expect((await getSubscription(db, session))?.status).toBe("incomplete");
       consoleSpy.mockRestore();
     });
+  });
+});
+
+/**
+ * Trial-abuse hardening (2026-10 — see
+ * docs/decisions/0034-trial-eligibility.md). Covers the task's required
+ * scenarios: a brand-new business gets a trial; a canceled trial can
+ * never get another; a deleted-subscription webhook can never restore
+ * eligibility; a returning former subscriber (full real lifecycle) is
+ * never re-granted one; and there is no client-controllable input through
+ * which a caller could force `trialDays` — eligibility is recomputed
+ * fresh, server-side, from this business's own persisted history, on
+ * every single call.
+ */
+describe("trial eligibility — one free trial per business, ever", () => {
+  const WEBHOOK_SECRET = "whsec_test_trial_eligibility";
+
+  function signWebhookPayload(payload: string): string {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = createHmac("sha256", WEBHOOK_SECRET).update(`${timestamp}.${payload}`).digest("hex");
+    return `t=${timestamp},v1=${signature}`;
+  }
+
+  beforeEach(() => {
+    process.env.STRIPE_PRICE_STARTER = "price_test_starter";
+    process.env.STRIPE_PRICE_GROWTH = "price_test_growth";
+    process.env.STRIPE_PRICE_PRO = "price_test_pro";
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.STRIPE_SECRET_KEY;
+    delete process.env.STRIPE_PRICE_STARTER;
+    delete process.env.STRIPE_PRICE_GROWTH;
+    delete process.env.STRIPE_PRICE_PRO;
+  });
+
+  it("1. a brand-new business is trial-eligible and is granted the trial on its first checkout", async () => {
+    const { db, session } = await setUp();
+    expect(isTrialEligible(await getSubscription(db, session))).toBe(true);
+
+    const billing = await import("../billing");
+    const spy = vi
+      .spyOn(billing, "createCheckoutSession")
+      .mockResolvedValue({ id: "cs_new", url: "https://checkout.stripe.example/cs_new" });
+
+    await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+
+    expect(spy.mock.calls[0]![0].trialDays).toBe(getTrialDaysForNewSubscription());
+    const after = await getSubscription(db, session);
+    expect(after?.trialUsedAt).toBeTruthy();
+  });
+
+  it("2. a canceled trial can never receive another trial, even reusing the same Stripe Customer", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi
+      .spyOn(billing, "createCheckoutSession")
+      .mockResolvedValueOnce({ id: "cs_first", url: "https://checkout.stripe.example/cs_first" });
+
+    await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+    expect(spy.mock.calls[0]![0].trialDays).toBe(getTrialDaysForNewSubscription());
+    const trialUsedAt = (await getSubscription(db, session))?.trialUsedAt;
+    expect(trialUsedAt).toBeTruthy();
+
+    // The business cancels — status becomes "canceled", exactly like a
+    // real `customer.subscription.deleted`/portal cancellation would
+    // leave it. trialUsedAt must NOT be cleared by this.
+    await upsertSubscription(db, session.businessId, { planId: "growth", status: "canceled" });
+    expect((await getSubscription(db, session))?.trialUsedAt).toBe(trialUsedAt);
+    expect(isTrialEligible(await getSubscription(db, session))).toBe(false);
+
+    spy.mockResolvedValueOnce({ id: "cs_second", url: "https://checkout.stripe.example/cs_second" });
+    await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+
+    expect(spy.mock.calls[1]![0].trialDays).toBeUndefined();
+    // trialUsedAt is the ORIGINAL stamp, never overwritten by the second grant-check.
+    expect((await getSubscription(db, session))?.trialUsedAt).toBe(trialUsedAt);
+  });
+
+  it("3. a deleted subscription (real customer.subscription.deleted webhook) cannot restore eligibility", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi
+      .spyOn(billing, "createCheckoutSession")
+      .mockResolvedValueOnce({ id: "cs_first", url: "https://checkout.stripe.example/cs_first" });
+
+    await createCheckoutSessionForPlan(db, session, "pro", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+    await upsertSubscription(db, session.businessId, { planId: "pro", status: "trialing", providerSubscriptionId: "sub_deleted_test" });
+    const trialUsedAt = (await getSubscription(db, session))?.trialUsedAt;
+    expect(trialUsedAt).toBeTruthy();
+
+    const deletedPayload = JSON.stringify({
+      id: "evt_sub_deleted_trial_test",
+      created: Math.floor(Date.now() / 1000),
+      type: "customer.subscription.deleted",
+      data: { object: { id: "sub_deleted_test", status: "canceled" } },
+    });
+    await handleStripeWebhook(db, deletedPayload, signWebhookPayload(deletedPayload), WEBHOOK_SECRET);
+
+    const afterDeletion = await getSubscription(db, session);
+    expect(afterDeletion?.status).toBe("canceled");
+    expect(afterDeletion?.trialUsedAt).toBe(trialUsedAt); // untouched by the webhook
+    expect(isTrialEligible(afterDeletion)).toBe(false);
+
+    spy.mockResolvedValueOnce({ id: "cs_second", url: "https://checkout.stripe.example/cs_second" });
+    await createCheckoutSessionForPlan(db, session, "pro", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+    expect(spy.mock.calls[1]![0].trialDays).toBeUndefined();
+  });
+
+  it("4. a returning former subscriber (full real trialing -> active -> canceled lifecycle) cannot receive another trial on resubscription", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi
+      .spyOn(billing, "createCheckoutSession")
+      .mockResolvedValueOnce({ id: "cs_first", url: "https://checkout.stripe.example/cs_first" });
+
+    // Original signup: trial -> converts to a real paying subscription.
+    await createCheckoutSessionForPlan(db, session, "starter", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+    await upsertSubscription(db, session.businessId, {
+      planId: "starter",
+      status: "active",
+      billingCustomerId: "cus_returning",
+      providerSubscriptionId: "sub_returning",
+    });
+    expect((await getSubscription(db, session))?.trialUsedAt).toBeTruthy();
+
+    // Later: cancels entirely.
+    await upsertSubscription(db, session.businessId, { planId: "starter", status: "canceled" });
+
+    // Later still: comes back and resubscribes (the exact reported abuse flow).
+    spy.mockResolvedValueOnce({ id: "cs_return", url: "https://checkout.stripe.example/cs_return" });
+    await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+
+    const secondCall = spy.mock.calls[1]![0];
+    expect(secondCall.trialDays).toBeUndefined(); // no trial on the resubscription
+    expect(secondCall.customerId).toBe("cus_returning"); // still correctly reuses the existing Stripe Customer
+  });
+
+  it("5. no client/API-manipulable input can bypass the server-side trial check — the decision is recomputed fresh from persisted history on every call, never from caller-supplied state", async () => {
+    const { db, session } = await setUp();
+    const billing = await import("../billing");
+    const spy = vi
+      .spyOn(billing, "createCheckoutSession")
+      .mockResolvedValueOnce({ id: "cs_first", url: "https://checkout.stripe.example/cs_first" });
+
+    await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+    expect(spy.mock.calls[0]![0].trialDays).toBe(getTrialDaysForNewSubscription());
+
+    // `createCheckoutSessionForPlan`'s own signature (db, session, planId,
+    // urls) has no trial-related parameter at all for a caller to set —
+    // there is nothing to "manipulate" at the API boundary. Simulate the
+    // closest thing to an attempted bypass: a business/front-end that
+    // tries to look "fresh" again by resetting every OTHER field it can
+    // reach (status, billingCustomerId, providerSubscriptionId) while
+    // trialUsedAt — never accepted as input by any public function —
+    // remains whatever the server originally stamped.
+    await upsertSubscription(db, session.businessId, {
+      planId: "growth",
+      status: "incomplete",
+      billingCustomerId: undefined,
+      providerSubscriptionId: undefined,
+    });
+    // (COALESCE-preserve means the `undefined`s above are no-ops anyway —
+    // the point is that nothing reachable can clear trialUsedAt itself.)
+    expect((await getSubscription(db, session))?.trialUsedAt).toBeTruthy();
+
+    spy.mockResolvedValueOnce({ id: "cs_bypass_attempt", url: "https://checkout.stripe.example/cs_bypass_attempt" });
+    await createCheckoutSessionForPlan(db, session, "growth", { successUrl: "https://x/success", cancelUrl: "https://x/cancel" });
+    expect(spy.mock.calls[1]![0].trialDays).toBeUndefined();
   });
 });
 
