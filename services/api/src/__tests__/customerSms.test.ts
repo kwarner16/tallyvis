@@ -60,6 +60,21 @@ const publicSubmission = (customer: { name: string; email: string; phone?: strin
   analysis,
 });
 
+/**
+ * `customerSms.ts`'s `dispatch()` throttles repeat sends per `kind:phone`
+ * at module scope (see that file's own comment) — deliberately, so a real
+ * retried request can't double-text a customer. That state is NOT reset
+ * between tests in this file (same as `quoteSmsAlert.test.ts`'s own
+ * cooldown relies on each test standing up a fresh business/number to
+ * avoid collisions). Every independent test below that expects a send to
+ * actually go through therefore needs its OWN phone number, distinct from
+ * every other test in this file — reusing one (as an earlier version of
+ * this file did) makes a later test's "fresh" customer silently inherit an
+ * earlier test's cooldown and observe zero sends. The one deliberate
+ * exception is a test whose entire point IS exercising that same cooldown
+ * within itself (see the "rapid duplicate" test below), which still needs
+ * a number no OTHER test touches.
+ */
 async function setUp() {
   const db = getDb();
   const { session } = await signUp(db, {
@@ -135,7 +150,7 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
     const quote = await createQuotePublic(
       db,
       session.businessId,
-      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-1111", smsConsent: true }),
+      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-2222", smsConsent: true }),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(sendSmsSpy).toHaveBeenCalledTimes(2);
@@ -144,7 +159,7 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
       db,
       session.businessId,
       quote.id,
-      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-1111", smsConsent: true }),
+      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-2222", smsConsent: true }),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -169,15 +184,21 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
     const sms = await import("../notifications/sms");
     const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
 
+    // Deliberately the SAME phone number for both calls below — that's the
+    // one case in this file where reuse is the point (see this file's own
+    // "distinct phone per independent test" note above `setUp`). Must still
+    // be a number no OTHER test in this file touches, or an earlier test's
+    // own cooldown entry would make this test's very first call a false
+    // positive for "the cooldown worked" instead of a real one.
     await createQuotePublic(
       db,
       session.businessId,
-      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-1111", smsConsent: true }),
+      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-3333", smsConsent: true }),
     );
     await createQuotePublic(
       db,
       session.businessId,
-      publicSubmission({ name: "Jordan Rivera", email: "jordan2@example.com", phone: "555-000-1111", smsConsent: true }),
+      publicSubmission({ name: "Jordan Rivera", email: "jordan2@example.com", phone: "555-000-3333", smsConsent: true }),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -192,7 +213,7 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
     const quote = await createQuotePublic(
       db,
       session.businessId,
-      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-1111", smsConsent: true }),
+      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-4444", smsConsent: true }),
     );
 
     expect(quote.id).toBeTruthy();
@@ -206,7 +227,7 @@ describe("recordJobOutcome — post-service thank-you SMS wiring", () => {
     const quote = await createQuotePublic(
       db,
       session.businessId,
-      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-1111", smsConsent: true }),
+      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-5555", smsConsent: true }),
     );
     return { db, session, quote };
   }
@@ -223,7 +244,7 @@ describe("recordJobOutcome — post-service thank-you SMS wiring", () => {
     expect(sendSmsSpy).toHaveBeenCalledTimes(1);
     const [message, kind] = sendSmsSpy.mock.calls[0]!;
     expect(kind).toBe("customer-post-service-thank-you");
-    expect(message.to).toBe("+15550001111");
+    expect(message.to).toBe("+15550005555");
     expect(message.body).toContain("Tallyvis");
     expect(message.body).toContain("Thank you");
   });
@@ -258,7 +279,7 @@ describe("recordJobOutcome — post-service thank-you SMS wiring", () => {
   it("does not send the thank-you SMS when the customer never consented", async () => {
     const { db, session } = await setUp();
     const quote = await createQuote(db, session, {
-      ...publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-1111" }),
+      ...publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-6666" }),
     });
     const sms = await import("../notifications/sms");
     const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
