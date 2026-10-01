@@ -1,3 +1,8 @@
+// Redeploy marker (2026-10, Stripe live-mode cutover): a prior empty commit
+// didn't force a rebuild — Vercel's ignore-build-step correctly skips a
+// commit that touches no files under this project. This comment is a
+// real, harmless, zero-behavior-change file touch so a genuine new build
+// actually happens and picks up the Stripe Production env vars.
 export const MARKETING_URL = process.env.NEXT_PUBLIC_MARKETING_URL ?? "http://localhost:3000";
 export const CONTACT_URL = `${MARKETING_URL}/contact`;
 /** Reused by the public estimator's SMS consent disclosure (see docs/decisions/0029-sms-consent-and-a2p-10dlc.md) — links to apps/web's existing legal pages rather than duplicating them here. */
