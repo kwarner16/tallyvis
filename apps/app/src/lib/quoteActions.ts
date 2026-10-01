@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import type {
   CustomerInput,
   PricingConfiguration,
@@ -218,7 +219,14 @@ export async function revokeQuoteShareLinkAction(quoteId: string): Promise<Actio
 export async function recordJobOutcomeAction(quoteId: string, input: SaveJobOutcomeInput): Promise<ActionResult<JobOutcome>> {
   const { db, session } = await requireContext();
   try {
-    const outcome = await apiRecordJobOutcome(db, session, quoteId, input);
+    const outcome = await apiRecordJobOutcome(db, session, quoteId, input, (finished) => {
+      // Same reasoning as createPublicQuoteAction's identical `after`
+      // registration: keeps this serverless function alive long enough for
+      // the post-service thank-you SMS (fired only on transition into
+      // "completed" — see recordJobOutcome's own comment) to actually
+      // finish sending without making the dashboard request wait on it.
+      after(() => finished);
+    });
     revalidatePath(`/dashboard/quotes/${quoteId}`);
     revalidatePath("/dashboard/job-outcomes");
     return { ok: true, data: outcome };

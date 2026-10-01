@@ -18,6 +18,7 @@ import * as customersService from "./customers";
 import * as pricingService from "./pricing";
 import { getSubscription, getSubscriptionByBusinessId, hasProductAccess } from "./subscriptions";
 import { sendNewQuoteSmsAlert } from "./quoteSmsAlert";
+import { sendEstimateReadySms, sendOptInConfirmationSms } from "./customerSms";
 
 export interface CreateQuoteInput {
   customer: CustomerInput;
@@ -191,16 +192,26 @@ async function requirePublicProductAccess(db: Queryable, businessId: string): Pr
  * real name, phone, and address — see `createCustomerForBusiness`.
  */
 /**
- * `buildQuoteUrl` and `onSmsNotified` are both optional and both purely
- * about the Phase 15 new-quote SMS alert (see
- * docs/decisions/0028-mobile-sms-embed-and-growth-updates.md) — every
- * existing caller (tests, and any future one that doesn't care about SMS)
- * can omit them unchanged. When `buildQuoteUrl` IS supplied, this looks up
- * the business's own SMS settings and — only if enabled with a valid
- * number — fires `sendNewQuoteSmsAlert`, handing its `finished` promise to
- * `onSmsNotified` so the caller (apps/app) can register it with Next's
- * `after()`. Never awaited here: an SMS provider failure must never delay
- * or fail quote creation itself.
+ * `buildQuoteUrl` and `onSmsNotified` are both optional — `buildQuoteUrl`
+ * is only needed for the business-owner alert below (the one customer-
+ * facing SMS kind that WOULD need a link gets none, by V1 content rule —
+ * see `customerSms.ts`), so every existing caller (tests, and any future
+ * one that doesn't care about the owner alert) can omit it unchanged.
+ * `onSmsNotified` is called once per background SMS actually kicked off
+ * here (owner alert and/or either customer-facing message below), so the
+ * caller (apps/app) can register each with Next's `after()`. Never awaited
+ * here: an SMS provider failure must never delay or fail quote creation
+ * itself.
+ *
+ * The two customer-facing sends (see `customerSms.ts`) fire independently
+ * of `buildQuoteUrl`/the owner alert, since this is the one and only place
+ * a NEW `Customer` row is created for the public estimator
+ * (`createCustomerForBusiness` never matches an existing row — see its own
+ * comment) — so `customer.smsConsent === true` here is always, by
+ * construction, consent being granted for the first time on this row,
+ * never a re-grant. `updateQuotePublic` (the re-analysis/correction path)
+ * never creates a customer row and never calls either function, so neither
+ * message is ever duplicated by a customer going back to add a photo.
  */
 export async function createQuotePublic(
   db: Queryable,
@@ -212,6 +223,11 @@ export async function createQuotePublic(
   await requirePublicProductAccess(db, businessId);
   const customer = await customersService.createCustomerForBusiness(db, businessId, input.customer);
   const quote = await persistPricedQuote(db, businessId, customer.id, input);
+
+  const optInSms = sendOptInConfirmationSms(customer);
+  if (optInSms) onSmsNotified?.(optInSms.finished);
+  const estimateReadySms = sendEstimateReadySms(customer);
+  if (estimateReadySms) onSmsNotified?.(estimateReadySms.finished);
 
   if (buildQuoteUrl) {
     const business = await getBusinessById(db, businessId);

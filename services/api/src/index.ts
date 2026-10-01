@@ -42,6 +42,26 @@ export {
   isCustomerSmsEligible,
 } from "./services/customers";
 
+// V1 customer-facing SMS messaging program (see customerSms.ts for the full
+// design note). `sendOptInConfirmationSms`/`sendEstimateReadySms` are wired
+// internally to `createQuotePublic` below and `sendPostServiceThankYouSms`
+// to `recordJobOutcome` — re-exported mainly so tests can exercise them
+// directly. `sendAppointmentConfirmationSms`/`sendAppointmentReminderSms`/
+// `sendOnTheWaySms` have NO wired trigger yet (no appointment/scheduling
+// data model, no background-job infrastructure, no "on the way" job-status
+// action exist in this codebase) — exported so the feature that eventually
+// adds one of those doesn't have to rebuild the consent/eligibility-gated
+// sender from scratch.
+export {
+  sendOptInConfirmationSms,
+  sendEstimateReadySms,
+  sendAppointmentConfirmationSms,
+  sendAppointmentReminderSms,
+  sendOnTheWaySms,
+  sendPostServiceThankYouSms,
+  type AppointmentSmsDetails,
+} from "./services/customerSms";
+
 export {
   getActiveConfiguration,
   getActiveConfigurationForBusiness,

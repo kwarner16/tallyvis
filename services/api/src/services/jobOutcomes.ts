@@ -5,6 +5,7 @@ import type { Queryable } from "../db/pg/client";
 import * as quotesRepo from "../repositories/quotes";
 import * as jobOutcomesRepo from "../repositories/jobOutcomes";
 import type { JobOutcome, SaveJobOutcomeInput } from "../repositories/jobOutcomes";
+import { sendPostServiceThankYouSms } from "./customerSms";
 
 export type { JobOutcome, JobOutcomeStatus, SaveJobOutcomeInput } from "../repositories/jobOutcomes";
 export type { ObservationComparisonRow } from "@tallyvis/ai";
@@ -26,15 +27,38 @@ async function requireOwnedQuote(db: Queryable, session: AuthSession, quoteId: s
   return quote;
 }
 
-/** Records (or updates) the actual outcome of a completed job. Never touches the quote's own historical `analysis`/`estimate`/`pricingConfigId` — this is purely additive, sibling data. */
+/**
+ * Records (or updates) the actual outcome of a completed job. Never
+ * touches the quote's own historical `analysis`/`estimate`/`pricingConfigId`
+ * — this is purely additive, sibling data.
+ *
+ * The one implemented trigger for the customer-facing post-service
+ * thank-you SMS (see `customerSms.ts`): fires only on the TRANSITION into
+ * `"completed"` (the existing outcome, if any, wasn't already
+ * `"completed"`) — a business editing notes/actuals on an already-completed
+ * outcome never re-sends it. `onSmsNotified`, like `createQuotePublic`'s
+ * own parameter of the same name, is optional and lets the caller (apps/app)
+ * register the background send with Next's `after()`; never awaited here,
+ * so an SMS provider failure can never fail saving the outcome itself.
+ */
 export async function recordJobOutcome(
   db: Queryable,
   session: AuthSession,
   quoteId: string,
   input: SaveJobOutcomeInput,
+  onSmsNotified?: (finished: Promise<void>) => void,
 ): Promise<JobOutcome> {
-  await requireOwnedQuote(db, session, quoteId);
-  return jobOutcomesRepo.saveJobOutcome(db, session.businessId, quoteId, input);
+  const quote = await requireOwnedQuote(db, session, quoteId);
+  const existing = await jobOutcomesRepo.getJobOutcomeByQuoteId(db, session.businessId, quoteId);
+  const outcome = await jobOutcomesRepo.saveJobOutcome(db, session.businessId, quoteId, input);
+
+  const justCompleted = input.status === "completed" && existing?.status !== "completed";
+  if (justCompleted) {
+    const thankYouSms = sendPostServiceThankYouSms(quote.customer);
+    if (thankYouSms) onSmsNotified?.(thankYouSms.finished);
+  }
+
+  return outcome;
 }
 
 export async function getJobOutcome(db: Queryable, session: AuthSession, quoteId: string): Promise<JobOutcome | undefined> {
