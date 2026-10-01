@@ -149,7 +149,14 @@ export async function updateQuoteCustomerAction(quoteId: string, customer: Custo
 export async function updateQuoteStatusAction(quoteId: string, status: QuoteStatus): Promise<ActionResult<Quote>> {
   const { db, session } = await requireContext();
   try {
-    const quote = await apiUpdateQuoteStatus(db, session, quoteId, status);
+    const quote = await apiUpdateQuoteStatus(db, session, quoteId, status, (finished) => {
+      // Same reasoning as recordJobOutcomeAction's identical `after`
+      // registration: keeps this serverless function alive long enough for
+      // the approved-estimate SMS (fired only on the transition into
+      // "approved" — see updateQuoteStatus's own comment) to actually
+      // finish sending without making the dashboard request wait on it.
+      after(() => finished);
+    });
     revalidatePath(`/dashboard/quotes/${quoteId}`);
     revalidatePath("/dashboard/quotes");
     revalidatePath("/dashboard");

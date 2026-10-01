@@ -74,3 +74,23 @@ export function isPropertyComplete(property: PropertyDetails): boolean {
 export function isContactComplete(contact: ContactDetails): boolean {
   return contact.name.trim().length > 0 && /\S+@\S+\.\S+/.test(contact.email);
 }
+
+/**
+ * Client-side mirror of `services/api/src/services/business.ts`'s
+ * `normalizePhoneNumber` shape check — a bare 10-digit US number, one
+ * already prefixed with "1" (11 digits), or an E.164 `+`-prefixed number.
+ * This file is imported from a "use client" page (the estimator's contact
+ * step), which can never import `services/api` (it pulls in `node:sqlite`
+ * — see CLAUDE.md's module boundary rules), so the shape check is
+ * duplicated here rather than shared. Used ONLY to gate the SMS opt-in
+ * checkbox in the UI (see `ContactDetails.smsConsent`'s own comment) —
+ * the server remains the authoritative gate regardless
+ * (`createCustomerForBusiness` never records consent without a phone that
+ * passes the real `normalizePhoneNumber`).
+ */
+export function isPlausiblePhoneNumber(phone: string): boolean {
+  const trimmed = phone.trim();
+  if (trimmed.startsWith("+")) return /^\+[1-9]\d{6,14}$/.test(trimmed);
+  const digits = trimmed.replace(/[^\d]/g, "");
+  return /^\d{10}$/.test(digits) || /^1\d{10}$/.test(digits);
+}

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Customer } from "@tallyvis/types";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
-import { createQuote, createQuotePublic, updateQuotePublic } from "../services/quotes";
+import { createQuote, createQuotePublic, updateQuotePublic, updateQuoteStatus } from "../services/quotes";
 import { recordJobOutcome } from "../services/jobOutcomes";
 import {
   sendAppointmentConfirmationSms,
@@ -89,8 +89,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiring", () => {
-  it("sends both opt-in confirmation and estimate-ready to an eligible, consenting customer", async () => {
+describe("createQuotePublic — opt-in confirmation SMS wiring (estimate-ready no longer fires here)", () => {
+  it("sends the opt-in confirmation, and ONLY the opt-in confirmation, to an eligible, consenting customer", async () => {
     const { db, session } = await setUp();
     const sms = await import("../notifications/sms");
     const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
@@ -102,14 +102,16 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(sendSmsSpy).toHaveBeenCalledTimes(2);
-    const calls = sendSmsSpy.mock.calls;
-    const optIn = calls.find(([, kind]) => kind === "customer-opt-in-confirmation");
-    const ready = calls.find(([, kind]) => kind === "customer-estimate-ready");
-    expect(optIn).toBeDefined();
-    expect(ready).toBeDefined();
-    expect(optIn![0].to).toBe("+15550001111");
-    expect(ready![0].to).toBe("+15550001111");
+    // 2026-10 correction: the estimate-ready SMS previously fired here too
+    // (immediately on submission, before any business review), which did
+    // not match the intended V1 trigger — it now only fires from
+    // `updateQuoteStatus`'s transition into "approved" (see that describe
+    // block below). A bare submission must send the opt-in confirmation
+    // and NOTHING else.
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1);
+    const [message, kind] = sendSmsSpy.mock.calls[0]!;
+    expect(kind).toBe("customer-opt-in-confirmation");
+    expect(message.to).toBe("+15550001111");
   });
 
   it("no consent -> neither customer-facing message sends", async () => {
@@ -142,7 +144,7 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
     expect(sendSmsSpy).not.toHaveBeenCalled();
   });
 
-  it("re-analyzing an existing quote (updateQuotePublic) never resends the opt-in confirmation or estimate-ready message", async () => {
+  it("re-analyzing an existing quote (updateQuotePublic) never resends the opt-in confirmation", async () => {
     const { db, session } = await setUp();
     const sms = await import("../notifications/sms");
     const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
@@ -153,7 +155,7 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
       publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-2222", smsConsent: true }),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(sendSmsSpy).toHaveBeenCalledTimes(2);
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1);
 
     await updateQuotePublic(
       db,
@@ -163,7 +165,7 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(sendSmsSpy).toHaveBeenCalledTimes(2); // still just the original pair
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1); // still just the original opt-in confirmation
   });
 
   it("a dashboard-created quote (createQuote, never grants consent) never triggers either customer-facing message", async () => {
@@ -202,7 +204,7 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(sendSmsSpy).toHaveBeenCalledTimes(2); // one opt-in + one estimate-ready, not four
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1); // one opt-in confirmation, not two
   });
 
   it("an SMS provider failure never fails quote creation and never becomes an unhandled rejection", async () => {
@@ -218,6 +220,108 @@ describe("createQuotePublic — customer-facing opt-in + estimate-ready SMS wiri
 
     expect(quote.id).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+});
+
+describe("updateQuoteStatus — estimate-ready SMS fires only on the business's own approval", () => {
+  async function setUpConsentingQuote(phone: string) {
+    const { db, session } = await setUp();
+    const quote = await createQuotePublic(
+      db,
+      session.businessId,
+      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone, smsConsent: true }),
+    );
+    return { db, session, quote };
+  }
+
+  it("submitting a quote alone never sends the estimate-ready SMS, even though it sends the opt-in confirmation", async () => {
+    const { db, session } = await setUp();
+    const sms = await import("../notifications/sms");
+    const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
+
+    const quote = await createQuotePublic(
+      db,
+      session.businessId,
+      publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-7001", smsConsent: true }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(quote.status).toBe("new"); // not yet approved by the business
+    expect(sendSmsSpy.mock.calls.find(([, kind]) => kind === "customer-estimate-ready")).toBeUndefined();
+    expect(sendSmsSpy.mock.calls.find(([, kind]) => kind === "customer-opt-in-confirmation")).toBeDefined();
+  });
+
+  it("the business approving the quote (new -> approved) sends exactly one estimate-ready SMS", async () => {
+    const { db, session, quote } = await setUpConsentingQuote("555-000-7002");
+    const sms = await import("../notifications/sms");
+    const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
+    sendSmsSpy.mockClear(); // drop the create-time opt-in confirmation call
+
+    await updateQuoteStatus(db, session, quote.id, "approved");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1);
+    const [message, kind] = sendSmsSpy.mock.calls[0]!;
+    expect(kind).toBe("customer-estimate-ready");
+    expect(message.to).toBe("+15550007002");
+    expect(message.body).toContain("TallyVis");
+    expect(message.body).toContain("approved");
+    expect(message.body).toMatch(/email/i);
+    expect(message.body).not.toMatch(/https?:\/\//);
+    expect(message.body).not.toMatch(/\(\d{3}\)|\d{3}-\d{3}-\d{4}/);
+  });
+
+  it("approving via needs_review -> approved also sends the estimate-ready SMS", async () => {
+    const { db, session, quote } = await setUpConsentingQuote("555-000-7003");
+    await updateQuoteStatus(db, session, quote.id, "needs_review");
+    const sms = await import("../notifications/sms");
+    const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
+    sendSmsSpy.mockClear();
+
+    await updateQuoteStatus(db, session, quote.id, "approved");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sendSmsSpy).toHaveBeenCalledTimes(1);
+    expect(sendSmsSpy.mock.calls[0]![1]).toBe("customer-estimate-ready");
+  });
+
+  it("re-approving (or any later transition) never re-sends the estimate-ready SMS a second time", async () => {
+    const { db, session, quote } = await setUpConsentingQuote("555-000-7004");
+    await updateQuoteStatus(db, session, quote.id, "approved");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const sms = await import("../notifications/sms");
+    const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
+    sendSmsSpy.mockClear();
+
+    // The transition graph itself already refuses "approved" -> "approved"
+    // — re-running the exact same approval call must fail, not silently
+    // re-send.
+    await expect(updateQuoteStatus(db, session, quote.id, "approved")).rejects.toThrow(
+      /Cannot move a quote from "approved" to "approved"/,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sendSmsSpy).not.toHaveBeenCalled();
+
+    // A legitimate further transition (approved -> sent) must not re-fire
+    // the estimate-ready SMS either — that message is specifically about
+    // the approval event, not every subsequent status change.
+    await updateQuoteStatus(db, session, quote.id, "sent");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sendSmsSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not send the estimate-ready SMS when the customer never consented", async () => {
+    const { db, session } = await setUp();
+    const quote = await createQuote(db, session, {
+      ...publicSubmission({ name: "Jordan Rivera", email: "jordan@example.com", phone: "555-000-7005" }),
+    });
+    const sms = await import("../notifications/sms");
+    const sendSmsSpy = vi.spyOn(sms, "sendSms").mockResolvedValue({ providerMessageId: "test-sid" });
+
+    await updateQuoteStatus(db, session, quote.id, "approved");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(sendSmsSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -245,7 +349,7 @@ describe("recordJobOutcome — post-service thank-you SMS wiring", () => {
     const [message, kind] = sendSmsSpy.mock.calls[0]!;
     expect(kind).toBe("customer-post-service-thank-you");
     expect(message.to).toBe("+15550005555");
-    expect(message.body).toContain("Tallyvis");
+    expect(message.body).toContain("TallyVis");
     expect(message.body).toContain("Thank you");
   });
 
@@ -316,7 +420,7 @@ describe("unwired message senders — direct unit coverage of content, brand, an
 
     const [message, kind] = sendSmsSpy.mock.calls[0]!;
     expect(kind).toBe("customer-appointment-confirmation");
-    expect(message.body.startsWith("Tallyvis:")).toBe(true);
+    expect(message.body.startsWith("TallyVis:")).toBe(true);
     expect(message.body).toContain("Oct 14");
     expect(message.body).toContain("2:00 PM");
     expect(message.body).not.toMatch(/https?:\/\//);
@@ -332,7 +436,7 @@ describe("unwired message senders — direct unit coverage of content, brand, an
 
     const [message, kind] = sendSmsSpy.mock.calls[0]!;
     expect(kind).toBe("customer-appointment-reminder");
-    expect(message.body.startsWith("Tallyvis:")).toBe(true);
+    expect(message.body.startsWith("TallyVis:")).toBe(true);
     expect(message.body).toContain("Reminder");
     expect(message.body).toContain("Oct 14");
   });
@@ -346,7 +450,7 @@ describe("unwired message senders — direct unit coverage of content, brand, an
 
     const [message, kind] = sendSmsSpy.mock.calls[0]!;
     expect(kind).toBe("customer-on-the-way");
-    expect(message.body.startsWith("Tallyvis:")).toBe(true);
+    expect(message.body.startsWith("TallyVis:")).toBe(true);
     expect(message.body).toContain("15 minutes");
   });
 

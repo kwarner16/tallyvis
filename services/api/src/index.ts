@@ -43,15 +43,20 @@ export {
 } from "./services/customers";
 
 // V1 customer-facing SMS messaging program (see customerSms.ts for the full
-// design note). `sendOptInConfirmationSms`/`sendEstimateReadySms` are wired
-// internally to `createQuotePublic` below and `sendPostServiceThankYouSms`
-// to `recordJobOutcome` — re-exported mainly so tests can exercise them
+// design note, and docs/decisions/0031-customer-sms-v1-messaging-program.md/
+// 0032-sms-stop-start-sync.md for what's actually active). Wired triggers:
+// `sendOptInConfirmationSms` to `createQuotePublic` below,
+// `sendEstimateReadySms` to `updateQuoteStatus`'s transition into
+// "approved" (NOT to quote creation — see that function's own comment),
+// and `sendPostServiceThankYouSms` to `recordJobOutcome`'s transition into
+// "completed". All three are re-exported mainly so tests can exercise them
 // directly. `sendAppointmentConfirmationSms`/`sendAppointmentReminderSms`/
-// `sendOnTheWaySms` have NO wired trigger yet (no appointment/scheduling
-// data model, no background-job infrastructure, no "on the way" job-status
-// action exist in this codebase) — exported so the feature that eventually
-// adds one of those doesn't have to rebuild the consent/eligibility-gated
-// sender from scratch.
+// `sendOnTheWaySms` have NO wired trigger (no appointment/scheduling data
+// model, no background-job infrastructure, no "on the way" job-status
+// action exist in this codebase) and are NOT part of the active V1
+// campaign — exported only so a future feature that adds one of those
+// doesn't have to rebuild the consent/eligibility-gated sender from
+// scratch.
 export {
   sendOptInConfirmationSms,
   sendEstimateReadySms,
@@ -61,6 +66,8 @@ export {
   sendPostServiceThankYouSms,
   type AppointmentSmsDetails,
 } from "./services/customerSms";
+
+export { handleTwilioSmsWebhook, TwilioWebhookVerificationError, type SmsOptEventResult } from "./services/smsWebhooks";
 
 export {
   getActiveConfiguration,

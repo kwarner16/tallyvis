@@ -15,6 +15,8 @@ interface CustomerRow {
   sms_consent_at: string | null;
   sms_consent_source: string | null;
   sms_consent_disclosure_version: string | null;
+  sms_opted_out_at: string | null;
+  sms_reopted_in_at: string | null;
 }
 
 function toCustomer(row: CustomerRow): Customer {
@@ -31,6 +33,8 @@ function toCustomer(row: CustomerRow): Customer {
     smsConsentAt: row.sms_consent_at ?? undefined,
     smsConsentSource: row.sms_consent_source ?? undefined,
     smsConsentDisclosureVersion: row.sms_consent_disclosure_version ?? undefined,
+    smsOptedOutAt: row.sms_opted_out_at ?? undefined,
+    smsReoptedInAt: row.sms_reopted_in_at ?? undefined,
   };
 }
 
@@ -86,6 +90,8 @@ export async function createCustomer(db: Queryable, businessId: string, input: C
     sms_consent_at: smsConsentAt,
     sms_consent_source: smsConsentSource,
     sms_consent_disclosure_version: smsConsentDisclosureVersion,
+    sms_opted_out_at: null,
+    sms_reopted_in_at: null,
   });
 }
 
@@ -137,4 +143,51 @@ export async function updateCustomer(
   );
   if (result.rowCount === 0) return undefined;
   return getCustomerById(db, businessId, id);
+}
+
+/**
+ * Every customer row, across EVERY business, that has a phone on file —
+ * deliberately NOT scoped by `businessId` (see `services/smsWebhooks.ts`'s
+ * own comment for why a STOP/START event must be applied globally: TallyVis
+ * sends all customer-facing SMS from one shared Twilio resource, so the
+ * same physical phone number can legitimately appear on customer rows
+ * under several different businesses, and Twilio's own carrier-level
+ * suppression after a STOP applies to all of them regardless of which
+ * business's quote the row came from). Used only by the inbound SMS
+ * webhook handler to find every row a given `From` number might match;
+ * never exposed to an authenticated business (which only ever sees its own
+ * customers via the existing `businessId`-scoped queries above).
+ */
+export async function listCustomersWithPhone(db: Queryable): Promise<Customer[]> {
+  const result = await db.query<CustomerRow>(`SELECT * FROM customers WHERE phone IS NOT NULL AND phone <> ''`);
+  return result.rows.map(toCustomer);
+}
+
+/**
+ * Records a recognized Twilio STOP: flips `sms_consent` to `false` and
+ * stamps `sms_opted_out_at`, but deliberately leaves `sms_consent_at`/
+ * `sms_consent_source`/`sms_consent_disclosure_version` untouched — see
+ * `Customer.smsConsentAt`'s own comment for why that original evidence must
+ * survive an opt-out. Safe to call repeatedly for the same customer (a
+ * duplicate STOP just re-stamps the same final state).
+ */
+export async function recordSmsOptOut(db: Queryable, customerId: string, occurredAt: string): Promise<void> {
+  await db.query(
+    `UPDATE customers SET sms_consent = false, sms_opted_out_at = $2, updated_at = $2 WHERE id = $1`,
+    [customerId, occurredAt],
+  );
+}
+
+/**
+ * Records a recognized Twilio START/re-opt-in: flips `sms_consent` back to
+ * `true` and stamps `sms_reopted_in_at`. Callers must only invoke this for
+ * a customer that has previously opted out (see `smsWebhooks.ts`'s own
+ * gating) — this function itself does not re-check that, so it is never
+ * called for a customer who was never consented in the first place.
+ */
+export async function recordSmsReOptIn(db: Queryable, customerId: string, occurredAt: string): Promise<void> {
+  await db.query(
+    `UPDATE customers SET sms_consent = true, sms_reopted_in_at = $2, updated_at = $2 WHERE id = $1`,
+    [customerId, occurredAt],
+  );
 }

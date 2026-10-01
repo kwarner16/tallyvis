@@ -297,19 +297,47 @@ export interface Customer extends CustomerInput {
   createdAt: string;
   updatedAt: string;
   /**
-   * Always present (defaults to `false`) — whether this customer
-   * affirmatively opted in to receiving service-related SMS. The mere
-   * presence of `phone` above is never sufficient on its own; any code
-   * that would text a customer must check this flag (see
+   * Whether this customer is CURRENTLY eligible to receive service-related
+   * SMS — true after a genuine web opt-in, flipped back to `false` by a
+   * recognized Twilio STOP reply (see `smsOptedOutAt`), and flipped back to
+   * `true` by a recognized START/re-opt-in reply (see `smsReoptedInAt`).
+   * The mere presence of `phone` above is never sufficient on its own; any
+   * code that would text a customer must check this flag (see
    * `services/api/src/services/customers.ts`'s `isCustomerSmsEligible`).
    */
   smsConsent: boolean;
-  /** Server-recorded timestamp of when `smsConsent` was set true — never client-supplied, and never present when `smsConsent` is false. */
+  /**
+   * Server-recorded timestamp of the ORIGINAL web opt-in — never
+   * client-supplied, and absent only when this customer never opted in at
+   * all. Unlike `smsConsent` itself, this is historical evidence and is
+   * deliberately NEVER cleared or overwritten by a later STOP/START cycle
+   * (see `smsOptedOutAt`/`smsReoptedInAt` below for the lifecycle since),
+   * so "was consent ever validly given, and when" remains answerable for
+   * audit purposes even after an opt-out.
+   */
   smsConsentAt?: string;
-  /** How consent was captured, e.g. `"public_estimator"` — see `SMS_CONSENT_SOURCE_PUBLIC_ESTIMATOR`. Absent when `smsConsent` is false. */
+  /** How the ORIGINAL consent was captured, e.g. `"public_estimator"` — see `SMS_CONSENT_SOURCE_PUBLIC_ESTIMATOR`. Preserved across STOP/START the same way `smsConsentAt` is; absent only when this customer never opted in. */
   smsConsentSource?: string;
-  /** Which version of `SMS_CONSENT_DISCLOSURE_TEXT` was shown at the moment consent was recorded — see that constant's own comment for why this is tracked. Absent when `smsConsent` is false. */
+  /** Which version of `SMS_CONSENT_DISCLOSURE_TEXT` was shown at the moment the ORIGINAL consent was recorded — see that constant's own comment for why this is tracked. Preserved across STOP/START; absent only when this customer never opted in. */
   smsConsentDisclosureVersion?: string;
+  /**
+   * Server-recorded timestamp of the most recent recognized Twilio STOP
+   * reply from this customer's phone (see
+   * `services/api/src/services/smsWebhooks.ts`) — `undefined` if this
+   * customer has never opted out. Set alongside `smsConsent` flipping to
+   * `false`; never cleared by a later re-opt-in, so "was this customer ever
+   * opted out, and when" stays answerable even after `START`.
+   */
+  smsOptedOutAt?: string;
+  /**
+   * Server-recorded timestamp of the most recent recognized Twilio
+   * START/re-opt-in reply — `undefined` if this customer has never
+   * re-opted in after an opt-out. Set alongside `smsConsent` flipping back
+   * to `true`. A bare START from a phone number that was never previously
+   * opted in does NOT set this (see `smsWebhooks.ts`'s own comment) — it
+   * never manufactures consent that was never actually given.
+   */
+  smsReoptedInAt?: string;
 }
 
 /**
@@ -324,10 +352,20 @@ export interface Customer extends CustomerInput {
  * always reflects the exact text that customer actually saw — never
  * silently reinterpreted against newer wording after the fact.
  */
-export const SMS_CONSENT_DISCLOSURE_VERSION = "2026-09-30.v1";
+export const SMS_CONSENT_DISCLOSURE_VERSION = "2026-10-01.v2";
 
+/**
+ * V1 scope only (see docs/decisions/0031-customer-sms-v1-messaging-program.md):
+ * opt-in confirmation, approved-estimate notification, and post-service
+ * thank-you. Deliberately does NOT mention appointment confirmations/
+ * reminders or estimated-arrival notifications — those sender functions
+ * exist in `customerSms.ts` for future use but are not wired to any
+ * trigger today, and the live disclosure a customer agrees to must only
+ * describe what TallyVis actually sends right now. Bump
+ * `SMS_CONSENT_DISCLOSURE_VERSION` whenever this text changes materially.
+ */
 export const SMS_CONSENT_DISCLOSURE_TEXT =
-  "By checking this box, I agree to receive SMS messages related to my quote and requested service, including quote updates, appointment confirmations and reminders, estimated arrival notifications, service updates, and post-service follow-ups. Message frequency varies. Message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase.";
+  "By checking this box, I agree to receive service-related SMS messages from TallyVis about my requested service, including SMS opt-in confirmation, approved estimate updates, and post-service follow-ups. Message frequency varies based on quote and service activity. Message and data rates may apply. Reply STOP to opt out or HELP for help. Consent is not a condition of purchase.";
 
 /** Recorded on `Customer.smsConsentSource` — the only legitimate consent-granting surface today. See `CustomerInput.smsConsent`'s own comment for why an authenticated business can never set this on a customer's behalf. */
 export const SMS_CONSENT_SOURCE_PUBLIC_ESTIMATOR = "public_estimator";

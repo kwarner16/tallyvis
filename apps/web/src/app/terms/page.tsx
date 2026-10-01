@@ -25,6 +25,13 @@ export default function TermsPage() {
         website, applications, software, artificial intelligence features, integrations, APIs,
         embedded tools, and related services (collectively, the &ldquo;Services&rdquo;).
       </p>
+      <p>
+        Tallyvis is a product and brand operated directly by Kyle Warner. Tallyvis is not
+        currently organized as a separate, formally registered company (such as an LLC or
+        corporation); references to &ldquo;Tallyvis,&rdquo; &ldquo;we,&rdquo; &ldquo;us,&rdquo;
+        or &ldquo;our&rdquo; throughout these Terms refer to Kyle Warner, operating under the
+        Tallyvis product and brand name.
+      </p>
       <p>By creating an account, accessing, purchasing, or using the Services, you agree to these Terms.</p>
       <p>
         If you use Tallyvis on behalf of a business or other organization, you represent that you
@@ -147,26 +154,24 @@ export default function TermsPage() {
       </p>
       <p>
         If you explicitly opt in (for example, by checking the SMS opt-in checkbox presented in
-        the Tallyvis public estimator), you may receive transactional or service-related text
-        messages regarding interactions you initiated with the applicable service business,
-        which may include:
+        the Tallyvis public estimator), the Tallyvis program currently sends:
       </p>
       <ul>
-        <li>Quote or estimate updates</li>
-        <li>Appointment confirmations and reminders</li>
-        <li>Estimated arrival notifications</li>
-        <li>Service updates</li>
-        <li>Post-service follow-ups</li>
-        <li>Thank-you messages</li>
-        <li>Review requests</li>
+        <li>A one-time SMS opt-in confirmation</li>
+        <li>A notification when your estimate has been approved and is ready (directing you to check your email for the details)</li>
+        <li>A post-service thank-you message</li>
       </ul>
+      <p>
+        Tallyvis does not currently send appointment confirmations, appointment reminders,
+        estimated-arrival notifications, review requests, or promotional/marketing text messages
+        as part of this program. Additional service-related message types may be added in the
+        future, with the opt-in disclosure updated accordingly before any such change takes
+        effect.
+      </p>
       <ul>
         <li>Participation in the SMS program is voluntary.</li>
         <li>Consent to receive SMS messages is not a condition of purchase.</li>
-        <li>
-          Message frequency varies depending on your interaction, quote, appointment, or service
-          with the applicable business.
-        </li>
+        <li>Message frequency varies based on your quote and service activity with the applicable business.</li>
         <li>Message and data rates may apply.</li>
         <li>Reply STOP to unsubscribe from SMS communications where supported.</li>
         <li>Reply HELP for assistance where supported.</li>
@@ -186,8 +191,9 @@ export default function TermsPage() {
         <Link href="/privacy">Privacy Policy</Link>.
       </p>
       <p>
-        Questions about the SMS program may be submitted through the contact information provided
-        on Tallyvis.com. See Section 24 (&ldquo;Contact&rdquo;) below.
+        Questions about the SMS program may be submitted to{" "}
+        <a href="mailto:kyle@tallyvis.com">kyle@tallyvis.com</a>, or through the contact
+        information provided on Tallyvis.com. See Section 24 (&ldquo;Contact&rdquo;) below.
       </p>
 
       <h2>8. Google and Third-Party Integrations</h2>

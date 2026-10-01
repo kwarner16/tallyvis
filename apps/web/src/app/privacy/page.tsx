@@ -27,6 +27,13 @@ export default function PrivacyPage() {
         business workflows through artificial intelligence and other software tools.
       </p>
       <p>
+        Tallyvis is a product and brand operated directly by Kyle Warner. Tallyvis is not
+        currently organized as a separate, formally registered company (such as an LLC or
+        corporation); references to &ldquo;Tallyvis,&rdquo; &ldquo;we,&rdquo; &ldquo;us,&rdquo;
+        or &ldquo;our&rdquo; throughout this Privacy Policy refer to Kyle Warner, operating under
+        the Tallyvis product and brand name.
+      </p>
+      <p>
         This Privacy Policy explains how Tallyvis collects, uses, stores, discloses, and protects
         information when you use the Tallyvis website, applications, services, integrations, and
         related features (collectively, the &ldquo;Services&rdquo;).
@@ -191,19 +198,20 @@ export default function PrivacyPage() {
         (text message) communications &mdash; for example, by checking an unchecked opt-in
         checkbox presented in the Tallyvis public estimator &mdash; Tallyvis and/or the service
         business you are interacting with may use that number to send you communications
-        associated with the service you requested. Depending on the service business&rsquo;s use
-        of the Services, these messages may include things like:
+        associated with the service you requested. Tallyvis&rsquo;s current SMS program sends:
       </p>
       <ul>
-        <li>Quote or estimate updates</li>
-        <li>Appointment confirmations</li>
-        <li>Appointment reminders</li>
-        <li>Estimated arrival notifications</li>
-        <li>Service-related updates</li>
-        <li>Post-service follow-ups</li>
-        <li>Thank-you messages</li>
-        <li>Review requests</li>
+        <li>A one-time confirmation that you have opted in to service-related SMS</li>
+        <li>A notification when your estimate has been approved and is ready (directing you to check your email for the details)</li>
+        <li>A post-service thank-you message</li>
       </ul>
+      <p>
+        Tallyvis does not currently send appointment confirmations, appointment reminders,
+        estimated-arrival notifications, review requests, or promotional/marketing text messages.
+        As the SMS program expands, additional service-related message types may be added in the
+        future; this Privacy Policy and the opt-in disclosure presented at sign-up will be updated
+        to reflect any such change before it takes effect.
+      </p>
       <p>
         <strong>SMS consent is optional.</strong> Providing a mobile phone number does not, by
         itself, constitute consent to receive SMS communications, and opting in to SMS is never a

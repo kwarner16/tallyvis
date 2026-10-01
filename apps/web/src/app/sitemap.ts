@@ -21,6 +21,7 @@ const ROUTES: { path: string; changeFrequency: MetadataRoute.Sitemap[number]["ch
   { path: "/privacy", changeFrequency: "yearly", priority: 0.3 },
   { path: "/terms", changeFrequency: "yearly", priority: 0.3 },
   { path: "/data", changeFrequency: "yearly", priority: 0.2 },
+  { path: "/sms-opt-in-proof", changeFrequency: "yearly", priority: 0.2 },
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

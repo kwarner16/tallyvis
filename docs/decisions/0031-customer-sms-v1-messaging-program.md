@@ -1,6 +1,6 @@
 # 0031 — V1 customer-facing SMS messaging program
 
-**Status:** Accepted
+**Status:** Accepted (trigger wiring corrected 2026-10 — see "2026-10 correction" below; see also 0032 for STOP/START sync and the consent-UX hardening pass)
 
 ## Context
 
@@ -70,15 +70,33 @@ promotional copy, per the V1 content rules.
 | Message | Trigger | Where |
 |---|---|---|
 | Opt-in confirmation | A genuinely new, consenting `Customer` row is created | `createQuotePublic` |
-| Estimate ready | Same call, immediately after the quote is persisted | `createQuotePublic` |
+| Estimate ready | `Quote.status` transitions into `"approved"` (not already `"approved"`) — see "2026-10 correction" below | `updateQuoteStatus` |
 | Post-service thank-you | `JobOutcome.status` transitions into `"completed"` (not already `"completed"`) | `recordJobOutcome` |
 
-Both `createQuotePublic` (via its existing `onSmsNotified` callback,
-already used by the business-owner alert) and `recordJobOutcome` (a new,
-identically-shaped optional `onSmsNotified` parameter) hand every
-fire-and-forget SMS's `finished` promise back to the caller so `apps/app`
-can register it with Next's `after()` — `createPublicQuoteAction` already
-did this; `recordJobOutcomeAction` now does too.
+`createQuotePublic`, `updateQuoteStatus`, and `recordJobOutcome` each take
+an optional `onSmsNotified` callback and hand every fire-and-forget SMS's
+`finished` promise back to the caller so `apps/app` can register it with
+Next's `after()` — `createPublicQuoteAction`/`recordJobOutcomeAction`
+already did this; `updateQuoteStatusAction` now does too.
+
+### 2026-10 correction — estimate-ready SMS trigger
+
+**This ADR originally wired `sendEstimateReadySms` to `createQuotePublic`,
+firing the moment a customer submitted a quote request — before any
+business review.** This did not match the intended V1 behavior (the
+customer should be told their estimate is ready only once the business
+has actually approved it) and was found and fixed during a pre-A2P-
+submission compliance audit. The fix moved the send into
+`updateQuoteStatus`'s transition into `"approved"` (`QuoteStatus`'s own
+existing approval state — see `@tallyvis/types`' `QUOTE_STATUS_TRANSITIONS`
+— not a new parallel concept), guarded by the same "only on the actual
+transition, never on a no-op re-run" pattern `recordJobOutcome`'s
+`justCompleted` already established, so re-approving (which
+`canTransitionQuoteStatus` already refuses) or any later transition
+(`approved` → `sent`) can never re-send it. See
+docs/decisions/0032-sms-stop-start-sync.md for the full audit this
+correction was part of, and `services/api/src/services/quotes.ts`'s
+`updateQuoteStatus` for the current implementation.
 
 **Implemented, not wired (no trigger exists to call them from):**
 `sendAppointmentConfirmationSms`, `sendAppointmentReminderSms`,
@@ -92,31 +110,16 @@ No scheduling/appointment data model, no cron/background-job runner, no
 "mark as on the way" dashboard action — all out of scope; inventing any of
 them would have been unrequested product behavior, not infrastructure this
 task asked for. No change to `sendNewQuoteSmsAlert` or the business-owner
-alert's own behavior. No application-side STOP/HELP state sync — V1 still
-relies entirely on Twilio's own carrier-level handling (ADR 0029's
-limitation stands unchanged): a STOP reply does **not** update
-`customers.sms_consent` in this database, so a business's dashboard view of
-a customer's consent can go stale relative to what Twilio is actually
-honoring. Kyle should treat a real inbound Twilio webhook (updating
-`sms_consent` on a STOP, confirming on a START/subsequent opt-in) as the
-next real gap before fully relying on this database as the source of truth
-for who can be texted.
+alert's own behavior. Application-side STOP/HELP state sync was flagged
+here as the next real gap and has since been built — see
+docs/decisions/0032-sms-stop-start-sync.md.
 
 ## Verification
 
-`pnpm --filter @tallyvis/api typecheck`, `pnpm --filter @tallyvis/api
-lint`, `pnpm --filter @tallyvis/app lint`, and `pnpm --filter @tallyvis/app
-build` all pass. 17 new tests in
-`services/api/src/__tests__/customerSms.test.ts` were written following
-the existing `quoteSmsAlert.test.ts`/`smsConsent.test.ts` conventions
-(spying on `sendSms`, never a real Twilio call) and are believed correct,
-but **could not be executed in this environment** — `services/api`'s test
-suite requires a real Postgres connection (`DATABASE_URL`/`DIRECT_URL` in
-`services/api/.env.local`, per `docs/decisions/0021-postgres-migration.md`),
-and no Postgres instance, Docker, or credentials were available here (the
-same "architecture-verified, not live-verified" caveat ADR 0029 already
-applies to the live Twilio send itself now additionally applies to this
-phase's own test suite execution). Kyle must run `pnpm --filter
-@tallyvis/api test` with real credentials before trusting this as
-confirmed-passing, and should treat that as a blocker before relying on
-this phase for the A2P submission.
+Originally, this phase's own test suite could not be executed in that
+environment (no Postgres connection available) and was only
+architecture-verified. It has since been executed, as part of the 2026-10
+correction above, against a real Postgres test database — see
+docs/decisions/0032-sms-stop-start-sync.md's own Verification section for
+the current, actually-passing counts covering both this phase's tests and
+0032's.

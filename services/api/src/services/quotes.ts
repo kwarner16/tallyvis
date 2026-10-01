@@ -224,10 +224,15 @@ export async function createQuotePublic(
   const customer = await customersService.createCustomerForBusiness(db, businessId, input.customer);
   const quote = await persistPricedQuote(db, businessId, customer.id, input);
 
+  // Only the opt-in confirmation fires here. The estimate-ready SMS does
+  // NOT fire on submission — see `updateQuoteStatus`'s own comment: it
+  // fires only once the business actually approves the estimate, which is
+  // the real-world moment a customer should be told their estimate is
+  // ready, not the moment they merely asked for one (2026-10 correction —
+  // this previously fired here too, which did not match the intended V1
+  // trigger and had to be moved before A2P campaign submission).
   const optInSms = sendOptInConfirmationSms(customer);
   if (optInSms) onSmsNotified?.(optInSms.finished);
-  const estimateReadySms = sendEstimateReadySms(customer);
-  if (estimateReadySms) onSmsNotified?.(estimateReadySms.finished);
 
   if (buildQuoteUrl) {
     const business = await getBusinessById(db, businessId);
@@ -468,11 +473,28 @@ export async function updateQuoteCustomer(
   return getQuoteOrThrow(db, session, quoteId);
 }
 
+/**
+ * The business's own approval action is the single source of truth for
+ * "the estimate is ready to tell the customer about" — `status` moving to
+ * `"approved"` (see `QUOTE_STATUS_TRANSITIONS` in @tallyvis/types) IS that
+ * event, not a parallel concept invented here. `justApproved` mirrors
+ * `recordJobOutcome`'s own `justCompleted` guard exactly: the SMS fires
+ * only on the actual transition INTO `"approved"` (the quote wasn't
+ * already approved), so re-running this with the same target status either
+ * no-ops (nothing to send) or — for every status other than a fresh
+ * approval — never reaches this branch at all, since
+ * `canTransitionQuoteStatus` already rejects re-entering `"approved"` from
+ * `"approved"` before any send could happen. `onSmsNotified`, like
+ * `createQuotePublic`/`recordJobOutcome`'s own parameter of the same name,
+ * is optional and never awaited here, so an SMS provider failure can never
+ * fail the status update itself.
+ */
 export async function updateQuoteStatus(
   db: Queryable,
   session: AuthSession,
   quoteId: string,
   status: QuoteStatus,
+  onSmsNotified?: (finished: Promise<void>) => void,
 ): Promise<Quote> {
   const quote = await getQuoteOrThrow(db, session, quoteId);
   if (!canTransitionQuoteStatus(quote.status, status)) {
@@ -480,5 +502,12 @@ export async function updateQuoteStatus(
   }
   const updated = await quotesRepo.updateQuoteStatus(db, session.businessId, quoteId, status);
   if (!updated) throw new Error(`Quote "${quoteId}" not found.`);
+
+  const justApproved = status === "approved" && quote.status !== "approved";
+  if (justApproved) {
+    const estimateReadySms = sendEstimateReadySms(quote.customer);
+    if (estimateReadySms) onSmsNotified?.(estimateReadySms.finished);
+  }
+
   return updated;
 }
