@@ -19,6 +19,23 @@ export interface Subscription {
   businessId: string;
   planId: string;
   status: SubscriptionStatus;
+  /**
+   * The raw Stripe Subscription status string as Stripe itself sent it
+   * (e.g. "active", "past_due", "trialing", "canceled", "unpaid",
+   * "incomplete", "incomplete_expired", "paused") — see
+   * docs/decisions/0036-subscription-provider-status.md. Deliberately
+   * SEPARATE from `status` above: `status` is TallyVis's own entitlement
+   * signal (what access this gets), this is the billing-health fact of
+   * record (what Stripe actually reported). `past_due` maps to `status
+   * === "active"` for entitlement purposes, but `providerStatus` still
+   * says `"past_due"` — this is what lets the admin dashboard truthfully
+   * distinguish the two. `undefined` means Stripe's raw status for this
+   * row isn't known yet — either a legacy row that predates this field
+   * (never fabricated/backfilled; see the migration's own comment), or a
+   * subscription created via `startTrial`'s DB-only path, which has no
+   * real Stripe object to report a status from.
+   */
+  providerStatus?: string;
   trialStartedAt?: string;
   trialEndsAt?: string;
   /**
@@ -54,6 +71,7 @@ interface SubscriptionRow {
   business_id: string;
   plan_id: string;
   status: string;
+  provider_status: string | null;
   trial_started_at: string | null;
   trial_ends_at: string | null;
   trial_used_at: string | null;
@@ -77,6 +95,7 @@ function toSubscription(row: SubscriptionRow): Subscription {
     businessId: row.business_id,
     planId: row.plan_id,
     status: row.status as SubscriptionStatus,
+    providerStatus: row.provider_status ?? undefined,
     trialStartedAt: row.trial_started_at ?? undefined,
     trialEndsAt: row.trial_ends_at ?? undefined,
     trialUsedAt: row.trial_used_at ?? undefined,
@@ -104,6 +123,8 @@ export async function getSubscriptionByBusinessId(db: Queryable, businessId: str
 export interface UpsertSubscriptionInput {
   planId: string;
   status: SubscriptionStatus;
+  /** See `Subscription.providerStatus`'s own comment. COALESCE-preserve like every other field here — pass the raw Stripe status whenever it's genuinely known (from a real Stripe Subscription object); omit it (e.g. `checkout.session.completed`, which has no Subscription object to read a status from) to leave whatever was already stored untouched. */
+  providerStatus?: string;
   trialStartedAt?: string;
   trialEndsAt?: string;
   /** See `Subscription.trialUsedAt`'s own comment. COALESCE-preserve like every other field here — pass this only once, from `createCheckoutSessionForPlan`, the first time a trial is actually granted; omit it on every other call so it is never cleared. */
@@ -192,7 +213,8 @@ export async function upsertSubscription(
          cancel_at = CASE WHEN $12 = FALSE THEN NULL ELSE COALESCE($13, cancel_at) END,
          last_webhook_event_id = COALESCE($14, last_webhook_event_id),
          last_webhook_event_created_at = COALESCE($15, last_webhook_event_created_at),
-         updated_at = $16
+         updated_at = $16,
+         provider_status = COALESCE($19, provider_status)
        WHERE business_id = $17`,
       [
         input.planId,
@@ -213,6 +235,7 @@ export async function upsertSubscription(
         now,
         businessId,
         input.clearCanceledAt ?? false,
+        input.providerStatus ?? null,
       ],
     );
   } else {
@@ -222,8 +245,8 @@ export async function upsertSubscription(
          current_period_start, current_period_end, billing_customer_id,
          provider_subscription_id, provider_checkout_session_id, canceled_at,
          cancel_at_period_end, cancel_at,
-         last_webhook_event_id, last_webhook_event_created_at, created_at, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+         last_webhook_event_id, last_webhook_event_created_at, created_at, updated_at, provider_status
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
       [
         makeId("subscription"),
         businessId,
@@ -244,6 +267,7 @@ export async function upsertSubscription(
         input.lastWebhookEventCreatedAt ?? null,
         now,
         now,
+        input.providerStatus ?? null,
       ],
     );
   }
@@ -251,6 +275,42 @@ export async function upsertSubscription(
   const saved = await getSubscriptionByBusinessId(db, businessId);
   if (!saved) throw new Error("Failed to read back the subscription that was just saved.");
   return saved;
+}
+
+/**
+ * The ONE narrow write the provider-status reconciliation CLI
+ * (`db/reconcileProviderStatus.ts`, via `services/providerStatusReconciliation.ts`)
+ * is allowed to use — updates `provider_status` alone. Deliberately a
+ * dedicated single-column `UPDATE`, not a call into `upsertSubscription`
+ * (whose `status`/`planId` parameters are mandatory and always
+ * unconditionally written, never COALESCE-preserved) — this makes it
+ * structurally impossible for that reconciliation path to ever alter
+ * entitlement `status`, `plan_id`, or anything else on this row. See
+ * docs/decisions/0037-provider-status-reconciliation.md.
+ */
+export async function setProviderStatus(db: Queryable, businessId: string, providerStatus: string): Promise<void> {
+  await db.query(`UPDATE subscriptions SET provider_status = $1 WHERE business_id = $2`, [providerStatus, businessId]);
+}
+
+/**
+ * Every subscription row, joined with its business's name — the one admin
+ * dashboard query this table needs (see
+ * docs/decisions/0035-admin-dashboard.md). Deliberately NOT scoped by
+ * `businessId` — the one legitimate cross-tenant read in this file,
+ * reachable only from `services/admin.ts`, which independently verifies
+ * the caller is an admin before ever calling this. `subscriptions` has at
+ * most one row per business (`UNIQUE(business_id)`), so this is bounded by
+ * total business count, not by quotes or customers — the tables that
+ * actually need paginated, indexed queries as the platform grows (see
+ * `repositories/admin.ts`).
+ */
+export async function listAllSubscriptionsWithBusinessName(
+  db: Queryable,
+): Promise<(Subscription & { businessName: string })[]> {
+  const result = await db.query<SubscriptionRow & { business_name: string }>(
+    `SELECT s.*, b.name AS business_name FROM subscriptions s JOIN businesses b ON b.id = s.business_id`,
+  );
+  return result.rows.map((row) => ({ ...toSubscription(row), businessName: row.business_name }));
 }
 
 /** Looked up by the Stripe webhook handler, which knows the provider's own subscription id, not our internal businessId. */

@@ -962,6 +962,10 @@ describe("getSubscriptionReconciled", () => {
     const { getSubscriptionReconciled } = await import("../services/subscriptions");
     const result = await getSubscriptionReconciled(db, session);
     expect(result?.status).toBe("active");
+    // See docs/decisions/0036-subscription-provider-status.md — the lazy
+    // reconciliation self-heal path is one of the two places (alongside a
+    // real webhook) that fills in the raw Stripe status for a row.
+    expect(result?.providerStatus).toBe("active");
   });
 
   it("returns undefined, without calling Stripe, when the business has no subscription row at all", async () => {

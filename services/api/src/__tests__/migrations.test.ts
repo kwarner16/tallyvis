@@ -118,6 +118,26 @@ describe("runMigrations (Postgres)", () => {
     }
   });
 
+  it("users.is_admin defaults to false (see docs/decisions/0035-admin-dashboard.md — every existing/new account starts as a normal, non-admin user)", async () => {
+    const testDb = await createTestDb();
+    try {
+      await testDb.db.query(
+        `INSERT INTO businesses (id, name, email, phone, service_area, default_industry, created_at, public_embed_id)
+         VALUES ('biz_admin_default', 'Admin Default Co', 'owner@admin-default.example', '', '', 'window-cleaning', '2026-01-01T00:00:00.000Z', 'embed_admin_default')`,
+      );
+      await testDb.db.query(
+        `INSERT INTO users (id, business_id, email, password_hash, created_at)
+         VALUES ('user_admin_default', 'biz_admin_default', 'owner@admin-default.example', 'hash', '2026-01-01T00:00:00.000Z')`,
+      );
+      const result = await testDb.db.query<{ is_admin: boolean }>(
+        `SELECT is_admin FROM users WHERE id = 'user_admin_default'`,
+      );
+      expect(result.rows[0]?.is_admin).toBe(false);
+    } finally {
+      await dropTestDb(testDb);
+    }
+  });
+
   it("quote_share_tokens allows at most one active (non-revoked) token per quote — the partial unique index", async () => {
     const testDb = await createTestDb();
     try {

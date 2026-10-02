@@ -63,14 +63,23 @@ export async function signUpAction(
 }
 
 /**
- * Only ever honors a same-origin, dashboard-relative path — never an
- * absolute URL or protocol-relative one (`//evil.example`) — so a
+ * Only ever honors a same-origin, dashboard- or admin-relative path —
+ * never an absolute URL or protocol-relative one (`//evil.example`) — so a
  * `?redirect=` query param on the public `/login` page can never be turned
  * into an open redirect. Anything that doesn't match is silently ignored in
- * favor of the generic dashboard home.
+ * favor of the generic dashboard home. `/admin` is allowed here purely so
+ * an admin deep link (e.g. `/admin/businesses/<id>`) survives an
+ * intervening sign-in the same way a dashboard deep link already does —
+ * this does NOT grant admin access: a non-admin session redirected here
+ * still gets bounced to `/dashboard` by `requireAdminContext()`
+ * the moment that page actually runs. See
+ * docs/decisions/0035-admin-dashboard.md.
  */
 function sanitizeDashboardRedirect(value: FormDataEntryValue | null): string | undefined {
-  if (typeof value !== "string" || !value.startsWith("/dashboard") || value.startsWith("//")) {
+  if (typeof value !== "string" || value.startsWith("//")) {
+    return undefined;
+  }
+  if (!value.startsWith("/dashboard") && !value.startsWith("/admin")) {
     return undefined;
   }
   return value;

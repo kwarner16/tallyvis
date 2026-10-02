@@ -10,4 +10,6 @@ export interface AuthUser {
   email: string;
   businessId: string;
   createdAt: string;
+  /** Internal TallyVis staff flag (see docs/decisions/0035-admin-dashboard.md) — never set by any customer-facing signup/account flow, only by the out-of-band `grantAdmin` script. False for every real customer account. */
+  isAdmin: boolean;
 }

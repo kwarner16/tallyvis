@@ -168,6 +168,7 @@ export async function reconcileSubscriptionFromStripe(
   return subscriptionsRepo.upsertSubscription(db, subscription.businessId, {
     planId: patch.resolvedPlanId ?? subscription.planId,
     status: patch.status,
+    providerStatus: patch.providerStatus,
     trialStartedAt: patch.trialStartedAt,
     trialEndsAt: patch.trialEndsAt,
     currentPeriodStart: patch.currentPeriodStart,

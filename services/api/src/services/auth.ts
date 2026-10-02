@@ -130,6 +130,20 @@ export interface CurrentUserInfo {
   linkedProviders: string[];
 }
 
+/**
+ * The one check every admin-area page AND every admin Server Action must
+ * call independently (see docs/decisions/0035-admin-dashboard.md) — never
+ * inferred from navigation, a query parameter, or a client-side flag.
+ * Re-reads `users.is_admin` fresh from the database on every call rather
+ * than trusting anything cached on the session, so revoking admin access
+ * (via the `grantAdmin` CLI script) takes effect immediately, without
+ * requiring the affected user to log out and back in.
+ */
+export async function isAdminSession(db: Queryable, session: AuthSession): Promise<boolean> {
+  const user = await getUserById(db, session.userId);
+  return user?.isAdmin ?? false;
+}
+
 /** For the Settings "Account" section — who am I signed in as, and how. */
 export async function getCurrentUser(db: Queryable, session: AuthSession): Promise<CurrentUserInfo> {
   const user = await getUserById(db, session.userId);

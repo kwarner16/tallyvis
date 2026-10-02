@@ -9,10 +9,17 @@ interface UserRow {
   email: string;
   password_hash: string | null;
   created_at: string;
+  is_admin: boolean;
 }
 
 function toAuthUser(row: UserRow): AuthUser {
-  return { id: row.id, email: row.email, businessId: row.business_id, createdAt: row.created_at };
+  return {
+    id: row.id,
+    email: row.email,
+    businessId: row.business_id,
+    createdAt: row.created_at,
+    isAdmin: row.is_admin,
+  };
 }
 
 /** `passwordHash: null` creates a Google-only account (see docs/decisions/0019) — never a fake/placeholder hash standing in for "no password." */
@@ -28,7 +35,7 @@ export async function createUser(
     `INSERT INTO users (id, business_id, email, password_hash, created_at) VALUES ($1, $2, $3, $4, $5)`,
     [id, businessId, email, passwordHash, createdAt],
   );
-  return { id, businessId, email, createdAt };
+  return { id, businessId, email, createdAt, isAdmin: false };
 }
 
 /** For login only — the one place the password hash is allowed to leave the repository, and it goes straight into `verifyPassword`, never further. `passwordHash: null` means this is a Google-only account — `logIn`'s caller must reject it with the same generic message a wrong password would get, never a distinct "this account has no password" error (that would leak account-existence/auth-method information). */
@@ -60,4 +67,24 @@ export async function userHasPassword(db: Queryable, userId: string): Promise<bo
 /** Password reset's one write — never called with a plaintext password, only an already-hashed one (see `auth/password.ts`'s `hashPassword`). Also how a Google-only user acquires a real password for the first time, if that's ever built — this function doesn't distinguish the two cases. */
 export async function updatePasswordHash(db: Queryable, userId: string, passwordHash: string): Promise<void> {
   await db.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [passwordHash, userId]);
+}
+
+/** Looks a user up by email for the one-off `grantAdmin` CLI script (see docs/decisions/0035-admin-dashboard.md) — never reachable from any customer-facing request path. Deliberately distinct from `getUserWithPasswordHashByEmail` so that function's "also returns the password hash" contract is never accidentally reused somewhere a hash shouldn't leave this file. */
+export async function getUserByEmail(db: Queryable, email: string): Promise<AuthUser | undefined> {
+  const result = await db.query<UserRow>(`SELECT * FROM users WHERE email = $1`, [email]);
+  const row = result.rows[0];
+  return row ? toAuthUser(row) : undefined;
+}
+
+/** Every user row for one business, oldest first — the first (oldest) row is that business's original owner. Used only by the admin dashboard's business detail page (see docs/decisions/0035-admin-dashboard.md); every customer-facing path already knows which single user it's dealing with via the session, and has no reason to list a business's other users. */
+export async function listUsersForBusiness(db: Queryable, businessId: string): Promise<AuthUser[]> {
+  const result = await db.query<UserRow>(`SELECT * FROM users WHERE business_id = $1 ORDER BY created_at ASC`, [
+    businessId,
+  ]);
+  return result.rows.map(toAuthUser);
+}
+
+/** The only write path for `users.is_admin` — called exclusively from the `grantAdmin` CLI script, never from any apps/app Server Action or API route. There is deliberately no UI control anywhere that can flip this flag. */
+export async function setUserIsAdmin(db: Queryable, userId: string, isAdmin: boolean): Promise<void> {
+  await db.query(`UPDATE users SET is_admin = $1 WHERE id = $2`, [isAdmin, userId]);
 }

@@ -357,7 +357,14 @@ describe("handleStripeWebhook — customer.subscription.updated / .deleted", () 
     });
     await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-    expect((await getSubscription(db, session))?.status).toBe("active");
+    const updated = await getSubscription(db, session);
+    expect(updated?.status).toBe("active");
+    // See docs/decisions/0036-subscription-provider-status.md: the raw
+    // Stripe status is preserved separately from the internal entitlement
+    // status above — this is what lets the admin dashboard tell "active"
+    // and "active but actually past_due" apart, even though both grant
+    // the same product access.
+    expect(updated?.providerStatus).toBe("past_due");
   });
 
   it("maps unpaid/incomplete_expired/paused to expired (denies access)", async () => {
@@ -373,7 +380,9 @@ describe("handleStripeWebhook — customer.subscription.updated / .deleted", () 
       const payload = JSON.stringify({ type: "customer.subscription.updated", data: { object: { id: subId, status: stripeStatus } } });
       await handleStripeWebhook(db, payload, signPayload(payload), SECRET);
 
-      expect((await getSubscription(db, session))?.status).toBe("expired");
+      const updated = await getSubscription(db, session);
+      expect(updated?.status).toBe("expired");
+      expect(updated?.providerStatus).toBe(stripeStatus);
     }
   });
 

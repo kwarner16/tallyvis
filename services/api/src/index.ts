@@ -15,6 +15,7 @@ export {
   resolveSession,
   getCurrentUser,
   setPassword,
+  isAdminSession,
   type SignUpInput,
   type LogInInput,
   type AuthResult,
@@ -205,3 +206,33 @@ export {
 } from "./auth/googleOAuth";
 
 export { signInWithGoogle, GoogleSignInError, type GoogleAuthOutcome } from "./services/googleAuth";
+
+// Internal TallyVis CEO/Admin dashboard (see
+// docs/decisions/0035-admin-dashboard.md). Every function below
+// independently re-verifies the caller's session is an admin
+// (`isAdminSession`) before returning any cross-tenant data — see
+// services/admin.ts's own header comment.
+export {
+  getAdminOverview,
+  listBusinessesAdmin,
+  getBusinessDetailAdmin,
+  listSubscriptionsAdmin,
+  listRecentActivityAdmin,
+  calculateMrrBreakdown,
+  isSubscriptionPastDue,
+  type AdminOverview,
+  type AdminSubscriptionStatusCounts,
+  type AdminBusinessListResult,
+  type ListBusinessesAdminInput,
+  type AdminBusinessDetail,
+  type AdminSubscriptionRow,
+  type MrrBreakdown,
+} from "./services/admin";
+export type {
+  AdminBusinessCounts,
+  AdminQuoteCounts,
+  AdminBusinessListRow,
+  AdminBusinessSortBy,
+  AdminSortDirection,
+  AdminRecentEventRow,
+} from "./repositories/admin";

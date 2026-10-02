@@ -56,6 +56,8 @@ export interface SubscriptionPatchFromStripe {
   /** `undefined` when the price on the subscription doesn't resolve to a known plan (foreign/stale data) — callers should fall back to the existing stored planId in that case. */
   resolvedPlanId: ReturnType<typeof resolvePlanIdFromPriceId>;
   status: SubscriptionStatus;
+  /** The raw Stripe status this patch was built from, untranslated — see `Subscription.providerStatus`'s own comment and docs/decisions/0036-subscription-provider-status.md. Always set here (a real Subscription object always has a `status`); `forcedStatus` (used for `.deleted` events) only overrides TallyVis's own entitlement `status` above, never this fact-of-record field. */
+  providerStatus: string;
   trialStartedAt?: string;
   trialEndsAt?: string;
   currentPeriodStart?: string;
@@ -122,6 +124,7 @@ export function buildSubscriptionPatchFromStripe(
   return {
     resolvedPlanId,
     status,
+    providerStatus: stripeSub.status,
     trialStartedAt: stripeSub.trial_start ? new Date(stripeSub.trial_start * 1000).toISOString() : undefined,
     trialEndsAt: stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : undefined,
     currentPeriodStart: stripeSub.current_period_start
@@ -189,6 +192,7 @@ async function applyStripeSubscription(db: Queryable, event: StripeEvent, forced
   await subscriptionsRepo.upsertSubscription(db, existing.businessId, {
     planId: patch.resolvedPlanId ?? existing.planId,
     status: patch.status,
+    providerStatus: patch.providerStatus,
     // Only set when this event was resolved via the metadata fallback
     // above (the normal id-lookup path already found this row BY its
     // provider_subscription_id, so it's already correct and this is

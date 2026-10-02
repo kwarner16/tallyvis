@@ -11,7 +11,9 @@
     "test": "vitest run",
     "db:migrate": "tsx src/db/runMigrationsCli.ts",
     "seed": "tsx src/db/seed.ts",
-    "waive-installation": "tsx src/db/waiveInstallation.ts"
+    "waive-installation": "tsx src/db/waiveInstallation.ts",
+    "grant-admin": "tsx src/db/grantAdmin.ts",
+    "reconcile-provider-status": "tsx src/db/reconcileProviderStatus.ts"
   },
   "dependencies": {
     "@tallyvis/ai": "workspace:*",

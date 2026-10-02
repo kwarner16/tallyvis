@@ -32,4 +32,6 @@ export const MIGRATION_FILENAMES: readonly string[] = [
   "0009_sms_consent.sql",
   "0010_sms_stop_start_sync.sql",
   "0011_trial_eligibility.sql",
+  "0012_admin.sql",
+  "0013_subscription_provider_status.sql",
 ];

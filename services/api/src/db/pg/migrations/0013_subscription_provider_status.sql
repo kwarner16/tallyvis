@@ -1,0 +1,28 @@
+-- Separates Stripe's raw billing status from TallyVis's own entitlement
+-- status (see docs/decisions/0036-subscription-provider-status.md). Root
+-- cause this fixes: `subscriptions.status` (the pre-existing column) is
+-- deliberately an ENTITLEMENT signal, not a billing-health signal —
+-- `billingWebhooks.ts`'s STRIPE_TO_INTERNAL_STATUS table maps Stripe's
+-- `past_due` to the internal `"active"` by design, because a past-due
+-- business keeps product access during Stripe's dunning/grace period
+-- (see `subscriptions.ts`'s `hasProductAccess`). That design is CORRECT
+-- for entitlement and is left completely unchanged by this migration —
+-- but it meant there was no way to truthfully tell an admin "this
+-- business is current" apart from "this business is past due," since
+-- both collapsed to the same stored value.
+--
+-- `provider_status` is the raw string Stripe actually sent on the
+-- Subscription object's own `status` field (e.g. "active", "past_due",
+-- "trialing", "canceled", "unpaid", "incomplete", "incomplete_expired",
+-- "paused") — never translated, never combined with TallyVis's own
+-- status logic. Nullable, and NOT backfilled: TallyVis has no record of
+-- what Stripe's raw status was at any point in the past for an existing
+-- subscription row, and fabricating one (e.g. assuming "active" meant
+-- "active") would misrepresent real billing history. Every row starts
+-- NULL and is filled in the next time a `customer.subscription.created`/
+-- `.updated`/`.deleted` webhook, or the existing `reconcileSubscriptionFromStripe`
+-- self-heal path, touches it — both now capture this field alongside the
+-- internal status they already compute. See that ADR's "Historical rows"
+-- section for the honest accounting of what this means for already-existing
+-- production subscriptions until their next webhook/reconciliation.
+ALTER TABLE subscriptions ADD COLUMN provider_status TEXT;
