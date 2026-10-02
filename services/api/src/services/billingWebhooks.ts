@@ -1,10 +1,11 @@
 import type { Queryable } from "../db/pg/client";
 import { verifyStripeWebhookSignature } from "../billing/verifyWebhookSignature";
 import { resolvePlanIdFromPriceId } from "../billing";
-import type { StripeSubscriptionObject } from "../billing/types";
+import type { StripeSubscriptionObject, StripeInvoiceObject, StripeChargeObject } from "../billing/types";
 import * as subscriptionsRepo from "../repositories/subscriptions";
 import type { Subscription, SubscriptionStatus } from "../repositories/subscriptions";
 import * as billingChargesRepo from "../repositories/billingCharges";
+import { processInvoicePaid, processChargeRefunded } from "./creatorCommissions";
 
 /**
  * Phase 14 — reconciling internal subscription state against Stripe's own
@@ -303,16 +304,40 @@ export async function handleStripeWebhook(
     return;
   }
 
-  // `invoice.paid`/`invoice.payment_failed` are deliberately NOT handled:
-  // `customer.subscription.updated` already delivers the resulting
-  // trialing/active/past_due/canceled state whenever a payment succeeds or
-  // fails (Stripe transitions the subscription's own status as part of
-  // the same lifecycle event), so a dedicated handler here would only
-  // duplicate a state transition this app already mirrors — see
-  // docs/decisions/0018-stripe-v1-hardening.md. Smart Retries and Stripe's
-  // own automated emails own the recovery workflow itself; Tallyvis's job
-  // is only to reflect the resulting subscription state, which it already
-  // does via the branch above. Any other event type (including this one)
-  // is silently ignored — Stripe's own recommendation is to only process
-  // events you act on, not every event type it can send.
+  // `invoice.payment_failed` is still deliberately NOT handled for
+  // SUBSCRIPTION ENTITLEMENT purposes — see the comment this one used to
+  // carry, now below `invoice.paid`: `customer.subscription.updated`
+  // already delivers the resulting trialing/active/past_due/canceled
+  // state whenever a payment succeeds or fails, so a dedicated handler
+  // here would only duplicate a state transition this app already
+  // mirrors (docs/decisions/0018-stripe-v1-hardening.md). A failed
+  // payment correctly produces no commission simply by never reaching
+  // `invoice.paid` at all — see `processInvoicePaid`'s own comment.
+  //
+  // `invoice.paid` IS now handled — added for the TallyVis Founding
+  // Creator Program (see docs/decisions/0040-creator-affiliate-program.md):
+  // this is the one event that represents "actually collected subscription
+  // revenue" (amount_paid, already net of any discount), which is what a
+  // creator commission is a percentage of. Deliberately a SEPARATE
+  // concern from the subscription-entitlement branches above — this
+  // never reads or writes anything on the `subscriptions` row itself,
+  // only `creator_commissions`/`creator_referrals`.
+  if (event.type === "invoice.paid") {
+    await processInvoicePaid(db, event.data.object as unknown as StripeInvoiceObject);
+    return;
+  }
+
+  // Reverses a creator commission when the underlying payment is
+  // refunded — see docs/decisions/0040's "Refund handling" section and
+  // `processChargeRefunded`'s own comment. Has no effect on subscription
+  // entitlement/status, which Stripe handles via its own
+  // `customer.subscription.updated` lifecycle regardless of refunds.
+  if (event.type === "charge.refunded") {
+    await processChargeRefunded(db, event.data.object as unknown as StripeChargeObject);
+    return;
+  }
+
+  // Any other event type (including `invoice.payment_failed`) is silently
+  // ignored — Stripe's own recommendation is to only process events you
+  // act on, not every event type it can send.
 }

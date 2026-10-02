@@ -231,3 +231,67 @@ describe("signInWithGoogle — business isolation", () => {
     expect(first.session.businessId).not.toBe(second.session.businessId);
   });
 });
+
+describe("signInWithGoogle — Founding Creator Program referral attribution (production feature, 2026-10)", () => {
+  it("a referred Google signup becomes durably associated with the creator", async () => {
+    const db = getDb();
+    const { createCreator } = await import("../repositories/creators");
+    const { getCreatorReferralByBusinessId } = await import("../repositories/creatorReferrals");
+    const creator = await createCreator(db, {
+      slug: "ben",
+      name: "Ben",
+      email: "ben@example.com",
+      platform: "",
+      profileUrl: "",
+      status: "active",
+      commissionRateBps: 2000,
+      commissionDurationMonths: 12,
+      notes: "",
+    });
+
+    const outcome = await signInWithGoogle(
+      db,
+      identity({ email: "referred-via-google@example.com" }),
+      undefined,
+      undefined,
+      undefined,
+      { slug: "ben", firstObservedAt: new Date().toISOString() },
+    );
+    if (outcome.kind !== "signup") throw new Error("unreachable");
+
+    const referral = await getCreatorReferralByBusinessId(db, outcome.session.businessId);
+    expect(referral?.creatorId).toBe(creator.id);
+  });
+
+  it("a returning Google user's login never creates a referral, even with a referral cookie present — only the original signup can", async () => {
+    const db = getDb();
+    const { createCreator } = await import("../repositories/creators");
+    const { getCreatorReferralByBusinessId } = await import("../repositories/creatorReferrals");
+    await createCreator(db, {
+      slug: "zara",
+      name: "Zara",
+      email: "zara@example.com",
+      platform: "",
+      profileUrl: "",
+      status: "active",
+      commissionRateBps: 2000,
+      commissionDurationMonths: 12,
+      notes: "",
+    });
+
+    const first = await signInWithGoogle(db, identity({ email: "returning-user@example.com" }));
+    if (first.kind !== "signup") throw new Error("unreachable");
+    expect(await getCreatorReferralByBusinessId(db, first.session.businessId)).toBeUndefined();
+
+    const second = await signInWithGoogle(
+      db,
+      identity({ email: "returning-user@example.com" }),
+      undefined,
+      undefined,
+      undefined,
+      { slug: "zara", firstObservedAt: new Date().toISOString() },
+    );
+    expect(second.kind).toBe("login");
+    expect(await getCreatorReferralByBusinessId(db, first.session.businessId)).toBeUndefined();
+  });
+});

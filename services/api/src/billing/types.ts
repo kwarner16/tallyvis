@@ -76,6 +76,40 @@ export interface StripeSubscriptionObject {
   metadata?: { businessId?: string };
 }
 
+/**
+ * The shape of a Stripe Invoice object as it arrives in an `invoice.paid`
+ * webhook event — see docs/decisions/0040-creator-affiliate-program.md
+ * for why this specific event (not `checkout.session.completed` or
+ * `customer.subscription.*`) is the creator-commission source of truth:
+ * `amount_paid` is the actual, already-discount-net amount Stripe
+ * collected, which is exactly "eligible collected subscription revenue."
+ */
+export interface StripeInvoiceObject {
+  id: string;
+  subscription?: string | null;
+  customer?: string;
+  /** The Charge backing this invoice's payment, when one exists — used to correlate a later `charge.refunded` event back to the commission this invoice produced. */
+  charge?: string | null;
+  /** The actual amount collected, in the invoice's own smallest currency unit (cents for USD) — already net of any coupon/discount. */
+  amount_paid: number;
+  currency: string;
+  period_start?: number;
+  period_end?: number;
+  metadata?: { businessId?: string };
+}
+
+/**
+ * The shape of a Stripe Charge object as it arrives in a `charge.refunded`
+ * webhook event — only the fields needed to find and reverse the
+ * commission this charge's invoice originally produced.
+ */
+export interface StripeChargeObject {
+  id: string;
+  invoice?: string | null;
+  amount_refunded: number;
+  refunded: boolean;
+}
+
 export type BillingErrorCategory = "not-configured" | "provider-error" | "invalid-request";
 
 export class BillingProviderError extends Error {

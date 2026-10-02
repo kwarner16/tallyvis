@@ -16,6 +16,7 @@ import {
   GOOGLE_OAUTH_STATE_COOKIE,
   GOOGLE_OAUTH_VERIFIER_COOKIE,
 } from "@/lib/constants";
+import { REFERRAL_COOKIE_NAME, decodeReferralCookieValue } from "@/lib/referralCookie";
 
 /**
  * V1 account/product features phase (see
@@ -93,8 +94,19 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const identity = await verifyGoogleIdToken({ idToken, clientId, expectedNonce });
 
-    const outcome = await signInWithGoogle(getDb(), identity, currentSession, buildAdminBusinessUrl, (finished) =>
-      after(() => finished),
+    // TallyVis Founding Creator Program — see `signUpAction`'s identical
+    // comment in authActions.ts. `signInWithGoogle` itself only ever acts
+    // on this for a genuine fresh signup (`kind: "signup"`), never for a
+    // returning login or a Settings-initiated "Connect Google" link.
+    const referralCookie = decodeReferralCookieValue(store.get(REFERRAL_COOKIE_NAME)?.value);
+
+    const outcome = await signInWithGoogle(
+      getDb(),
+      identity,
+      currentSession,
+      buildAdminBusinessUrl,
+      (finished) => after(() => finished),
+      referralCookie,
     );
 
     if (outcome.kind === "linked") {

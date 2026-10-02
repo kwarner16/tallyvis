@@ -10,6 +10,7 @@ const PRODUCT_LINKS = [
   { label: "Quote Software", href: "/window-cleaning-quote-software" },
   { label: "Guides", href: "/guides" },
   { label: "Install Guide", href: "/install" },
+  { label: "Creator Program", href: "/creators" },
   { label: "About", href: "/about" },
 ];
 

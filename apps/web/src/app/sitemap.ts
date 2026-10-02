@@ -16,6 +16,7 @@ const ROUTES: { path: string; changeFrequency: MetadataRoute.Sitemap[number]["ch
   { path: "/guides", changeFrequency: "monthly", priority: 0.6 },
   { path: "/guides/how-to-quote-window-cleaning-jobs-from-photos", changeFrequency: "yearly", priority: 0.6 },
   { path: "/guides/what-ai-can-and-cannot-see-in-property-photos", changeFrequency: "yearly", priority: 0.6 },
+  { path: "/creators", changeFrequency: "monthly", priority: 0.5 },
   { path: "/about", changeFrequency: "yearly", priority: 0.5 },
   { path: "/contact", changeFrequency: "yearly", priority: 0.5 },
   { path: "/privacy", changeFrequency: "yearly", priority: 0.3 },

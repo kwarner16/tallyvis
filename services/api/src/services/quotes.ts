@@ -19,6 +19,7 @@ import { getSubscription, getSubscriptionByBusinessId, hasProductAccess } from "
 import { sendNewQuoteSmsAlert } from "./quoteSmsAlert";
 import { sendEstimateReadySms, sendOptInConfirmationSms } from "./customerSms";
 import { uploadQuotePhotos, validateIncomingPhotos, type PendingQuotePhoto } from "./quotePhotos";
+import { hasComplimentaryAccess } from "./creators";
 
 export interface CreateQuoteInput {
   customer: CustomerInput;
@@ -140,8 +141,21 @@ export async function createQuote(db: Queryable, session: AuthSession, input: Cr
  * not on the public estimator's `createQuotePublic` — narrowing where
  * enforcement lands keeps this phase's foundation low-risk; extending it
  * to the public flow is a natural next step, not done here.
+ *
+ * TallyVis Founding Creator Program (see
+ * docs/decisions/0040-creator-affiliate-program.md's "Free creator
+ * access" section): checked FIRST, before touching `subscriptions` at
+ * all. A business whose owner is an active, complimentary-access
+ * founding creator never needs a real Stripe subscription in the first
+ * place — this never fabricates one, it just skips the gate entirely,
+ * the same "no subscription row at all is legacy access, not a lockout"
+ * shape `hasProductAccess` already has, extended to one more explicit,
+ * audited reason. `hasProductAccess` itself (the pure, independently
+ * tested function used by the webhook/billing code below) is completely
+ * unaware this check exists.
  */
 async function requireProductAccess(db: Queryable, session: AuthSession): Promise<void> {
+  if (await hasComplimentaryAccess(db, session.businessId)) return;
   const subscription = await getSubscription(db, session);
   if (!hasProductAccess(subscription)) {
     throw new Error("Your Tallyvis trial or subscription has ended. Reactivate your plan to create new quotes.");
@@ -173,6 +187,7 @@ export const PUBLIC_ESTIMATOR_ACCESS_SUSPENDED_MESSAGE =
  * `requireProductAccess` gets from a validated session.
  */
 async function requirePublicProductAccess(db: Queryable, businessId: string): Promise<void> {
+  if (await hasComplimentaryAccess(db, businessId)) return;
   const subscription = await getSubscriptionByBusinessId(db, businessId);
   if (!hasProductAccess(subscription)) {
     throw new Error(PUBLIC_ESTIMATOR_ACCESS_SUSPENDED_MESSAGE);

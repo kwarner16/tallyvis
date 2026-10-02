@@ -249,3 +249,33 @@ export {
   type FeedbackType,
   type SubmitFeedbackInput,
 } from "./services/feedback";
+
+// TallyVis Founding Creator Program (see
+// docs/decisions/0040-creator-affiliate-program.md).
+export {
+  resolveEligibleCreatorBySlug,
+  recordReferralClick,
+  type ReferralResolution,
+  type PendingReferralAttribution,
+} from "./services/creatorReferrals";
+export {
+  createCreatorAdmin,
+  updateCreatorAdmin,
+  linkCreatorBusinessAdmin,
+  setCreatorComplimentaryAccessAdmin,
+  listCreatorsAdmin,
+  getCreatorDetailAdmin,
+  markCommissionPaidAdmin,
+  type Creator,
+  type CreatorStatus,
+  type CreatorReferral,
+  type CreatorCommission,
+  type CreatorCommissionStatus,
+  type CreateCreatorInput,
+  type UpdateCreatorAdminInput,
+  type CreatorAdminListRow,
+  type CreatorProgramOverview,
+  type CreatorAdminListResult,
+  type CreatorReferralDetailRow,
+  type CreatorAdminDetail,
+} from "./services/creators";

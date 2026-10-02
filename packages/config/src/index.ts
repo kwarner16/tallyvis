@@ -11,6 +11,8 @@ export {
 
 export { TRIAL_POLICY, TRIAL_DAYS, getTrialDaysForNewSubscription } from "./trial";
 
+export { CREATOR_PROGRAM_POLICY, formatBasisPointsAsPercent } from "./creatorProgram";
+
 export {
   normalizeHexColor,
   getContrastForeground,

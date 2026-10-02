@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { label: "Overview", href: "/admin" },
   { label: "Businesses", href: "/admin/businesses" },
   { label: "Subscriptions", href: "/admin/subscriptions" },
+  { label: "Creators", href: "/admin/creators" },
   { label: "Activity", href: "/admin/activity" },
   { label: "Feedback", href: "/admin/feedback" },
 ];

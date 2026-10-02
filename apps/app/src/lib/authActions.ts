@@ -15,6 +15,7 @@ import {
 import { isPlanId } from "@tallyvis/config";
 import { APP_URL, buildAdminBusinessUrl } from "./urls";
 import { INTENDED_PLAN_COOKIE_NAME } from "./constants";
+import { REFERRAL_COOKIE_NAME, decodeReferralCookieValue } from "./referralCookie";
 
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // matches services/api's session TTL
 
@@ -38,6 +39,15 @@ export async function signUpAction(
   formData: FormData,
 ): Promise<AuthActionState> {
   try {
+    // TallyVis Founding Creator Program (see
+    // docs/decisions/0040-creator-affiliate-program.md) — an existing
+    // referral attribution cookie, if any, is read here and handed to
+    // `signUp`, which independently re-validates it and persists
+    // attribution only after the business row actually commits. Reading
+    // it does not consume/clear it: a failed signup attempt (e.g. a
+    // duplicate email) leaves the cookie intact for a retry.
+    const referralCookie = decodeReferralCookieValue((await cookies()).get(REFERRAL_COOKIE_NAME)?.value);
+
     const { token } = await signUp(
       getDb(),
       {
@@ -47,6 +57,7 @@ export async function signUpAction(
       },
       buildAdminBusinessUrl,
       (finished) => after(() => finished),
+      referralCookie,
     );
     await setSessionCookie(token);
 

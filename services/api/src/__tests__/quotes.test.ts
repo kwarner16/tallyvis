@@ -301,3 +301,58 @@ describe("createQuote / createQuotePublic — server-side photo sanity ceiling (
     expect(quote.photos).toHaveLength(0);
   });
 });
+
+describe("createQuote — Founding Creator Program complimentary access (production feature, 2026-10)", () => {
+  it("a business with granted complimentary access can create quotes with NO subscription row at all — never a fabricated subscription", async () => {
+    const { db, session } = await setUp();
+
+    const { createCreator, updateCreator } = await import("../repositories/creators");
+    const creator = await createCreator(db, {
+      slug: "complimentary-test",
+      name: "Complimentary Creator",
+      email: "comp@example.com",
+      platform: "",
+      profileUrl: "",
+      status: "active",
+      commissionRateBps: 2000,
+      commissionDurationMonths: 12,
+      notes: "",
+    });
+    await updateCreator(db, creator.id, { businessId: session.businessId, complimentaryAccess: true });
+
+    const { getSubscription } = await import("../services/subscriptions");
+    expect(await getSubscription(db, session)).toBeUndefined();
+
+    const quote = await createQuote(db, session, sampleInput());
+    expect(quote.id).toBeTruthy();
+  });
+
+  it("revoking complimentary access (creator paused) restores the normal subscription gate for that same business", async () => {
+    const { db, session } = await setUp();
+
+    const { createCreator, updateCreator } = await import("../repositories/creators");
+    const creator = await createCreator(db, {
+      slug: "complimentary-test-2",
+      name: "Complimentary Creator 2",
+      email: "comp2@example.com",
+      platform: "",
+      profileUrl: "",
+      status: "active",
+      commissionRateBps: 2000,
+      commissionDurationMonths: 12,
+      notes: "",
+    });
+    await updateCreator(db, creator.id, { businessId: session.businessId, complimentaryAccess: true });
+    await createQuote(db, session, sampleInput()); // succeeds while complimentary access holds.
+
+    await updateCreator(db, creator.id, { status: "paused" });
+
+    // No subscription row exists (legacy/pre-billing access is still the
+    // default for a business with none at all — see hasProductAccess's
+    // own comment), so this business is STILL allowed to quote — this
+    // test only confirms complimentary access is no longer the REASON,
+    // by checking the flag's own gate directly.
+    const { hasComplimentaryAccess } = await import("../services/creators");
+    expect(await hasComplimentaryAccess(db, session.businessId)).toBe(false);
+  });
+});

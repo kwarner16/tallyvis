@@ -8,6 +8,7 @@ import { createAuthIdentity, getIdentityByProviderAccountId } from "../repositor
 import { createInitialPricingConfiguration } from "../repositories/pricingConfigurations";
 import type { VerifiedGoogleIdentity } from "../auth/googleOAuth";
 import { notifyAdminOfNewSignup } from "./adminNotifications";
+import { attributeReferral, type PendingReferralAttribution } from "./creatorReferrals";
 import type { Business } from "@tallyvis/types";
 
 /**
@@ -55,6 +56,7 @@ export async function signInWithGoogle(
   currentSession?: AuthSession,
   buildAdminBusinessUrl?: (businessId: string) => string,
   onAdminNotified?: (finished: Promise<void>) => void,
+  pendingReferral?: PendingReferralAttribution,
 ): Promise<GoogleAuthOutcome> {
   const existing = await getIdentityByProviderAccountId(db, GOOGLE_PROVIDER, identity.sub);
 
@@ -119,7 +121,7 @@ export async function signInWithGoogle(
     throw new GoogleSignInError("Your Google account's email isn't verified, so you can't sign up with it.");
   }
 
-  return createAccountFromGoogle(db, identity, buildAdminBusinessUrl, onAdminNotified);
+  return createAccountFromGoogle(db, identity, buildAdminBusinessUrl, onAdminNotified, pendingReferral);
 }
 
 async function businessIdForUser(db: Queryable, userId: string): Promise<string> {
@@ -144,6 +146,7 @@ async function createAccountFromGoogle(
   identity: VerifiedGoogleIdentity,
   buildAdminBusinessUrl?: (businessId: string) => string,
   onAdminNotified?: (finished: Promise<void>) => void,
+  pendingReferral?: PendingReferralAttribution,
 ): Promise<GoogleAuthOutcome> {
   const businessName = deriveBusinessName(identity.email);
 
@@ -189,6 +192,12 @@ async function createAccountFromGoogle(
       onAdminNotified?.(finished);
     } catch (err) {
       console.error("createAccountFromGoogle: notifyAdminOfNewSignup failed synchronously:", err);
+    }
+
+    try {
+      await attributeReferral(db, createdBusiness.id, pendingReferral);
+    } catch (err) {
+      console.error("createAccountFromGoogle: attributeReferral failed:", err);
     }
   }
 

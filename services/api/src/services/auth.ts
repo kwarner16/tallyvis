@@ -14,6 +14,7 @@ import {
 import { listIdentitiesForUser } from "../repositories/authIdentities";
 import { createInitialPricingConfiguration } from "../repositories/pricingConfigurations";
 import { notifyAdminOfNewSignup } from "./adminNotifications";
+import { attributeReferral, type PendingReferralAttribution } from "./creatorReferrals";
 import type { Business } from "@tallyvis/types";
 
 const EMAIL_PATTERN = /\S+@\S+\.\S+/;
@@ -66,6 +67,7 @@ export async function signUp(
   input: SignUpInput,
   buildAdminBusinessUrl?: (businessId: string) => string,
   onAdminNotified?: (finished: Promise<void>) => void,
+  pendingReferral?: PendingReferralAttribution,
 ): Promise<AuthResult> {
   validateSignUpInput(input);
 
@@ -111,6 +113,16 @@ export async function signUp(
       onAdminNotified?.(finished);
     } catch (err) {
       console.error("signUp: notifyAdminOfNewSignup failed synchronously:", err);
+    }
+
+    // Same "only after commit, and a problem here must never look like
+    // signup failed" rule as the admin notification above — see
+    // `attributeReferral`'s own comment for why this is the one and only
+    // call site for the password-signup path.
+    try {
+      await attributeReferral(db, createdBusiness.id, pendingReferral);
+    } catch (err) {
+      console.error("signUp: attributeReferral failed:", err);
     }
   }
 

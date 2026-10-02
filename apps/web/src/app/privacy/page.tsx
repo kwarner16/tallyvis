@@ -189,7 +189,12 @@ export default function PrivacyPage() {
       </ul>
       <p>
         We may use cookies, local storage, session technologies, and similar mechanisms to operate
-        and secure the Services.
+        and secure the Services. This includes a first-party referral-attribution cookie set when
+        you follow a link from a TallyVis Founding Creator Program partner (a URL in the form
+        tallyvis.com/r/&lt;code&gt;). That cookie stores only the referral code and the date it was
+        set, is not used for advertising or sold to any third party, lasts up to 30 days, and (if
+        you go on to create a TallyVis business account) is used once, server-side, to record which
+        creator referred that account.
       </p>
 
       <h2>2. Mobile Phone Numbers and SMS Communications</h2>

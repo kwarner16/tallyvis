@@ -206,3 +206,63 @@ describe("logOut / resolveSession", () => {
     expect(await resolveSession(db, "not-a-real-token")).toBeUndefined();
   });
 });
+
+describe("signUp — Founding Creator Program referral attribution (production feature, 2026-10)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a referred signup becomes durably associated with the creator — a normal, non-referred signup behaves exactly as before", async () => {
+    const db = getDb();
+    const { createCreator } = await import("../repositories/creators");
+    const { getCreatorReferralByBusinessId } = await import("../repositories/creatorReferrals");
+    const creator = await createCreator(db, {
+      slug: "ben",
+      name: "Ben",
+      email: "ben@example.com",
+      platform: "",
+      profileUrl: "",
+      status: "active",
+      commissionRateBps: 2000,
+      commissionDurationMonths: 12,
+      notes: "",
+    });
+
+    const referred = await signUp(
+      db,
+      { businessName: "Referred Co", ownerEmail: "referred-via-signup@example.com", password: "correct-horse-battery" },
+      undefined,
+      undefined,
+      { slug: "ben", firstObservedAt: new Date().toISOString() },
+    );
+    const referral = await getCreatorReferralByBusinessId(db, referred.session.businessId);
+    expect(referral?.creatorId).toBe(creator.id);
+
+    // The control case — no pendingReferral passed at all — must behave
+    // EXACTLY as every pre-existing signUp test already exercises: a
+    // normal account, no referral row.
+    const organic = await signUp(db, {
+      businessName: "Organic Co",
+      ownerEmail: "organic-via-signup@example.com",
+      password: "correct-horse-battery",
+    });
+    expect(await getCreatorReferralByBusinessId(db, organic.session.businessId)).toBeUndefined();
+  });
+
+  it("a referral-attribution failure never fails signup itself", async () => {
+    const db = getDb();
+    const creatorReferrals = await import("../services/creatorReferrals");
+    vi.spyOn(creatorReferrals, "attributeReferral").mockImplementation(() => {
+      throw new Error("referral subsystem exploded");
+    });
+
+    const result = await signUp(
+      db,
+      { businessName: "Still Works Too", ownerEmail: "resilient-referral@example.com", password: "correct-horse-battery" },
+      undefined,
+      undefined,
+      { slug: "whatever", firstObservedAt: new Date().toISOString() },
+    );
+    expect(result.token).toBeTruthy();
+  });
+});

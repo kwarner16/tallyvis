@@ -396,7 +396,19 @@ export default function TermsPage() {
         the extent permitted by law.
       </p>
 
-      <h2>24. Contact</h2>
+      <h2>24. Creator / Affiliate Program</h2>
+      <p>
+        TallyVis operates an optional Founding Creator Program under which approved creators receive
+        a unique referral link and may earn a recurring commission on subscription revenue from
+        businesses they refer, for a limited period, as described in the program terms provided to
+        each participating creator. Participation is by invitation/application and may be modified,
+        paused, or ended by TallyVis at its discretion, including as to future referrals. A creator
+        promoting TallyVis is responsible for clearly and conspicuously disclosing their material
+        connection to TallyVis in accordance with applicable advertising and endorsement guidance
+        wherever they promote their referral link.
+      </p>
+
+      <h2>25. Contact</h2>
       <p>Questions regarding these Terms may be submitted through the contact information provided on TallyVis.com.</p>
       <p>
         <strong>Website:</strong> tallyvis.com
