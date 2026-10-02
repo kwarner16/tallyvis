@@ -10,18 +10,22 @@ import type { Creator, CreatorStatus } from "../repositories/creators";
 import * as referralsRepo from "../repositories/creatorReferrals";
 import * as commissionsRepo from "../repositories/creatorCommissions";
 import type { CreatorCommission } from "../repositories/creatorCommissions";
+import * as adjustmentsRepo from "../repositories/creatorCommissionAdjustments";
+import type { CreatorCommissionAdjustment } from "../repositories/creatorCommissionAdjustments";
 import { isValidSlugFormat, normalizeSlug } from "./creatorReferrals";
 
 export type { Creator, CreatorStatus } from "../repositories/creators";
 export type { CreatorReferral } from "../repositories/creatorReferrals";
 export type { CreatorCommission, CreatorCommissionStatus } from "../repositories/creatorCommissions";
+export type { CreatorCommissionAdjustment, CreatorCommissionAdjustmentReason } from "../repositories/creatorCommissionAdjustments";
 
 /**
  * TallyVis Founding Creator Program — admin-side creator management and
- * reporting (see docs/decisions/0040-creator-affiliate-program.md). Every
- * exported function here independently re-verifies admin access, the
- * same `requireAdmin` pattern `services/admin.ts`/`services/feedback.ts`
- * already establish — never inferred from navigation alone.
+ * reporting (see docs/decisions/0040-creator-affiliate-program.md and
+ * its V1.1 addendum). Every exported function here independently
+ * re-verifies admin access, the same `requireAdmin` pattern
+ * `services/admin.ts`/`services/feedback.ts` already establish — never
+ * inferred from navigation alone.
  */
 
 async function requireAdmin(db: Queryable, session: AuthSession): Promise<void> {
@@ -39,6 +43,7 @@ function isCreatorStatus(value: string): value is CreatorStatus {
 const NAME_MAX_LENGTH = 200;
 const EMAIL_PATTERN = /\S+@\S+\.\S+/;
 const NOTES_MAX_LENGTH = 4000;
+const URL_MAX_LENGTH = 2000;
 const MAX_COMMISSION_RATE_BPS = 10_000; // 100% — a sanity ceiling, not a business rule.
 const MAX_COMMISSION_DURATION_MONTHS = 120; // 10 years — generous but bounded against a fat-fingered entry.
 
@@ -99,27 +104,50 @@ export async function createCreatorAdmin(db: Queryable, session: AuthSession, in
     );
   }
   const slug = normalizeSlug(input.slug);
+  const status = input.status && isCreatorStatus(input.status) ? input.status : "prospect";
 
   try {
-    return await creatorsRepo.createCreator(db, {
+    const creator = await creatorsRepo.createCreator(db, {
       slug,
       name: validateName(input.name),
       email: validateEmail(input.email),
       platform: input.platform?.trim() ?? "",
       profileUrl: input.profileUrl?.trim() ?? "",
-      status: input.status && isCreatorStatus(input.status) ? input.status : "prospect",
+      status,
       commissionRateBps: validateCommissionRateBps(input.commissionRateBps ?? CREATOR_PROGRAM_POLICY.defaultCommissionRateBps),
       commissionDurationMonths: validateCommissionDurationMonths(
         input.commissionDurationMonths ?? CREATOR_PROGRAM_POLICY.defaultCommissionDurationMonths,
       ),
       notes: (input.notes ?? "").slice(0, NOTES_MAX_LENGTH),
     });
+    // A creator can be created already-active (e.g. backfilling a
+    // relationship that started before this admin UI existed) — stamp
+    // activation immediately in that case too, same as a later status
+    // transition would. See `stampActivationIfNeeded`'s own comment.
+    return status === "active" ? await stampActivationIfNeeded(db, creator) : creator;
   } catch (err) {
     if (isUniqueViolation(err)) {
       throw new Error(`The referral code "${slug}" is already taken.`);
     }
     throw err;
   }
+}
+
+/**
+ * Stamps `activatedAt` the FIRST time a creator's status becomes
+ * `"active"` — never moved again afterward, even across a later
+ * pause/reactivate cycle (see docs/decisions/0040's V1.1 addendum
+ * "First/partial month" section: re-activating an existing creator does
+ * NOT reset their activity-requirement clock or grant a second
+ * onboarding month). `updateCreator`'s own `COALESCE(activated_at, ...)`
+ * is the actual guarantee; this helper just decides WHEN to pass a
+ * value at all; the caller must have already confirmed `status` is
+ * being set to `"active"`.
+ */
+async function stampActivationIfNeeded(db: Queryable, creator: Creator): Promise<Creator> {
+  if (creator.activatedAt) return creator;
+  const updated = await creatorsRepo.updateCreator(db, creator.id, { activatedAt: new Date().toISOString() });
+  return updated ?? creator;
 }
 
 export interface UpdateCreatorAdminInput {
@@ -157,7 +185,82 @@ export async function updateCreatorAdmin(
     notes: input.notes !== undefined ? input.notes.slice(0, NOTES_MAX_LENGTH) : undefined,
   });
   if (!updated) throw new Error(`Creator "${id}" not found.`);
+
+  // See `stampActivationIfNeeded`'s own comment — applies here too,
+  // whenever an UPDATE (not just creation) is what moves a creator into
+  // `"active"` for the first time.
+  return input.status === "active" ? await stampActivationIfNeeded(db, updated) : updated;
+}
+
+/**
+ * Manual, admin-entered record of a creator's most recent qualifying
+ * content — see docs/decisions/0040's V1.1 addendum "Active Creator
+ * definition" section. TallyVis does not, and does not claim to,
+ * automatically verify content publication; this is purely a
+ * lightweight note Kyle records himself after actually checking. Each
+ * call REPLACES the previous entry (no history of every past one — see
+ * `recordCreatorActivity`'s own comment).
+ */
+export interface RecordCreatorActivityInput {
+  contentAt: string;
+  contentUrl: string;
+  note?: string;
+}
+
+export async function recordCreatorActivityAdmin(
+  db: Queryable,
+  session: AuthSession,
+  creatorId: string,
+  input: RecordCreatorActivityInput,
+): Promise<Creator> {
+  await requireAdmin(db, session);
+
+  const contentAt = input.contentAt.trim();
+  if (!contentAt || Number.isNaN(Date.parse(contentAt))) {
+    throw new Error("Please enter a valid content date.");
+  }
+  const contentUrl = input.contentUrl.trim();
+  if (!contentUrl || contentUrl.length > URL_MAX_LENGTH) {
+    throw new Error("Please enter the content URL.");
+  }
+
+  const updated = await creatorsRepo.recordCreatorActivity(db, creatorId, {
+    contentAt: new Date(contentAt).toISOString(),
+    contentUrl,
+    note: (input.note ?? "").slice(0, NOTES_MAX_LENGTH),
+  });
+  if (!updated) throw new Error(`Creator "${creatorId}" not found.`);
   return updated;
+}
+
+/**
+ * The first calendar month this creator is expected to have posted at
+ * least one qualifying content piece — see docs/decisions/0040's V1.1
+ * addendum "First/partial month" section: the calendar month a creator
+ * is ACTIVATED in is a no-requirement onboarding month (so joining on
+ * the 28th never immediately counts as inactive), and the requirement
+ * begins with the first FULL calendar month after that. `undefined` when
+ * the creator has never been activated at all (nothing to measure from
+ * yet). UTC-based, matching this file's other date arithmetic.
+ */
+export function firstActivityMonthStart(activatedAt: string | undefined): string | undefined {
+  if (!activatedAt) return undefined;
+  const date = new Date(activatedAt);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)).toISOString();
+}
+
+/**
+ * Whether an accrued commission has cleared the payout holding period
+ * (see `CREATOR_PROGRAM_POLICY.payoutHoldingPeriodDays`'s own comment
+ * for why this is a plain computed-at-read-time check, never a stored
+ * status/background job) — `"payable"` vs merely `"pending"` in the
+ * admin dashboard. A `'paid'`/`'reversed'` commission is neither — this
+ * only ever returns true for a still-`'accrued'` row.
+ */
+export function isCommissionPayable(commission: { status: string; createdAt: string }, now: number = Date.now()): boolean {
+  if (commission.status !== "accrued") return false;
+  const holdingMs = CREATOR_PROGRAM_POLICY.payoutHoldingPeriodDays * 24 * 60 * 60 * 1000;
+  return now - Date.parse(commission.createdAt) >= holdingMs;
 }
 
 /**
@@ -234,6 +337,47 @@ export async function hasComplimentaryAccess(db: Queryable, businessId: string):
 }
 
 /**
+ * Per-creator financial totals, reduced in TypeScript from the flat
+ * per-commission/per-adjustment rows (the same "fetch flat rows,
+ * aggregate in JS" pattern `services/admin.ts`'s own dashboard metrics
+ * already use) — see `isCommissionPayable`'s own comment for why the
+ * pending/payable split specifically needs row-level `createdAt`, not
+ * just a SQL-side SUM.
+ */
+interface CreatorFinancials {
+  pendingCommissionCents: number;
+  payableCommissionCents: number;
+  paidCommissionCents: number;
+  reversedCommissionCents: number;
+  adjustmentCents: number;
+}
+
+function summarizeCreatorFinancials(
+  commissions: CreatorCommission[],
+  adjustmentCents: number,
+  now: number = Date.now(),
+): CreatorFinancials {
+  let pendingCommissionCents = 0;
+  let payableCommissionCents = 0;
+  let paidCommissionCents = 0;
+  let reversedCommissionCents = 0;
+
+  for (const commission of commissions) {
+    const netCents = commission.commissionAmountCents - commission.reversedCommissionCents;
+    if (commission.status === "accrued") {
+      if (isCommissionPayable(commission, now)) payableCommissionCents += netCents;
+      else pendingCommissionCents += netCents;
+    } else if (commission.status === "paid") {
+      paidCommissionCents += commission.commissionAmountCents;
+    } else {
+      reversedCommissionCents += commission.commissionAmountCents;
+    }
+  }
+
+  return { pendingCommissionCents, payableCommissionCents, paidCommissionCents, reversedCommissionCents, adjustmentCents };
+}
+
+/**
  * Per-creator metrics for the admin list view — reuses
  * `services/admin.ts`'s own `isSubscriptionPastDue`/`@tallyvis/config`'s
  * `getPlan` for "is this subscription actually active/paying" and "what
@@ -252,9 +396,10 @@ export interface CreatorAdminListRow {
   signupCount: number;
   payingCount: number;
   mrrCents: number;
-  commissionEarnedCents: number;
-  commissionUnpaidCents: number;
-  commissionPaidCents: number;
+  pendingCommissionCents: number;
+  payableCommissionCents: number;
+  paidCommissionCents: number;
+  adjustmentCents: number;
 }
 
 export interface CreatorProgramOverview {
@@ -263,9 +408,10 @@ export interface CreatorProgramOverview {
   totalSignups: number;
   totalPaying: number;
   totalMrrCents: number;
-  totalCommissionEarnedCents: number;
-  totalCommissionUnpaidCents: number;
-  totalCommissionPaidCents: number;
+  totalPendingCommissionCents: number;
+  totalPayableCommissionCents: number;
+  totalPaidCommissionCents: number;
+  totalAdjustmentCents: number;
 }
 
 export interface CreatorAdminListResult {
@@ -276,13 +422,15 @@ export interface CreatorAdminListResult {
 export async function listCreatorsAdmin(db: Queryable, session: AuthSession): Promise<CreatorAdminListResult> {
   await requireAdmin(db, session);
 
-  const [creators, referralRows, commissionTotals] = await Promise.all([
+  const [creators, referralRows, allCommissions, adjustmentTotals] = await Promise.all([
     creatorsRepo.listCreators(db),
     referralsRepo.listReferralSubscriptionRows(db),
-    commissionsRepo.listCommissionTotalsByCreator(db),
+    commissionsRepo.listAllCommissions(db),
+    adjustmentsRepo.listAdjustmentTotalsByCreator(db),
   ]);
 
-  const commissionByCreator = new Map(commissionTotals.map((row) => [row.creatorId, row]));
+  const adjustmentByCreator = new Map(adjustmentTotals.map((row) => [row.creatorId, row.adjustmentCents]));
+  const now = Date.now();
 
   const rows: CreatorAdminListRow[] = creators.map((creator) => {
     const referrals = referralRows.filter((row) => row.creatorId === creator.id);
@@ -296,9 +444,8 @@ export async function listCreatorsAdmin(db: Queryable, session: AuthSession): Pr
       mrrCents += referral.planId ? getPlan(referral.planId)?.monthlyPriceCents ?? 0 : 0;
     }
 
-    const commission = commissionByCreator.get(creator.id);
-    const accruedCents = commission?.accruedCents ?? 0;
-    const paidCents = commission?.paidCents ?? 0;
+    const creatorCommissions = allCommissions.filter((c) => c.creatorId === creator.id);
+    const financials = summarizeCreatorFinancials(creatorCommissions, adjustmentByCreator.get(creator.id) ?? 0, now);
 
     return {
       id: creator.id,
@@ -311,9 +458,10 @@ export async function listCreatorsAdmin(db: Queryable, session: AuthSession): Pr
       signupCount: referrals.length,
       payingCount,
       mrrCents,
-      commissionEarnedCents: accruedCents + paidCents,
-      commissionUnpaidCents: accruedCents,
-      commissionPaidCents: paidCents,
+      pendingCommissionCents: financials.pendingCommissionCents,
+      payableCommissionCents: financials.payableCommissionCents,
+      paidCommissionCents: financials.paidCommissionCents,
+      adjustmentCents: financials.adjustmentCents,
     };
   });
 
@@ -324,9 +472,10 @@ export async function listCreatorsAdmin(db: Queryable, session: AuthSession): Pr
       totalSignups: acc.totalSignups + row.signupCount,
       totalPaying: acc.totalPaying + row.payingCount,
       totalMrrCents: acc.totalMrrCents + row.mrrCents,
-      totalCommissionEarnedCents: acc.totalCommissionEarnedCents + row.commissionEarnedCents,
-      totalCommissionUnpaidCents: acc.totalCommissionUnpaidCents + row.commissionUnpaidCents,
-      totalCommissionPaidCents: acc.totalCommissionPaidCents + row.commissionPaidCents,
+      totalPendingCommissionCents: acc.totalPendingCommissionCents + row.pendingCommissionCents,
+      totalPayableCommissionCents: acc.totalPayableCommissionCents + row.payableCommissionCents,
+      totalPaidCommissionCents: acc.totalPaidCommissionCents + row.paidCommissionCents,
+      totalAdjustmentCents: acc.totalAdjustmentCents + row.adjustmentCents,
     }),
     {
       activeCreators: 0,
@@ -334,9 +483,10 @@ export async function listCreatorsAdmin(db: Queryable, session: AuthSession): Pr
       totalSignups: 0,
       totalPaying: 0,
       totalMrrCents: 0,
-      totalCommissionEarnedCents: 0,
-      totalCommissionUnpaidCents: 0,
-      totalCommissionPaidCents: 0,
+      totalPendingCommissionCents: 0,
+      totalPayableCommissionCents: 0,
+      totalPaidCommissionCents: 0,
+      totalAdjustmentCents: 0,
     },
   );
 
@@ -353,8 +503,12 @@ export interface CreatorReferralDetailRow {
 
 export interface CreatorAdminDetail {
   creator: Creator;
+  /** `undefined` when the creator has never been activated — see `firstActivityMonthStart`'s own comment. */
+  firstActivityMonthRequiredFrom?: string;
   referrals: CreatorReferralDetailRow[];
   commissions: CreatorCommission[];
+  adjustments: CreatorCommissionAdjustment[];
+  financials: CreatorFinancials;
 }
 
 export async function getCreatorDetailAdmin(db: Queryable, session: AuthSession, id: string): Promise<CreatorAdminDetail | undefined> {
@@ -363,9 +517,10 @@ export async function getCreatorDetailAdmin(db: Queryable, session: AuthSession,
   const creator = await creatorsRepo.getCreatorById(db, id);
   if (!creator) return undefined;
 
-  const [allReferralRows, commissions] = await Promise.all([
+  const [allReferralRows, commissions, adjustments] = await Promise.all([
     referralsRepo.listReferralSubscriptionRows(db),
     commissionsRepo.listCommissionsByCreatorId(db, id),
+    adjustmentsRepo.listAdjustmentsByCreatorId(db, id),
   ]);
 
   const referrals: CreatorReferralDetailRow[] = allReferralRows
@@ -378,15 +533,29 @@ export async function getCreatorDetailAdmin(db: Queryable, session: AuthSession,
       planId: row.planId ?? undefined,
     }));
 
-  return { creator, referrals, commissions };
+  const adjustmentCents = adjustments.reduce((sum, a) => sum + a.amountCents, 0);
+  const financials = summarizeCreatorFinancials(commissions, adjustmentCents);
+
+  return {
+    creator,
+    firstActivityMonthRequiredFrom: firstActivityMonthStart(creator.activatedAt),
+    referrals,
+    commissions,
+    adjustments,
+    financials,
+  };
 }
 
 /**
  * Manual payout marking (see docs/decisions/0040's "Manual payout
- * process" section — V1 deliberately has no automated payout rail). Only
- * ever moves an `"accrued"` commission to `"paid"` — see
+ * process" section — V1.1 deliberately has no automated payout rail).
+ * Only ever moves an `"accrued"` commission to `"paid"` — see
  * `markCommissionPaid`'s own comment for why an already-settled or
- * refunded row refuses rather than silently re-stamping.
+ * fully-reversed row refuses rather than silently re-stamping. Kyle may
+ * mark a PARTIALLY-reversed commission paid — the amount recorded is
+ * always the commission's own `commissionAmountCents` net of whatever
+ * was already reversed; this function does not independently recompute
+ * or second-guess that, it only changes lifecycle status.
  */
 export async function markCommissionPaidAdmin(
   db: Queryable,

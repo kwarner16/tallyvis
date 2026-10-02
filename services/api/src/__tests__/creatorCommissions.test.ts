@@ -11,6 +11,7 @@ import {
   listCommissionsByCreatorId,
   markCommissionPaid,
 } from "../repositories/creatorCommissions";
+import { listAdjustmentsByCreatorId } from "../repositories/creatorCommissionAdjustments";
 import { getCreatorReferralByBusinessId } from "../repositories/creatorReferrals";
 import { handleStripeWebhook } from "../services/billingWebhooks";
 import type { StripeInvoiceObject } from "../billing/types";
@@ -222,6 +223,141 @@ describe("processChargeRefunded", () => {
     await processInvoicePaid(db, invoice({ subscription: providerSubscriptionId, id: "in_not_refunded", charge: "ch_not_refunded" }));
     await processChargeRefunded(db, { id: "ch_not_refunded", invoice: "in_not_refunded", amount_refunded: 0, refunded: false });
     expect((await getCreatorCommissionByStripeInvoiceId(db, "in_not_refunded"))!.status).toBe("accrued");
+  });
+
+  it("a partial refund produces a PROPORTIONAL reversal, not a full one (V1.1)", async () => {
+    const db = getDb();
+    // $100 collected, 20% rate -> $20 commission. $25 refunded -> reverse $5, not $20.
+    await setUpAndRefund(db, { amountPaid: 10000, refundedCents: 2500, chargeId: "ch_partial_1", invoiceId: "in_partial_1" });
+
+    const commission = await getCreatorCommissionByStripeInvoiceId(db, "in_partial_1");
+    expect(commission!.commissionAmountCents).toBe(2000);
+    expect(commission!.reversedCommissionCents).toBe(500);
+    expect(commission!.refundedCollectedCents).toBe(2500);
+    expect(commission!.status).toBe("accrued"); // not fully reversed — still accrued, net of the partial reversal.
+  });
+
+  it("a second, larger partial refund re-derives the total reversal rather than adding to it, and never over-reverses", async () => {
+    const db = getDb();
+    const { providerSubscriptionId } = await setUpReferredPayingBusiness(db);
+    await processInvoicePaid(
+      db,
+      invoice({ subscription: providerSubscriptionId, amount_paid: 10000, id: "in_multi_partial", charge: "ch_multi_partial" }),
+    );
+
+    // First partial refund: $25 of $100 -> $5 of the $20 commission reversed.
+    await processChargeRefunded(db, { id: "ch_multi_partial", invoice: "in_multi_partial", amount_refunded: 2500, refunded: false });
+    let commission = await getCreatorCommissionByStripeInvoiceId(db, "in_multi_partial");
+    expect(commission!.reversedCommissionCents).toBe(500);
+
+    // Stripe's amount_refunded is CUMULATIVE — a second refund brings the total refunded to $75, not a fresh $50.
+    await processChargeRefunded(db, { id: "ch_multi_partial", invoice: "in_multi_partial", amount_refunded: 7500, refunded: false });
+    commission = await getCreatorCommissionByStripeInvoiceId(db, "in_multi_partial");
+    expect(commission!.reversedCommissionCents).toBe(1500); // 75% of the $20 commission, not 500 + (naive 50%*2000=1000) = 1500 either way here, but re-derived from scratch.
+    expect(commission!.status).toBe("accrued");
+
+    // A final refund bringing the cumulative total to the full $100 fully reverses, capped at the original commission.
+    await processChargeRefunded(db, { id: "ch_multi_partial", invoice: "in_multi_partial", amount_refunded: 10000, refunded: true });
+    commission = await getCreatorCommissionByStripeInvoiceId(db, "in_multi_partial");
+    expect(commission!.reversedCommissionCents).toBe(2000);
+    expect(commission!.reversedCommissionCents).toBeLessThanOrEqual(commission!.commissionAmountCents);
+    expect(commission!.status).toBe("reversed");
+  });
+
+  it("an exact replay of the same cumulative refund amount is a safe no-op (idempotent)", async () => {
+    const db = getDb();
+    const { providerSubscriptionId } = await setUpReferredPayingBusiness(db);
+    await processInvoicePaid(
+      db,
+      invoice({ subscription: providerSubscriptionId, amount_paid: 10000, id: "in_replay_refund", charge: "ch_replay_refund" }),
+    );
+
+    await processChargeRefunded(db, { id: "ch_replay_refund", invoice: "in_replay_refund", amount_refunded: 2500, refunded: false });
+    const once = await getCreatorCommissionByStripeInvoiceId(db, "in_replay_refund");
+
+    // Same webhook event replayed with the identical cumulative amount_refunded.
+    await processChargeRefunded(db, { id: "ch_replay_refund", invoice: "in_replay_refund", amount_refunded: 2500, refunded: false });
+    const replayed = await getCreatorCommissionByStripeInvoiceId(db, "in_replay_refund");
+
+    expect(replayed!.reversedCommissionCents).toBe(once!.reversedCommissionCents);
+    expect(replayed!.refundedCollectedCents).toBe(once!.refundedCollectedCents);
+  });
+
+  it("a refund after the commission was already paid never rewrites that row — instead it records a negative adjustment ledger entry", async () => {
+    const db = getDb();
+    const { creator, providerSubscriptionId } = await setUpReferredPayingBusiness(db);
+    await processInvoicePaid(
+      db,
+      invoice({ subscription: providerSubscriptionId, amount_paid: 10000, id: "in_paid_then_refunded", charge: "ch_paid_then_refunded" }),
+    );
+    const commission = (await getCreatorCommissionByStripeInvoiceId(db, "in_paid_then_refunded"))!;
+    await markCommissionPaid(db, commission.id, "Paid out in October batch");
+
+    await processChargeRefunded(db, { id: "ch_paid_then_refunded", invoice: "in_paid_then_refunded", amount_refunded: 2500, refunded: false });
+
+    const stillPaid = await getCreatorCommissionByStripeInvoiceId(db, "in_paid_then_refunded");
+    expect(stillPaid!.status).toBe("paid");
+    expect(stillPaid!.commissionAmountCents).toBe(2000); // the historical row itself is never rewritten.
+
+    const adjustments = await listAdjustmentsByCreatorId(db, creator.id);
+    expect(adjustments).toHaveLength(1);
+    expect(adjustments[0]!.commissionId).toBe(commission.id);
+    expect(adjustments[0]!.amountCents).toBe(-500); // 25% of the $20 commission, negative (owed back).
+    expect(adjustments[0]!.reason).toBe("refund_after_payout");
+  });
+
+  it("a replayed refund event on an already-paid commission does not create a duplicate adjustment", async () => {
+    const db = getDb();
+    const { creator, providerSubscriptionId } = await setUpReferredPayingBusiness(db);
+    await processInvoicePaid(
+      db,
+      invoice({ subscription: providerSubscriptionId, amount_paid: 10000, id: "in_paid_refund_replay", charge: "ch_paid_refund_replay" }),
+    );
+    const commission = (await getCreatorCommissionByStripeInvoiceId(db, "in_paid_refund_replay"))!;
+    await markCommissionPaid(db, commission.id, "Paid out");
+
+    await processChargeRefunded(db, { id: "ch_paid_refund_replay", invoice: "in_paid_refund_replay", amount_refunded: 2500, refunded: false });
+    await processChargeRefunded(db, { id: "ch_paid_refund_replay", invoice: "in_paid_refund_replay", amount_refunded: 2500, refunded: false });
+
+    const adjustments = await listAdjustmentsByCreatorId(db, creator.id);
+    expect(adjustments).toHaveLength(1);
+  });
+
+  async function setUpAndRefund(
+    db: Queryable,
+    opts: { amountPaid: number; refundedCents: number; chargeId: string; invoiceId: string },
+  ) {
+    const { providerSubscriptionId } = await setUpReferredPayingBusiness(db);
+    await processInvoicePaid(
+      db,
+      invoice({ subscription: providerSubscriptionId, amount_paid: opts.amountPaid, id: opts.invoiceId, charge: opts.chargeId }),
+    );
+    await processChargeRefunded(db, { id: opts.chargeId, invoice: opts.invoiceId, amount_refunded: opts.refundedCents, refunded: false });
+  }
+});
+
+describe("processInvoicePaid — tax exclusion (V1.1)", () => {
+  it("excludes Stripe's documented invoice.tax field from the commissionable base", async () => {
+    const db = getDb();
+    const { providerSubscriptionId } = await setUpReferredPayingBusiness(db, { commissionRateBps: 2000 });
+    // $100 collected, $8 of which is tax Stripe collected on behalf of authorities -> $92 commissionable -> $18.40 -> rounds to 1840.
+    await processInvoicePaid(
+      db,
+      invoice({ subscription: providerSubscriptionId, amount_paid: 10000, tax: 800, id: "in_with_tax" }),
+    );
+    const commission = await getCreatorCommissionByStripeInvoiceId(db, "in_with_tax");
+    expect(commission!.collectedAmountCents).toBe(10000);
+    expect(commission!.commissionableAmountCents).toBe(9200);
+    expect(commission!.commissionAmountCents).toBe(1840);
+  });
+
+  it("treats a missing/absent invoice.tax exactly as $0 tax (today's real account state) — commissionable equals collected", async () => {
+    const db = getDb();
+    const { providerSubscriptionId } = await setUpReferredPayingBusiness(db, { commissionRateBps: 2000 });
+    await processInvoicePaid(db, invoice({ subscription: providerSubscriptionId, amount_paid: 10000, id: "in_no_tax" }));
+    const commission = await getCreatorCommissionByStripeInvoiceId(db, "in_no_tax");
+    expect(commission!.commissionableAmountCents).toBe(commission!.collectedAmountCents);
+    expect(commission!.commissionAmountCents).toBe(2000);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { useTestDb } from "./testHarness";
-import { createCreator, getCreatorBySlug } from "../repositories/creators";
+import { createCreator, getCreatorBySlug, updateCreator } from "../repositories/creators";
 import { signUp } from "../services/auth";
 import { getCreatorReferralByBusinessId } from "../repositories/creatorReferrals";
 import {
@@ -165,5 +165,40 @@ describe("attributeReferral — durable, immutable attribution", () => {
     const referral = await attributeReferral(db, businessId, { slug: "ben", firstObservedAt: farFuture });
     expect(referral).toBeDefined();
     expect(Date.parse(referral!.firstObservedAt)).toBeLessThan(Date.parse(farFuture));
+  });
+
+  it("prevents self-referral when the new business's signup email matches the creator's own program email (V1.1)", async () => {
+    const db = getDb();
+    await createCreator(db, creatorInput({ email: "ben@example.com" }));
+    const { session } = await signUp(db, { businessName: "Ben's Own Co", ownerEmail: "ben@example.com", password: "correct-horse-battery" });
+
+    await attributeReferral(db, session.businessId, { slug: "ben", firstObservedAt: new Date().toISOString() });
+    expect(await getCreatorReferralByBusinessId(db, session.businessId)).toBeUndefined();
+  });
+
+  it("is case-insensitive when matching the self-referral email", async () => {
+    const db = getDb();
+    await createCreator(db, creatorInput({ email: "Ben@Example.com" }));
+    const { session } = await signUp(db, { businessName: "Ben's Own Co", ownerEmail: "ben@EXAMPLE.com", password: "correct-horse-battery" });
+
+    await attributeReferral(db, session.businessId, { slug: "ben", firstObservedAt: new Date().toISOString() });
+    expect(await getCreatorReferralByBusinessId(db, session.businessId)).toBeUndefined();
+  });
+
+  it("prevents self-referral when the new business IS the creator's own already-linked TallyVis business", async () => {
+    const { db, businessId } = await newBusiness();
+    const creator = await createCreator(db, creatorInput({ email: "ben-program-email@example.com" }));
+    await updateCreator(db, creator.id, { businessId });
+
+    await attributeReferral(db, businessId, { slug: "ben", firstObservedAt: new Date().toISOString() });
+    expect(await getCreatorReferralByBusinessId(db, businessId)).toBeUndefined();
+  });
+
+  it("does NOT flag a genuine, unrelated referral merely sharing no identity with the creator", async () => {
+    const { db, businessId } = await newBusiness();
+    const creator = await createCreator(db, creatorInput());
+
+    const referral = await attributeReferral(db, businessId, { slug: "ben", firstObservedAt: new Date().toISOString() });
+    expect(referral?.creatorId).toBe(creator.id);
   });
 });

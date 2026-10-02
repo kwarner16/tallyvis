@@ -92,6 +92,18 @@ export interface StripeInvoiceObject {
   charge?: string | null;
   /** The actual amount collected, in the invoice's own smallest currency unit (cents for USD) — already net of any coupon/discount. */
   amount_paid: number;
+  /**
+   * The total tax amount Stripe calculated and collected on this invoice
+   * (Stripe's own documented Invoice field — populated whenever Stripe
+   * Tax or a manually-applied tax rate is in use; `null`/absent/`0`
+   * whenever no tax was collected, which is this account's situation
+   * today). Used to exclude tax from the TallyVis Founding Creator
+   * Program's commissionable base — see
+   * `services/creatorCommissions.ts`'s `processInvoicePaid`. This is the
+   * one authoritative Stripe field for "how much of this invoice was
+   * tax" — never derived/estimated from anything else.
+   */
+  tax?: number | null;
   currency: string;
   period_start?: number;
   period_end?: number;

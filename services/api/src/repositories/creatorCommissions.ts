@@ -3,7 +3,7 @@ import type { Queryable } from "../db/pg/client";
 
 export type CreatorCommissionStatus = "accrued" | "reversed" | "paid";
 
-/** One row per commission-eligible Stripe invoice payment — see db/pg/migrations/0015_creator_program.sql's own comment for the full field-by-field reasoning. */
+/** One row per commission-eligible Stripe invoice payment — see db/pg/migrations/0015_creator_program.sql and 0016_creator_program_v1_1.sql's own comments for the full field-by-field reasoning. */
 export interface CreatorCommission {
   id: string;
   creatorId: string;
@@ -11,13 +11,20 @@ export interface CreatorCommission {
   businessId: string;
   stripeInvoiceId: string;
   stripeChargeId?: string;
+  /** The full, gross amount Stripe actually collected for this invoice — audit/display only; commission is calculated from `commissionableAmountCents` below, not this. */
   collectedAmountCents: number;
+  /** `collectedAmountCents` minus any reliably-identifiable tax (Stripe's own `invoice.tax` field) — the actual base commission is calculated from. Equal to `collectedAmountCents` whenever no tax was collected. */
+  commissionableAmountCents: number;
   currency: string;
   commissionRateBps: number;
   commissionAmountCents: number;
   periodStart?: string;
   periodEnd?: string;
   status: CreatorCommissionStatus;
+  /** Cumulative total of `commissionableAmountCents` refunded so far, mirrored from Stripe's own cumulative `charge.amount_refunded` — see `services/creatorCommissions.ts`'s `processChargeRefunded`. Never exceeds `commissionableAmountCents`. */
+  refundedCollectedCents: number;
+  /** Always `round(refundedCollectedCents * commissionRateBps / 10000)`, capped at `commissionAmountCents` — the proportional reversal this refund total implies. Re-derived from `refundedCollectedCents` on every refund event, never incremented independently, which is exactly what makes it safe across multiple partial refunds and idempotent against webhook replay. */
+  reversedCommissionCents: number;
   reversedAt?: string;
   paidAt?: string;
   payoutNote?: string;
@@ -33,12 +40,15 @@ interface CreatorCommissionRow {
   stripe_invoice_id: string;
   stripe_charge_id: string | null;
   collected_amount_cents: number;
+  commissionable_amount_cents: number;
   currency: string;
   commission_rate_bps: number;
   commission_amount_cents: number;
   period_start: string | null;
   period_end: string | null;
   status: string;
+  refunded_collected_cents: number;
+  reversed_commission_cents: number;
   reversed_at: string | null;
   paid_at: string | null;
   payout_note: string | null;
@@ -55,12 +65,15 @@ function toCreatorCommission(row: CreatorCommissionRow): CreatorCommission {
     stripeInvoiceId: row.stripe_invoice_id,
     stripeChargeId: row.stripe_charge_id ?? undefined,
     collectedAmountCents: row.collected_amount_cents,
+    commissionableAmountCents: row.commissionable_amount_cents,
     currency: row.currency,
     commissionRateBps: row.commission_rate_bps,
     commissionAmountCents: row.commission_amount_cents,
     periodStart: row.period_start ?? undefined,
     periodEnd: row.period_end ?? undefined,
     status: row.status as CreatorCommissionStatus,
+    refundedCollectedCents: row.refunded_collected_cents,
+    reversedCommissionCents: row.reversed_commission_cents,
     reversedAt: row.reversed_at ?? undefined,
     paidAt: row.paid_at ?? undefined,
     payoutNote: row.payout_note ?? undefined,
@@ -76,6 +89,7 @@ export interface CreateCreatorCommissionInput {
   stripeInvoiceId: string;
   stripeChargeId?: string;
   collectedAmountCents: number;
+  commissionableAmountCents: number;
   currency: string;
   commissionRateBps: number;
   commissionAmountCents: number;
@@ -96,9 +110,9 @@ export async function createCreatorCommission(db: Queryable, input: CreateCreato
   await db.query(
     `INSERT INTO creator_commissions (
        id, creator_id, referral_id, business_id, stripe_invoice_id, stripe_charge_id,
-       collected_amount_cents, currency, commission_rate_bps, commission_amount_cents,
+       collected_amount_cents, commissionable_amount_cents, currency, commission_rate_bps, commission_amount_cents,
        period_start, period_end, status, created_at, updated_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'accrued', $13, $13)`,
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'accrued', $14, $14)`,
     [
       id,
       input.creatorId,
@@ -107,6 +121,7 @@ export async function createCreatorCommission(db: Queryable, input: CreateCreato
       input.stripeInvoiceId,
       input.stripeChargeId ?? null,
       input.collectedAmountCents,
+      input.commissionableAmountCents,
       input.currency,
       input.commissionRateBps,
       input.commissionAmountCents,
@@ -148,16 +163,21 @@ export async function getEarliestCommissionPeriodStart(db: Queryable, referralId
 
 export interface CommissionTotalsByCreator {
   creatorId: string;
+  /** NET of any proportional reversal already applied — see `applyRefundToCommission`. Still-unpaid money actually owed right now, before the holding-period/pending-vs-payable split `services/creators.ts` computes on top of this. */
   accruedCents: number;
+  /** The ORIGINAL amount actually paid out — never reduced by a later refund (see `applyRefundToCommission`'s own comment: an already-`'paid'` row's amounts are never touched). Net-of-refund-after-payout is `paidCents + adjustmentCents` (adjustments are negative), computed by the caller alongside `listAdjustmentTotalsByCreator`. */
   paidCents: number;
+  /** Fully-reversed commissions (refunded in full) — informational, excluded from both of the above. */
+  reversedCents: number;
 }
 
-/** Per-creator totals for the admin list/metrics view — `reversed` commissions are deliberately excluded from both totals (never actually earned/kept once refunded). `::int` is safe here: a creator's lifetime commission total would need to exceed ~$21M to overflow, far beyond any realistic V1 scale. */
+/** Per-creator totals for the admin list/metrics view. `::int` is safe here: a creator's lifetime commission total would need to exceed ~$21M to overflow, far beyond any realistic V1 scale. */
 export async function listCommissionTotalsByCreator(db: Queryable): Promise<CommissionTotalsByCreator[]> {
-  const result = await db.query<{ creator_id: string; accrued_cents: number; paid_cents: number }>(
+  const result = await db.query<{ creator_id: string; accrued_cents: number; paid_cents: number; reversed_cents: number }>(
     `SELECT creator_id,
-       COALESCE(SUM(commission_amount_cents) FILTER (WHERE status = 'accrued'), 0)::int AS accrued_cents,
-       COALESCE(SUM(commission_amount_cents) FILTER (WHERE status = 'paid'), 0)::int AS paid_cents
+       COALESCE(SUM(commission_amount_cents - reversed_commission_cents) FILTER (WHERE status = 'accrued'), 0)::int AS accrued_cents,
+       COALESCE(SUM(commission_amount_cents) FILTER (WHERE status = 'paid'), 0)::int AS paid_cents,
+       COALESCE(SUM(commission_amount_cents) FILTER (WHERE status = 'reversed'), 0)::int AS reversed_cents
      FROM creator_commissions
      GROUP BY creator_id`,
   );
@@ -165,7 +185,14 @@ export async function listCommissionTotalsByCreator(db: Queryable): Promise<Comm
     creatorId: row.creator_id,
     accruedCents: row.accrued_cents,
     paidCents: row.paid_cents,
+    reversedCents: row.reversed_cents,
   }));
+}
+
+/** Every commission across every creator — see `services/creators.ts`'s `listCreatorsAdmin`, which reduces this flat list in TypeScript (the same "fetch flat rows, aggregate in JS" pattern `services/admin.ts`'s own dashboard metrics already use) rather than expressing the pending/payable holding-period split as SQL. Fine at V1 scale; revisit if the table ever grows large enough for this to matter. */
+export async function listAllCommissions(db: Queryable): Promise<CreatorCommission[]> {
+  const result = await db.query<CreatorCommissionRow>(`SELECT * FROM creator_commissions`);
+  return result.rows.map(toCreatorCommission);
 }
 
 export async function listCommissionsByCreatorId(db: Queryable, creatorId: string): Promise<CreatorCommission[]> {
@@ -192,15 +219,71 @@ export async function listCommissionsByStripeChargeId(db: Queryable, stripeCharg
   return result.rows.map(toCreatorCommission);
 }
 
-/** Only ever moves an 'accrued' row to 'reversed' — an already-'paid' commission is a settled, real-world payment Kyle already made; a refund arriving after that point is a separate reconciliation question for Kyle to handle manually, never something this function silently overwrites. See services/creatorCommissions.ts's own comment on this call site. */
-export async function markCommissionReversed(db: Queryable, id: string): Promise<CreatorCommission | undefined> {
-  const now = new Date().toISOString();
-  const result = await db.query(
-    `UPDATE creator_commissions SET status = 'reversed', reversed_at = $1, updated_at = $1 WHERE id = $2 AND status = 'accrued'`,
-    [now, id],
+export interface RefundApplicationResult {
+  commission: CreatorCommission;
+  /** The NEW reversal this call represents, beyond whatever was already reversed — `0` for an exact replay or a cumulative total that hasn't grown, which is exactly what makes this idempotent against webhook replay and safe across multiple partial refunds (see `services/creatorCommissions.ts`'s `processChargeRefunded`). */
+  incrementalReversalCents: number;
+  /** Whether this commission's status was already `'paid'` BEFORE this call — the caller uses this to decide whether to record a `creator_commission_adjustments` ledger entry instead of relying on this row's own (deliberately untouched, for a paid row) amounts. */
+  wasAlreadyPaid: boolean;
+}
+
+/**
+ * Applies a NEW cumulative refunded-amount total (Stripe's own
+ * `charge.amount_refunded`, always cumulative, never a per-event delta)
+ * to one commission. `reversedCommissionCents` is always fully
+ * RE-DERIVED from the cumulative refunded total (`round(refunded *
+ * rate / 10000)`, capped at `commissionAmountCents`) rather than
+ * incremented — this is what makes a second, later partial refund
+ * compute a strictly larger (but still capped) total reversal, and what
+ * makes an exact replay of the same event recompute the IDENTICAL
+ * value rather than double-applying anything.
+ *
+ * An already-`'paid'` commission's `status`/`paidAt`/`commissionAmountCents`
+ * are NEVER touched here — only the tracking columns (`refundedCollectedCents`/
+ * `reversedCommissionCents`) update, preserving the real historical
+ * payout record. See this function's caller for how `wasAlreadyPaid`
+ * is used to record a separate ledger adjustment for that case instead.
+ * An `'accrued'` row transitions to `'reversed'` only once FULLY
+ * reversed; a merely partial reversal leaves it `'accrued'` (still
+ * something owed, just less).
+ */
+export async function applyRefundToCommission(
+  db: Queryable,
+  id: string,
+  newCumulativeRefundedCents: number,
+): Promise<RefundApplicationResult | undefined> {
+  const existing = await getCreatorCommissionById(db, id);
+  if (!existing) return undefined;
+
+  const cappedCumulativeRefunded = Math.max(0, Math.min(newCumulativeRefundedCents, existing.commissionableAmountCents));
+  const wasAlreadyPaid = existing.status === "paid";
+
+  if (cappedCumulativeRefunded <= existing.refundedCollectedCents) {
+    return { commission: existing, incrementalReversalCents: 0, wasAlreadyPaid };
+  }
+
+  const newReversedCommissionCents = Math.min(
+    existing.commissionAmountCents,
+    Math.round((cappedCumulativeRefunded * existing.commissionRateBps) / 10_000),
   );
-  if (result.rowCount === 0) return undefined;
-  return getCreatorCommissionById(db, id);
+  const incrementalReversalCents = newReversedCommissionCents - existing.reversedCommissionCents;
+  const newStatus =
+    existing.status === "accrued" && newReversedCommissionCents >= existing.commissionAmountCents ? "reversed" : existing.status;
+  const now = new Date().toISOString();
+
+  await db.query(
+    `UPDATE creator_commissions SET
+       refunded_collected_cents = $1,
+       reversed_commission_cents = $2,
+       status = $3,
+       reversed_at = CASE WHEN $3 = 'reversed' AND reversed_at IS NULL THEN $4 ELSE reversed_at END,
+       updated_at = $4
+     WHERE id = $5`,
+    [cappedCumulativeRefunded, newReversedCommissionCents, newStatus, now, id],
+  );
+
+  const updated = await getCreatorCommissionById(db, id);
+  return { commission: updated!, incrementalReversalCents, wasAlreadyPaid };
 }
 
 /** Admin-only manual payout marking (see services/creators.ts) — only ever moves an 'accrued' commission to 'paid'; marking an already-'paid' or 'reversed' row is refused by the WHERE clause, surfacing as `rowCount === 0` for the caller to turn into a clear error rather than silently re-stamping `paidAt`. */

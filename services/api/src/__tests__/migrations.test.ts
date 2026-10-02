@@ -43,6 +43,7 @@ describe("runMigrations (Postgres)", () => {
           "benchmark_cases",
           "billing_charges",
           "businesses",
+          "creator_commission_adjustments",
           "creator_commissions",
           "creator_referrals",
           "creators",

@@ -5,7 +5,7 @@ import { CreatorApplicationForm } from "@/components/CreatorApplicationForm";
 const PATH = "/creators";
 const TITLE = "Founding Creator Program";
 const DESCRIPTION =
-  "TallyVis partners with window-cleaning and home-service creators: free access while partnered, recurring referral commissions, and a direct line to the team building the product.";
+  "TallyVis partners with window-cleaning and home-service creators: 20% recurring commission on referred customers for their first 12 months, complimentary TallyVis access while you're an active creator, and a direct line to the team building the product.";
 
 export const metadata: Metadata = {
   title: TITLE,
@@ -15,12 +15,12 @@ export const metadata: Metadata = {
 
 const BENEFITS = [
   {
-    title: "Free access while partnered",
-    body: "Active founding creators who run their own window-cleaning business can use TallyVis at no cost while actively partnered, subject to the program's terms.",
+    title: "20% recurring commission",
+    body: "Earn 20% of the recurring subscription revenue collected from each business you refer — for that customer's first 12 months. This is a separate benefit from complimentary access below, and keeps paying out for existing referrals even if your own active-creator status later changes.",
   },
   {
-    title: "Recurring affiliate commissions",
-    body: "Earn a recurring commission on the subscription revenue from businesses you refer — for the first 12 months of each referred customer's subscription.",
+    title: "Complimentary TallyVis access",
+    body: "If you run your own window-cleaning business, use TallyVis at no cost for as long as you're an active founding creator — defined simply as posting at least one piece of real TallyVis content per month. No view or follower minimums.",
   },
   {
     title: "Early access to features",
@@ -52,7 +52,7 @@ export default function CreatorsPage() {
             </h1>
             <p className="text-lg text-paper/70">
               For creators who educate window-cleaning and home-service business owners — partner with TallyVis,
-              share your link, and earn recurring commissions as the businesses you refer grow with us.
+              share your link, and earn a 20% recurring commission on each referred customer&rsquo;s first 12 months.
             </p>
             <a href="#apply" className="rounded-lg bg-accent-strong px-6 py-3 text-sm font-semibold text-paper transition-colors hover:bg-accent-strong-hover">
               Apply to the program
@@ -78,9 +78,12 @@ export default function CreatorsPage() {
             ))}
           </div>
           <p className="mx-auto mt-8 max-w-2xl text-center text-xs text-ink-faint">
-            TallyVis is an early-stage company. We don&rsquo;t make specific income claims — commission and
-            access terms are set out in the program agreement shared with each partner. Future paid sponsorship
-            opportunities may also become available as the program grows.
+            TallyVis is an early-stage company and we don&rsquo;t promise any particular level of earnings — actual
+            commission depends entirely on the business you refer and how long they stay a customer. Recurring
+            commission and complimentary access are the standard founding-creator benefits described above; a
+            separate paid sponsorship (e.g. a one-off video fee) is never automatic and would only ever happen
+            under its own, separately agreed terms. Full commission and eligibility terms are set out in the
+            program agreement shared with each partner.
           </p>
         </Container>
       </section>

@@ -23,6 +23,11 @@ export interface Creator {
   businessId?: string;
   complimentaryAccess: boolean;
   clickCount: number;
+  /** Stamped exactly once, the first time this creator's status becomes `"active"` — never moved again, even across a later pause/reactivate cycle. See `services/creators.ts`'s `firstActivityMonthStart`. */
+  activatedAt?: string;
+  lastQualifyingContentAt?: string;
+  lastQualifyingContentUrl?: string;
+  lastQualifyingContentNote?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -41,6 +46,10 @@ interface CreatorRow {
   business_id: string | null;
   complimentary_access: boolean;
   click_count: number;
+  activated_at: string | null;
+  last_qualifying_content_at: string | null;
+  last_qualifying_content_url: string | null;
+  last_qualifying_content_note: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -60,6 +69,10 @@ function toCreator(row: CreatorRow): Creator {
     businessId: row.business_id ?? undefined,
     complimentaryAccess: row.complimentary_access,
     clickCount: row.click_count,
+    activatedAt: row.activated_at ?? undefined,
+    lastQualifyingContentAt: row.last_qualifying_content_at ?? undefined,
+    lastQualifyingContentUrl: row.last_qualifying_content_url ?? undefined,
+    lastQualifyingContentNote: row.last_qualifying_content_note ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -150,6 +163,8 @@ export interface UpdateCreatorInput {
   notes?: string;
   businessId?: string;
   complimentaryAccess?: boolean;
+  /** COALESCE-preserve, like every other field here — but callers (see `services/creators.ts`'s `updateCreatorAdmin`) only ever pass this ONCE, the first time status transitions to `"active"`; never passed again afterward, so the column is never actually overwritten in practice even though this function alone doesn't enforce that. */
+  activatedAt?: string;
 }
 
 export async function updateCreator(db: Queryable, id: string, input: UpdateCreatorInput): Promise<Creator | undefined> {
@@ -166,8 +181,9 @@ export async function updateCreator(db: Queryable, id: string, input: UpdateCrea
        notes = COALESCE($8, notes),
        business_id = COALESCE($9, business_id),
        complimentary_access = COALESCE($10, complimentary_access),
-       updated_at = $11
-     WHERE id = $12`,
+       activated_at = COALESCE(activated_at, $11),
+       updated_at = $12
+     WHERE id = $13`,
     [
       input.name,
       input.email,
@@ -179,9 +195,32 @@ export async function updateCreator(db: Queryable, id: string, input: UpdateCrea
       input.notes,
       input.businessId,
       input.complimentaryAccess,
+      input.activatedAt,
       now,
       id,
     ],
+  );
+  if (result.rowCount === 0) return undefined;
+  return getCreatorById(db, id);
+}
+
+/** Manual, admin-entered activity record (see docs/decisions/0040's V1.1 addendum "Active Creator" section) — TallyVis does not, and does not claim to, automatically verify content publication. Each call REPLACES the previous "last qualifying content" entry; there is no history of every past entry, the same single-slot pattern `recordQuoteChangeRequest` already uses elsewhere in this codebase. */
+export interface RecordCreatorActivityInput {
+  contentAt: string;
+  contentUrl: string;
+  note: string;
+}
+
+export async function recordCreatorActivity(db: Queryable, id: string, input: RecordCreatorActivityInput): Promise<Creator | undefined> {
+  const now = new Date().toISOString();
+  const result = await db.query(
+    `UPDATE creators SET
+       last_qualifying_content_at = $1,
+       last_qualifying_content_url = $2,
+       last_qualifying_content_note = $3,
+       updated_at = $4
+     WHERE id = $5`,
+    [input.contentAt, input.contentUrl, input.note, now, id],
   );
   if (result.rowCount === 0) return undefined;
   return getCreatorById(db, id);

@@ -5,16 +5,18 @@ import * as subscriptionsRepo from "../repositories/subscriptions";
 import * as creatorsRepo from "../repositories/creators";
 import * as referralsRepo from "../repositories/creatorReferrals";
 import * as commissionsRepo from "../repositories/creatorCommissions";
+import * as adjustmentsRepo from "../repositories/creatorCommissionAdjustments";
 
 /**
  * TallyVis Founding Creator Program — commission calculation from real
  * Stripe invoice payments (see
- * docs/decisions/0040-creator-affiliate-program.md's "Stripe /
- * commissions" section for the full reasoning behind every decision
- * below). Called from `services/billingWebhooks.ts`'s new `invoice.paid`/
- * `charge.refunded` branches — this file has no webhook-signature or
- * event-envelope concerns of its own, only the business logic of "does
- * this payment produce a commission, and how much."
+ * docs/decisions/0040-creator-affiliate-program.md and its V1.1
+ * addendum for the full reasoning behind every decision below). Called
+ * from `services/billingWebhooks.ts`'s `invoice.paid`/`charge.refunded`
+ * branches — this file has no webhook-signature or event-envelope
+ * concerns of its own, only the business logic of "does this payment
+ * produce a commission, how much, and how does a later refund adjust
+ * it."
  */
 
 async function resolveBusinessIdForInvoice(db: Queryable, invoice: StripeInvoiceObject): Promise<string | undefined> {
@@ -46,8 +48,20 @@ function addMonthsUtc(iso: string, months: number): string {
  *   - no resolvable business / no referral: an invoice for a business
  *     this app doesn't recognize, or one that was never referred by a
  *     creator — most invoices, by far, correctly produce no commission.
+ *     NOTE: deliberately does NOT check the creator's current `status`
+ *     — see docs/decisions/0040's V1.1 addendum, "Existing referrals
+ *     after deactivation": a creator who legitimately referred this
+ *     business while active keeps earning eligible commission for the
+ *     rest of the original eligibility window even after being
+ *     paused/deactivated. Only NEW attribution (`resolveEligibleCreatorBySlug`,
+ *     used by `attributeReferral`) requires `status === "active"`.
  *   - outside the eligibility window: see the window-start/cutoff logic
  *     below.
+ *
+ * One-time fees (the installation fee) never reach this function at all
+ * — they're `mode: "payment"` Checkout Sessions, which never produce a
+ * Stripe Invoice object in the first place, so there is nothing to
+ * special-case.
  *
  * Idempotent via `creator_commissions.stripe_invoice_id UNIQUE` — a
  * replayed `invoice.paid` webhook (Stripe's explicit at-least-once
@@ -78,7 +92,8 @@ export async function processInvoicePaid(db: Queryable, invoice: StripeInvoiceOb
   // duration — so raising a creator's duration later extends eligibility
   // for invoices going forward without needing to touch any historical
   // row, exactly the "vary by creator without rewriting history"
-  // requirement.
+  // requirement. The window is tied to the REFERRAL, not to the
+  // creator's current status — see this function's own header comment.
   let windowStartedAt = referral.commissionWindowStartedAt;
   if (!windowStartedAt) {
     await referralsRepo.startCommissionWindowIfUnset(db, referral.id, periodStart);
@@ -90,10 +105,21 @@ export async function processInvoicePaid(db: Queryable, invoice: StripeInvoiceOb
     return;
   }
 
+  // Tax exclusion (V1.1 — see docs/decisions/0040's addendum "What
+  // revenue is commissionable" section): `invoice.tax` is Stripe's own
+  // authoritative total-tax-collected field, present whenever Stripe Tax
+  // or a manual tax rate is in use. Absent/zero (this account's current
+  // situation) means commissionableAmountCents === collectedAmountCents
+  // exactly, so nothing changes from V1 behavior today — this only takes
+  // effect if/when tax collection is ever turned on.
+  const collectedAmountCents = invoice.amount_paid;
+  const taxCents = invoice.tax ?? 0;
+  const commissionableAmountCents = Math.max(0, collectedAmountCents - taxCents);
+
   // Integer-cents arithmetic throughout, matching every other money value
   // in this repo (`monthlyPriceCents`, `amountCents`, ...) — bps/10000
   // first multiplies, then divides, so this never touches a float.
-  const commissionAmountCents = Math.round((invoice.amount_paid * creator.commissionRateBps) / 10_000);
+  const commissionAmountCents = Math.round((commissionableAmountCents * creator.commissionRateBps) / 10_000);
 
   try {
     await commissionsRepo.createCreatorCommission(db, {
@@ -102,7 +128,8 @@ export async function processInvoicePaid(db: Queryable, invoice: StripeInvoiceOb
       businessId,
       stripeInvoiceId: invoice.id,
       stripeChargeId: invoice.charge ?? undefined,
-      collectedAmountCents: invoice.amount_paid,
+      collectedAmountCents,
+      commissionableAmountCents,
       currency: invoice.currency,
       commissionRateBps: creator.commissionRateBps,
       commissionAmountCents,
@@ -116,21 +143,63 @@ export async function processInvoicePaid(db: Queryable, invoice: StripeInvoiceOb
 }
 
 /**
- * Reverses every commission produced by this charge's invoice when any
- * amount of it has been refunded — a deliberate V1 simplification
- * (documented in docs/decisions/0040) treats ANY refund (full or
- * partial) as a full reversal of that invoice's commission, rather than
- * prorating the commission to the refunded fraction. `markCommissionReversed`
- * only ever moves an `"accrued"` row to `"reversed"` — an already-`"paid"`
- * commission is a settled real-world payment Kyle already made, and a
- * refund arriving after that is a separate manual reconciliation
- * question for Kyle, never something this silently undoes.
+ * Applies a (possibly repeated, possibly partial) refund to every
+ * commission produced by this charge's invoice — see
+ * docs/decisions/0040's V1.1 addendum "Refunds" section for the full
+ * accounting design this implements:
+ *
+ *   - Proportional, not all-or-nothing: `charge.amount_refunded` is
+ *     Stripe's own CUMULATIVE refunded total for this charge (never a
+ *     per-event delta) — scaled by the same ratio the commissionable
+ *     base already was to the gross collected amount (so tax exclusion
+ *     and refund proportionality compose correctly; see the scaling
+ *     comment below), then handed to `applyRefundToCommission`, which
+ *     re-derives the total reversal from scratch every time. This is
+ *     what makes a SECOND partial refund correctly compute a larger
+ *     (but still capped) total reversal, and what makes an EXACT replay
+ *     of the same webhook event a safe no-op rather than a double
+ *     reversal.
+ *   - Full refund -> full reversal; partial -> proportional; multiple
+ *     partials can never over-reverse (capped at `commissionAmountCents`
+ *     inside `applyRefundToCommission`).
+ *   - An already-`'paid'` commission's own amounts/status are NEVER
+ *     touched (see that function's comment) — instead, the INCREMENTAL
+ *     new reversal is recorded as a negative `creator_commission_adjustments`
+ *     ledger entry, to net against this creator's NEXT payout, exactly
+ *     the "prefer an adjustment/negative balance over an automatic
+ *     clawback" treatment the business rule calls for. No automated
+ *     payout or bank action results from this — V1.1 still has none.
  */
 export async function processChargeRefunded(db: Queryable, charge: StripeChargeObject): Promise<void> {
   if (!charge.refunded && !(charge.amount_refunded > 0)) return;
 
   const commissions = await commissionsRepo.listCommissionsByStripeChargeId(db, charge.id);
   for (const commission of commissions) {
-    await commissionsRepo.markCommissionReversed(db, commission.id);
+    // Scales the charge's cumulative refunded amount into the
+    // commissionable-base "currency" this commission's reversal math
+    // operates in — a no-op ratio (1:1) whenever no tax was excluded
+    // (collectedAmountCents === commissionableAmountCents, today's
+    // reality for this account), and a documented, deliberate
+    // approximation otherwise: Stripe has no API concept of "refund only
+    // the non-tax portion," so a refund is assumed to reduce the
+    // commissionable base in the same proportion it reduced the gross
+    // collected amount.
+    const scaledRefundedCents =
+      commission.collectedAmountCents > 0
+        ? Math.round((charge.amount_refunded * commission.commissionableAmountCents) / commission.collectedAmountCents)
+        : 0;
+
+    const result = await commissionsRepo.applyRefundToCommission(db, commission.id, scaledRefundedCents);
+    if (!result || result.incrementalReversalCents <= 0) continue;
+
+    if (result.wasAlreadyPaid) {
+      await adjustmentsRepo.createCommissionAdjustment(db, {
+        commissionId: commission.id,
+        creatorId: commission.creatorId,
+        amountCents: -result.incrementalReversalCents,
+        reason: "refund_after_payout",
+        note: `Refund on Stripe charge ${charge.id} after this commission was already paid.`,
+      });
+    }
   }
 }

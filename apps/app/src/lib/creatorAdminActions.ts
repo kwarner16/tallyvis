@@ -7,6 +7,7 @@ import {
   linkCreatorBusinessAdmin,
   setCreatorComplimentaryAccessAdmin,
   markCommissionPaidAdmin,
+  recordCreatorActivityAdmin,
   type CreatorStatus,
 } from "@tallyvis/api";
 import { requireAdminContext } from "@/lib/adminSession";
@@ -117,5 +118,22 @@ export async function markCommissionPaidAction(formData: FormData): Promise<void
   const commissionId = String(formData.get("commissionId") ?? "");
   const payoutNote = String(formData.get("payoutNote") ?? "");
   await markCommissionPaidAdmin(db, session, commissionId, payoutNote);
+  redirect(`/admin/creators/${creatorId}`);
+}
+
+export async function recordCreatorActivityAction(_prevState: CreatorFormState, formData: FormData): Promise<CreatorFormState> {
+  const { db, session } = await requireAdminContext();
+  const creatorId = String(formData.get("creatorId") ?? "");
+
+  try {
+    await recordCreatorActivityAdmin(db, session, creatorId, {
+      contentAt: String(formData.get("contentAt") ?? ""),
+      contentUrl: String(formData.get("contentUrl") ?? ""),
+      note: String(formData.get("note") ?? ""),
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Could not record this activity." };
+  }
+
   redirect(`/admin/creators/${creatorId}`);
 }

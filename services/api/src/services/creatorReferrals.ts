@@ -3,6 +3,7 @@ import type { Queryable } from "../db/pg/client";
 import * as creatorsRepo from "../repositories/creators";
 import * as referralsRepo from "../repositories/creatorReferrals";
 import type { CreatorReferral } from "../repositories/creatorReferrals";
+import { getBusinessById } from "../repositories/businesses";
 
 /**
  * TallyVis Founding Creator Program — referral click resolution and
@@ -63,6 +64,37 @@ export interface PendingReferralAttribution {
   firstObservedAt: string;
 }
 
+/**
+ * Obvious self-referral prevention using only data this app already has
+ * on hand at attribution time — see docs/decisions/0040's V1.1 addendum
+ * "Self-referrals / abuse" section for why this is deliberately bounded
+ * to two cheap, reliable checks rather than any fingerprinting or fraud
+ * scoring:
+ *
+ *   1. The new business's own signup email exactly matches (case-
+ *      insensitively) the creator's own program email — the creator
+ *      signing up a business with the same email they gave TallyVis for
+ *      the program itself.
+ *   2. The new business IS the creator's own already-linked TallyVis
+ *      business (`creators.business_id`) — relevant if that link was
+ *      established before this particular signup somehow re-ran
+ *      attribution; cheap to check even though it's an unlikely
+ *      ordering in practice.
+ *
+ * Neither check can ever produce a false positive against a genuine,
+ * unrelated referral (a real customer's email is extremely unlikely to
+ * coincidentally equal the creator's own), and both together cost one
+ * extra indexed lookup. A business that merely shares a last name,
+ * company name, or domain with the creator is NOT flagged — that would
+ * need the invasive heuristics this program explicitly avoids.
+ */
+async function isLikelySelfReferral(db: Queryable, creatorId: string, businessId: string): Promise<boolean> {
+  const [creator, business] = await Promise.all([creatorsRepo.getCreatorById(db, creatorId), getBusinessById(db, businessId)]);
+  if (!creator || !business) return false;
+  if (creator.businessId === businessId) return true;
+  return creator.email.trim().toLowerCase() === business.email.trim().toLowerCase();
+}
+
 const MAX_COOKIE_AGE_MS = 31 * 24 * 60 * 60 * 1000; // one day of slack beyond the 30-day cookie's own max-age
 
 /** A `firstObservedAt` this implausible can only be a corrupted/tampered cookie, never a real click — clamped to "now" rather than trusted, since this value only ever affects DISPLAY (see `CreatorReferral.firstObservedAt`), never any monetary calculation (commission eligibility is computed from `commission_window_started_at`, stamped server-side at the first real payment — see `creatorCommissions.ts`). */
@@ -101,6 +133,13 @@ export async function attributeReferral(
   if (!pending) return undefined;
   const resolution = await resolveEligibleCreatorBySlug(db, pending.slug);
   if (!resolution) return undefined;
+
+  if (await isLikelySelfReferral(db, resolution.creatorId, businessId)) {
+    console.warn(
+      `[creatorReferrals] self-referral prevented: business "${businessId}" matches creator "${resolution.creatorId}"'s own identity.`,
+    );
+    return undefined;
+  }
 
   const now = new Date().toISOString();
   const firstObservedAt = plausibleFirstObservedAt(pending.firstObservedAt, now);

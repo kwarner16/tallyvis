@@ -9,12 +9,14 @@ import { MARKETING_URL } from "@/lib/urls";
 import { CreatorForm } from "@/components/admin/CreatorForm";
 import { CopyReferralUrl } from "@/components/admin/CopyReferralUrl";
 import { LinkBusinessForm } from "@/components/admin/LinkBusinessForm";
+import { RecordActivityForm } from "@/components/admin/RecordActivityForm";
 import {
   setCreatorStatusAction,
   unlinkCreatorBusinessAction,
   setComplimentaryAccessAction,
   markCommissionPaidAction,
 } from "@/lib/creatorAdminActions";
+import { isCommissionPayable } from "@tallyvis/api";
 
 const PLAN_LABELS: Record<string, string> = { starter: "Starter", growth: "Growth", pro: "Pro" };
 const STATUS_LABELS: Record<CreatorStatus, string> = {
@@ -26,7 +28,8 @@ const STATUS_LABELS: Record<CreatorStatus, string> = {
 };
 
 function formatCents(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}$${(Math.abs(cents) / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
 function formatDateTime(iso: string | undefined): string {
@@ -49,7 +52,7 @@ export default async function AdminCreatorDetailPage({ params }: { params: Promi
   const detail = await getCreatorDetailAdmin(db, session, id);
   if (!detail) notFound();
 
-  const { creator, referrals, commissions } = detail;
+  const { creator, referrals, commissions, adjustments, financials, firstActivityMonthRequiredFrom } = detail;
   const referralUrl = `${MARKETING_URL}/r/${creator.slug}`;
   const accrued = commissions.filter((c) => c.status === "accrued");
   const settled = commissions.filter((c) => c.status !== "accrued");
@@ -90,6 +93,56 @@ export default async function AdminCreatorDetailPage({ params }: { params: Promi
       <section className="rounded-2xl border border-line bg-paper p-5">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-faint">Creator information</h2>
         <CreatorForm creator={creator} />
+      </section>
+
+      <section className="rounded-2xl border border-line bg-paper p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-faint">Active Creator status</h2>
+        <p className="mt-2 text-sm text-ink-soft">
+          At least one qualifying piece of original TallyVis content per calendar month — no minimum views/followers. TallyVis does
+          not automatically verify this; Kyle records it manually after checking.
+        </p>
+        <dl className="mt-3 flex flex-col gap-2 text-sm">
+          <Row label="Activated" value={formatDateTime(creator.activatedAt)} />
+          <Row
+            label="Content requirement begins"
+            value={
+              firstActivityMonthRequiredFrom
+                ? `${formatDateTime(firstActivityMonthRequiredFrom)} (the activation month itself is an onboarding month)`
+                : "—"
+            }
+          />
+          <Row label="Last recorded qualifying content" value={formatDateTime(creator.lastQualifyingContentAt)} />
+          <Row
+            label="Content link"
+            value={
+              creator.lastQualifyingContentUrl ? (
+                <a href={creator.lastQualifyingContentUrl} target="_blank" rel="noreferrer" className="underline">
+                  {creator.lastQualifyingContentUrl}
+                </a>
+              ) : (
+                "—"
+              )
+            }
+          />
+          <Row label="Note" value={creator.lastQualifyingContentNote || "—"} />
+        </dl>
+        <div className="mt-4">
+          <RecordActivityForm creatorId={creator.id} />
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-line bg-paper p-5">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-faint">Commission summary</h2>
+        <dl className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+          <Row label="Pending" value={formatCents(financials.pendingCommissionCents)} />
+          <Row label="Payable" value={formatCents(financials.payableCommissionCents)} />
+          <Row label="Paid" value={formatCents(financials.paidCommissionCents)} />
+          <Row label="Adjustments" value={formatCents(financials.adjustmentCents)} />
+        </dl>
+        <p className="mt-2 text-xs text-ink-faint">
+          &ldquo;Payable&rdquo; has cleared the {`30`}-day holding period; &ldquo;pending&rdquo; has not yet. Adjustments are negative
+          entries netted against a future payout when a refund arrives after a commission was already marked paid.
+        </p>
       </section>
 
       <section className="rounded-2xl border border-line bg-paper p-5">
@@ -167,42 +220,63 @@ export default async function AdminCreatorDetailPage({ params }: { params: Promi
           <p className="text-sm text-ink-soft">Nothing owed right now.</p>
         ) : (
           <div className="overflow-x-auto rounded-2xl border border-line bg-paper">
-            <table className="w-full min-w-[760px] text-left text-sm">
+            <table className="w-full min-w-[840px] text-left text-sm">
               <thead className="bg-paper-alt text-xs uppercase tracking-wide text-ink-faint">
                 <tr>
                   <th className="px-4 py-3 font-medium">Invoice</th>
                   <th className="px-4 py-3 font-medium">Collected</th>
                   <th className="px-4 py-3 font-medium">Rate</th>
                   <th className="px-4 py-3 font-medium">Commission</th>
+                  <th className="px-4 py-3 font-medium">Net of reversal</th>
+                  <th className="px-4 py-3 font-medium">Status</th>
                   <th className="px-4 py-3 font-medium">Created</th>
                   <th className="px-4 py-3 font-medium">Mark paid</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {accrued.map((commission) => (
-                  <tr key={commission.id}>
-                    <td className="px-4 py-3 font-mono text-xs text-ink-soft">{commission.stripeInvoiceId}</td>
-                    <td className="px-4 py-3 font-mono text-ink">{formatCents(commission.collectedAmountCents)}</td>
-                    <td className="px-4 py-3 text-ink-soft">{formatBasisPointsAsPercent(commission.commissionRateBps)}</td>
-                    <td className="px-4 py-3 font-mono font-medium text-ink">{formatCents(commission.commissionAmountCents)}</td>
-                    <td className="px-4 py-3 text-ink-soft">{formatDateTime(commission.createdAt)}</td>
-                    <td className="px-4 py-3">
-                      <form action={markCommissionPaidAction} className="flex items-center gap-2">
-                        <input type="hidden" name="creatorId" value={creator.id} />
-                        <input type="hidden" name="commissionId" value={commission.id} />
-                        <input
-                          type="text"
-                          name="payoutNote"
-                          placeholder="Payout note (optional)"
-                          className="w-36 rounded-lg border border-line bg-paper px-2 py-1 text-xs text-ink placeholder:text-ink-faint"
-                        />
-                        <button type="submit" className={buttonVariants({ variant: "primary", className: "px-3 py-1 text-xs" })}>
-                          Mark paid
-                        </button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
+                {accrued.map((commission) => {
+                  const netCents = commission.commissionAmountCents - commission.reversedCommissionCents;
+                  const payable = isCommissionPayable(commission);
+                  return (
+                    <tr key={commission.id}>
+                      <td className="px-4 py-3 font-mono text-xs text-ink-soft">{commission.stripeInvoiceId}</td>
+                      <td className="px-4 py-3 font-mono text-ink">{formatCents(commission.collectedAmountCents)}</td>
+                      <td className="px-4 py-3 text-ink-soft">{formatBasisPointsAsPercent(commission.commissionRateBps)}</td>
+                      <td className="px-4 py-3 font-mono text-ink">{formatCents(commission.commissionAmountCents)}</td>
+                      <td className="px-4 py-3 font-mono font-medium text-ink">
+                        {formatCents(netCents)}
+                        {commission.reversedCommissionCents > 0 ? (
+                          <span className="ml-1 text-xs text-ink-faint">(partially refunded)</span>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                            payable ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {payable ? "Payable" : "Pending"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-ink-soft">{formatDateTime(commission.createdAt)}</td>
+                      <td className="px-4 py-3">
+                        <form action={markCommissionPaidAction} className="flex items-center gap-2">
+                          <input type="hidden" name="creatorId" value={creator.id} />
+                          <input type="hidden" name="commissionId" value={commission.id} />
+                          <input
+                            type="text"
+                            name="payoutNote"
+                            placeholder="Payout note (optional)"
+                            className="w-36 rounded-lg border border-line bg-paper px-2 py-1 text-xs text-ink placeholder:text-ink-faint"
+                          />
+                          <button type="submit" className={buttonVariants({ variant: "primary", className: "px-3 py-1 text-xs" })}>
+                            Mark paid
+                          </button>
+                        </form>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -231,6 +305,40 @@ export default async function AdminCreatorDetailPage({ params }: { params: Promi
                     <td className="px-4 py-3 text-ink-soft">{commission.status === "paid" ? "Paid" : "Reversed (refunded)"}</td>
                     <td className="px-4 py-3 text-ink-soft">{formatDateTime(commission.paidAt ?? commission.reversedAt)}</td>
                     <td className="px-4 py-3 text-ink-soft">{commission.payoutNote ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {adjustments.length > 0 ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-lg font-semibold text-ink">Adjustments ({adjustments.length})</h2>
+          <p className="text-sm text-ink-soft">
+            Recorded only when a refund arrives after a commission was already marked paid — never rewrites the historical payout,
+            instead nets against this creator&apos;s next payout.
+          </p>
+          <div className="overflow-x-auto rounded-2xl border border-line bg-paper">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead className="bg-paper-alt text-xs uppercase tracking-wide text-ink-faint">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Amount</th>
+                  <th className="px-4 py-3 font-medium">Reason</th>
+                  <th className="px-4 py-3 font-medium">Recorded</th>
+                  <th className="px-4 py-3 font-medium">Note</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {adjustments.map((adjustment) => (
+                  <tr key={adjustment.id}>
+                    <td className="px-4 py-3 font-mono font-medium text-ink">{formatCents(adjustment.amountCents)}</td>
+                    <td className="px-4 py-3 text-ink-soft">
+                      {adjustment.reason === "refund_after_payout" ? "Refund after payout" : "Manual"}
+                    </td>
+                    <td className="px-4 py-3 text-ink-soft">{formatDateTime(adjustment.createdAt)}</td>
+                    <td className="px-4 py-3 text-ink-soft">{adjustment.note || "—"}</td>
                   </tr>
                 ))}
               </tbody>

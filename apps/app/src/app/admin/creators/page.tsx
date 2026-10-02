@@ -6,7 +6,8 @@ import { MetricCard } from "@/components/dashboard/MetricCard";
 import { CreatorForm } from "@/components/admin/CreatorForm";
 
 function formatCents(cents: number): string {
-  return `$${(cents / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}$${(Math.abs(cents) / 100).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
 const STATUS_LABELS: Record<CreatorAdminListRow["status"], string> = {
@@ -43,9 +44,10 @@ export default async function AdminCreatorsPage() {
         <MetricCard label="Referred signups" value={String(overview.totalSignups)} />
         <MetricCard label="Paying referred businesses" value={String(overview.totalPaying)} />
         <MetricCard label="Referred MRR" value={formatCents(overview.totalMrrCents)} />
-        <MetricCard label="Commission earned" value={formatCents(overview.totalCommissionEarnedCents)} />
-        <MetricCard label="Commission unpaid" value={formatCents(overview.totalCommissionUnpaidCents)} />
-        <MetricCard label="Commission paid" value={formatCents(overview.totalCommissionPaidCents)} />
+        <MetricCard label="Commission pending" value={formatCents(overview.totalPendingCommissionCents)} />
+        <MetricCard label="Commission payable" value={formatCents(overview.totalPayableCommissionCents)} />
+        <MetricCard label="Commission paid" value={formatCents(overview.totalPaidCommissionCents)} />
+        <MetricCard label="Adjustments" value={formatCents(overview.totalAdjustmentCents)} />
       </div>
 
       <section className="flex flex-col gap-3">
@@ -66,8 +68,9 @@ export default async function AdminCreatorsPage() {
                   <th className="px-4 py-3 font-medium">Paying</th>
                   <th className="px-4 py-3 font-medium">MRR</th>
                   <th className="px-4 py-3 font-medium">Rate</th>
-                  <th className="px-4 py-3 font-medium">Earned</th>
-                  <th className="px-4 py-3 font-medium">Unpaid</th>
+                  <th className="px-4 py-3 font-medium">Pending</th>
+                  <th className="px-4 py-3 font-medium">Payable</th>
+                  <th className="px-4 py-3 font-medium">Paid</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -90,8 +93,9 @@ export default async function AdminCreatorsPage() {
                     <td className="px-4 py-3 text-ink">{row.payingCount}</td>
                     <td className="px-4 py-3 font-mono text-ink">{formatCents(row.mrrCents)}</td>
                     <td className="px-4 py-3 text-ink-soft">{formatBasisPointsAsPercent(row.commissionRateBps)}</td>
-                    <td className="px-4 py-3 font-mono text-ink">{formatCents(row.commissionEarnedCents)}</td>
-                    <td className="px-4 py-3 font-mono text-ink">{formatCents(row.commissionUnpaidCents)}</td>
+                    <td className="px-4 py-3 font-mono text-ink">{formatCents(row.pendingCommissionCents)}</td>
+                    <td className="px-4 py-3 font-mono text-ink">{formatCents(row.payableCommissionCents)}</td>
+                    <td className="px-4 py-3 font-mono text-ink">{formatCents(row.paidCommissionCents)}</td>
                   </tr>
                 ))}
               </tbody>

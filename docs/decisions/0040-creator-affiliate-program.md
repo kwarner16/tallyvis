@@ -312,6 +312,165 @@ authentication mechanism (deliberately not built now) and read-only
 view-layer code reusing the same aggregation queries
 `services/creators.ts` already has.
 
+## V1.1 addendum — hardening pass (2026-10)
+
+The program went live in production with zero creators yet onboarded.
+Kyle then finalized a set of additional business rules before bringing
+on the first real creators — implemented as a focused hardening pass on
+top of the V1 architecture above, not a redesign. Migration
+`0016_creator_program_v1_1.sql` is purely additive (new nullable/
+defaulted columns and one new table); no existing column changed
+meaning, and every production table this touches had zero rows at the
+time, so there was no backfill concern either.
+
+### Refunds: proportional, not all-or-nothing
+
+V1's "any refund fully reverses the commission" simplification (see
+"Refund handling" above) is replaced with proportional reversal. The key
+design choice: Stripe's `charge.amount_refunded` is a CUMULATIVE total
+refunded to date on that charge, never a per-event delta. `reversed_commission_cents`
+is therefore always re-derived from scratch from the current cumulative
+`refunded_collected_cents`, rather than ever incremented — this single
+choice is what makes a second (larger) partial refund compute correctly,
+what caps total reversal at the original commission (never over-reverses
+across multiple partial refunds), and what makes an exact webhook replay
+a safe no-op, all without separate dedup bookkeeping. A commission still
+`"accrued"` has its own `refunded_collected_cents`/`reversed_commission_cents`
+columns updated directly. A commission already `"paid"` is NEVER
+rewritten — see "Payout state" below for what happens instead. See
+`services/creatorCommissions.ts`'s `processChargeRefunded` and
+`repositories/creatorCommissions.ts`'s `applyRefundToCommission`.
+
+### What revenue is commissionable: tax exclusion
+
+`creator_commissions.commissionable_amount_cents` is a new column,
+separate from the existing `collected_amount_cents` (now meaning
+strictly the gross amount Stripe collected). It is computed as
+`collected_amount_cents - (invoice.tax ?? 0)`, using Stripe's own
+documented `invoice.tax` field (added to this repo's `StripeInvoiceObject`
+type) — the authoritative source rather than any guessed heuristic. This
+account collects no tax today, so `invoice.tax` is always absent and
+`commissionableAmountCents === collectedAmountCents` exactly — a
+correctness improvement that is a complete no-op under current real-world
+conditions, and only takes effect if/when Stripe Tax or a manual tax rate
+is ever turned on. One-time setup/installation fees remain structurally
+excluded exactly as before (no Invoice object is ever created for them).
+
+A refund's cumulative `amount_refunded` is scaled into the commissionable-
+base "currency" via `scaledRefundedCents = round(amount_refunded *
+commissionableAmountCents / collectedAmountCents)` before being applied —
+a documented, deliberate approximation (Stripe has no API concept of
+"refund only the non-tax portion"), and a 1:1 no-op ratio under today's
+no-tax reality.
+
+### Existing referrals survive a creator's later deactivation (requirement #7)
+
+Verified by direct re-inspection, not assumption: `processInvoicePaid`
+never checked `creator.status` at all in the ORIGINAL V1 implementation —
+only `resolveEligibleCreatorBySlug` (new attribution) and
+`hasComplimentaryAccess` (the free-access grant) check `status ===
+"active"`. So a creator who legitimately referred a business while active
+keeps earning eligible commission on that referral's invoices for the
+rest of the original 12-month (or creator-specific) window even after
+being paused or deactivated — this required no code change, only
+regression tests making the behavior explicit and permanent rather than
+incidental (see `services/api/src/__tests__/creators.test.ts`, "existing
+referrals keep earning after deactivation"). Deactivation DOES still
+block two things immediately: any NEW attribution via that creator's link
+(`resolveEligibleCreatorBySlug` already required `"active"`), and
+complimentary access (`hasComplimentaryAccess` already required
+`"active"`).
+
+### Self-referral / abuse prevention
+
+`services/creatorReferrals.ts`'s `isLikelySelfReferral`, called from
+`attributeReferral` right after a slug resolves to a real, active
+creator. Deliberately bounded to two cheap, reliable, false-positive-free
+checks using data this app already has on hand — no fingerprinting, no
+fraud scoring:
+
+1. The new business's signup email exactly matches (case-insensitively)
+   the creator's own program email.
+2. The new business IS the creator's own already-linked TallyVis business
+   (`creators.business_id`).
+
+Either match silently skips attribution (logged server-side via
+`console.warn`, not surfaced to the visitor — identical treatment to any
+other non-attribution outcome) rather than throwing. TallyVis retains the
+ability to withhold or reverse a commission reasonably associated with
+fraud/abuse while reviewing it manually — nothing about this requires new
+schema; it is the same admin judgment call pausing/deactivating a creator
+already represents.
+
+### Active Creator definition and the onboarding month
+
+Formalized as: at least one qualifying piece of original TallyVis content
+per calendar month — publicly accessible, featuring/demonstrating/
+reviewing/teaching TallyVis, disclosure-compliant, no false claims,
+including the affiliate link where reasonably possible. No minimum
+views/followers/engagement/conversions, and one piece total satisfies it
+(not per-platform). TallyVis does not, and does not claim to,
+automatically verify content publication — `creators.last_qualifying_content_at`/
+`_url`/`_note` are a lightweight, manual, admin-entered record (`recordCreatorActivityAdmin`,
+each call replacing the previous entry — no history of every past one),
+filled in by Kyle after actually checking. No automated social-media
+monitoring exists or is implied anywhere in this codebase.
+
+The calendar month a creator is ACTIVATED in is a no-requirement
+onboarding month; the content requirement begins the first FULL calendar
+month after that (`creators.activated_at`, stamped once via
+`COALESCE(activated_at, ...)` and never moved again — including across a
+later pause/reactivate cycle, so re-activating an existing creator does
+not grant a second onboarding month). `firstActivityMonthStart()` in
+`services/creators.ts` is the pure function computing this for display.
+
+### Payout state: pending vs. payable, without new stored states
+
+Rather than adding `earned`/`pending`/`payable`/`paid` as a stored status
+enum, "payable" vs. merely "pending" is a pure, computed-at-read-time
+function of `(now - commission.createdAt) >= payoutHoldingPeriodDays`
+(`isCommissionPayable()` in `services/creators.ts`) — there is no
+triggering event that would make a stored status transition meaningful,
+so a background job or extra column would have added complexity without
+adding financial clarity. `CREATOR_PROGRAM_POLICY.payoutHoldingPeriodDays`
+(30) and `.minimumPayoutCents` (2500 = $25) are documentation/display
+constants only, never hard-enforced — Kyle may have legitimate reasons to
+pay early or below threshold, and V1.1 still has no automated payout rail
+to gate.
+
+What DOES get new schema: `creator_commission_adjustments`, a ledger
+table (`commission_id`, `creator_id`, `amount_cents`, `reason`, `note`,
+`created_at`) created ONLY when a refund arrives for a commission already
+marked `"paid"` — the one case where, per Kyle's explicit instruction, the
+historical commission row must never be rewritten to avoid an automatic
+clawback. A negative `amount_cents` row (reason `"refund_after_payout"`)
+is the auditable record of why a creator's effective balance differs from
+the simple sum of their commission rows, netted against their NEXT
+payout. `reason: "manual"` exists in the type for a future Kyle-entered
+manual adjustment, though nothing currently creates one.
+
+### Admin dashboard
+
+`/admin/creators` and `/admin/creators/[id]` were updated to show
+pending/payable/paid/adjustment totals (replacing the old flat earned/
+unpaid/paid split), each commission's net-of-reversal amount and payable-
+vs-pending badge, an adjustments ledger table, activation date, the first
+full month the content requirement begins, and the most recently recorded
+qualifying content (date/link/note) with a form to record a new one.
+Activity tracking stays exactly as lightweight as the brief asked —
+one manual form, no social API integrations of any kind.
+
+### What this addendum does NOT change
+
+The attribution model (30-day cookie, first-click pre-signup attribution,
+immutable server-side attribution via the `UNIQUE(business_id)`
+constraint, live-status validation for NEW attribution only) is untouched
+— no multi-touch attribution was introduced. The public `/creators` page
+and `docs/product/creator-program-terms-draft.md` were updated for
+clarity (20%/12-month commission vs. complimentary access vs. potential
+separate sponsorship, spelled out explicitly) but the underlying program
+structure is the same one described in the rest of this ADR.
+
 ## What was and wasn't verified
 
 Every new piece of business logic (referral resolution/eligibility,
