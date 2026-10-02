@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTestDb } from "./testHarness";
 import { logIn, logOut, resolveSession, signUp } from "../services/auth";
 import { createBusiness } from "../repositories/businesses";
 import { createUser } from "../repositories/users";
+import * as adminNotifications from "../services/adminNotifications";
 
 const getDb = useTestDb();
 
@@ -35,6 +36,58 @@ describe("signUp", () => {
     const after = await db.query<{ c: string }>("SELECT COUNT(*) AS c FROM businesses");
     const businessCountAfter = Number(after.rows[0]!.c);
     expect(businessCountAfter).toBe(businessCountBefore);
+  });
+
+  describe("admin signup notification (production hardening, 2026-10)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("fires exactly once, with method 'password' and the real committed business, on a successful signup", async () => {
+      const spy = vi
+        .spyOn(adminNotifications, "notifyAdminOfNewSignup")
+        .mockReturnValue({ finished: Promise.resolve() });
+      const db = getDb();
+
+      const result = await signUp(db, { businessName: "Sparkle Windows", ownerEmail: "notify@example.com", password: "correct-horse-battery" });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      const [business, method] = spy.mock.calls[0]!;
+      expect(business.id).toBe(result.session.businessId);
+      expect(business.name).toBe("Sparkle Windows");
+      expect(method).toBe("password");
+    });
+
+    it("never fires for a rejected duplicate-email signup — no business was actually created", async () => {
+      const db = getDb();
+      await signUp(db, { businessName: "A", ownerEmail: "dupe2@example.com", password: "password123" });
+
+      const spy = vi
+        .spyOn(adminNotifications, "notifyAdminOfNewSignup")
+        .mockReturnValue({ finished: Promise.resolve() });
+
+      await expect(
+        signUp(db, { businessName: "B", ownerEmail: "dupe2@example.com", password: "password456" }),
+      ).rejects.toThrow(/already exists/);
+
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("a failure in notifyAdminOfNewSignup's own synchronous call never fails signup itself — the account is already created by that point", async () => {
+      vi.spyOn(adminNotifications, "notifyAdminOfNewSignup").mockImplementation(() => {
+        throw new Error("notification subsystem exploded");
+      });
+      const db = getDb();
+
+      const result = await signUp(db, {
+        businessName: "Still Works",
+        ownerEmail: "resilient@example.com",
+        password: "correct-horse-battery",
+      });
+
+      expect(result.token).toBeTruthy();
+      expect(await resolveSession(db, result.token)).toEqual(result.session);
+    });
   });
 
   it("the database itself enforces email uniqueness as a last line of defense (defense in depth behind the application-level check above)", async () => {

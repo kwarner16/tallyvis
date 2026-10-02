@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { cookies } from "next/headers";
 import {
   getDb,
@@ -10,7 +10,7 @@ import {
 } from "@tallyvis/api";
 import { getOptionalSession } from "@/lib/session";
 import { setSessionCookie } from "@/lib/authActions";
-import { APP_URL } from "@/lib/urls";
+import { APP_URL, buildAdminBusinessUrl } from "@/lib/urls";
 import {
   GOOGLE_OAUTH_NONCE_COOKIE,
   GOOGLE_OAUTH_STATE_COOKIE,
@@ -93,7 +93,9 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     const identity = await verifyGoogleIdToken({ idToken, clientId, expectedNonce });
 
-    const outcome = await signInWithGoogle(getDb(), identity, currentSession);
+    const outcome = await signInWithGoogle(getDb(), identity, currentSession, buildAdminBusinessUrl, (finished) =>
+      after(() => finished),
+    );
 
     if (outcome.kind === "linked") {
       return NextResponse.redirect(`${APP_URL}/dashboard/settings?linked=google`);

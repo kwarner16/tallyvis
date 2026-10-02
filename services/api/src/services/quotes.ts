@@ -3,7 +3,6 @@ import type {
   Property,
   PropertyAnalysisResult,
   Quote,
-  QuotePhoto,
   QuoteStatus,
   ServicePreferences,
 } from "@tallyvis/types";
@@ -19,13 +18,21 @@ import * as pricingService from "./pricing";
 import { getSubscription, getSubscriptionByBusinessId, hasProductAccess } from "./subscriptions";
 import { sendNewQuoteSmsAlert } from "./quoteSmsAlert";
 import { sendEstimateReadySms, sendOptInConfirmationSms } from "./customerSms";
+import { uploadQuotePhotos, validateIncomingPhotos, type PendingQuotePhoto } from "./quotePhotos";
 
 export interface CreateQuoteInput {
   customer: CustomerInput;
   property: Property;
   servicePreferences: ServicePreferences;
   notes: string;
-  photos: QuotePhoto[];
+  /**
+   * The customer's photos exactly as submitted this request — base64
+   * `data:` URIs, never a persisted reference (see
+   * `PendingQuotePhoto`'s own comment). `persistPricedQuote` uploads each
+   * to private object storage and replaces this with the resulting
+   * `QuotePhoto[]` before anything is written to the `quotes` table.
+   */
+  photos: PendingQuotePhoto[];
   /**
    * Job characteristics + confidence only — deliberately NOT an estimate.
    * The estimate is always computed here, server-side, from this input; a
@@ -56,46 +63,6 @@ const MAX_SERVICE_ADDRESS_LENGTH = 300;
 /** Control characters (including newline/tab) have no legitimate place in a single-line address field — reject rather than silently strip, so the caller knows the input was rejected rather than silently mangled. */
 // eslint-disable-next-line no-control-regex -- deliberately matching control characters to reject them
 const CONTROL_CHARACTERS = /[\x00-\x1F\x7F]/;
-
-/**
- * Pre-launch audit (2026-10 — see docs/decisions/0033-pre-launch-audit.md):
- * `createQuotePublic`/`updateQuotePublic` are reachable by anyone (no
- * session, no auth) — the browser's own upload UI caps photos at 6,
- * compressed to ~450KB each (`apps/app/src/lib/imageCompression.ts`'s
- * `windowCleaningEstimatorConfig.maxPhotos`/`COMPRESSION_TARGET_BYTES`),
- * but nothing server-side enforced that before this — a caller invoking
- * the Server Action directly, bypassing the browser entirely, could submit
- * an unbounded number of arbitrarily large "photo" strings straight into
- * Postgres. These ceilings are deliberately generous (2x the current UI's
- * photo count, ~10x the per-photo compression target) so legitimate
- * product tuning of the client-side limits never needs a matching server
- * change — this is a sanity ceiling against abuse, not a business rule.
- */
-const MAX_QUOTE_PHOTOS = 12;
-const MAX_PHOTO_URL_LENGTH = 8_000_000;
-
-function validatePhotos(photos: unknown): QuotePhoto[] {
-  if (!Array.isArray(photos)) {
-    throw new Error("Photos must be a list.");
-  }
-  if (photos.length > MAX_QUOTE_PHOTOS) {
-    throw new Error(`Too many photos — at most ${MAX_QUOTE_PHOTOS} are allowed.`);
-  }
-  for (const photo of photos) {
-    if (
-      typeof photo !== "object" ||
-      photo === null ||
-      typeof (photo as { id?: unknown }).id !== "string" ||
-      typeof (photo as { url?: unknown }).url !== "string"
-    ) {
-      throw new Error("Each photo must have an id and a url.");
-    }
-    if ((photo as { url: string }).url.length > MAX_PHOTO_URL_LENGTH) {
-      throw new Error("One of the uploaded photos is too large.");
-    }
-  }
-  return photos as QuotePhoto[];
-}
 
 /**
  * The one place a service address is validated, regardless of whether the
@@ -333,6 +300,21 @@ export async function updateQuotePublic(
   const estimate = calculateEstimate(pricingInput, configuration, input.analysis.metadata.confidence);
   const status = determineInitialQuoteStatus(input.analysis, input.aiObservation);
 
+  // 2026-10 production hardening: a customer who goes back to add another
+  // photo resubmits their FULL current photo set (`EstimatorContext` keeps
+  // every photo in session state) — re-uploading and persisting it here
+  // closes a previously separate gap where this function updated the
+  // analysis/estimate but silently never touched `photos` at all, so an
+  // improved photo set could never reach the business's dashboard even
+  // once photos were otherwise working. Any photo already uploaded on the
+  // first submission is uploaded again under a fresh storage key; the
+  // original becomes an orphaned blob (acceptable minor storage cost for
+  // this phase — see docs/decisions/0038-quote-photo-storage.md — rather
+  // than building reconciliation logic for a resubmission path that's
+  // already a deliberate minority case).
+  const pendingPhotos = validateIncomingPhotos(input.photos);
+  const photos = await uploadQuotePhotos(businessId, pendingPhotos);
+
   const updated = await quotesRepo.updateQuoteFromReanalysis(
     db,
     businessId,
@@ -342,6 +324,7 @@ export async function updateQuotePublic(
     configuration.id,
     status,
     input.aiObservation,
+    photos,
   );
   if (!updated) throw new Error("Quote not found.");
   return updated;
@@ -424,7 +407,8 @@ async function persistPricedQuote(
   input: CreateQuoteInput,
 ): Promise<Quote> {
   const address = validateServiceAddress(input.property.address);
-  const photos = validatePhotos(input.photos);
+  const pendingPhotos = validateIncomingPhotos(input.photos);
+  const photos = await uploadQuotePhotos(businessId, pendingPhotos);
   const configuration = await pricingService.getActiveConfigurationForBusiness(db, businessId);
   const pricingInput = reconcilePricingInput(input.servicePreferences, input.analysis.characteristics);
   const estimate = calculateEstimate(pricingInput, configuration, input.analysis.metadata.confidence);

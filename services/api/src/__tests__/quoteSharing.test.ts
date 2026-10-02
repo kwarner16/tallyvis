@@ -193,6 +193,31 @@ describe("getQuoteByShareToken — public resolution", () => {
     expect(JSON.stringify(result.business)).not.toContain(session.businessId);
   });
 
+  it("never exposes photo storage keys to an anonymous token holder — storageKey embeds this quote's real internal businessId (production hardening, 2026-10, docs/decisions/0038/0039)", async () => {
+    const { db, session, quote } = await setUpBusinessWithQuote();
+    const { token } = await generateShareLink(db, session, quote.id);
+
+    // Simulate a quote that genuinely has stored photos — bypassing the
+    // real upload pipeline (which needs BLOB_READ_WRITE_TOKEN, deliberately
+    // not configured in this test environment) by writing the column
+    // directly, the same technique migrations.test.ts already uses for
+    // raw-row fixtures.
+    const realStorageKey = `quote-photos/${session.businessId}/photo_real-one.jpg`;
+    await db.query(`UPDATE quotes SET photos_json = $1 WHERE id = $2`, [
+      JSON.stringify([{ id: "p0", storageKey: realStorageKey }]),
+      quote.id,
+    ]);
+
+    // The authenticated, business-side read is unaffected — this is a
+    // public-exposure-only redaction, not a data loss.
+    expect((await getQuote(db, session, quote.id))!.photos).toHaveLength(1);
+
+    const result = (await getQuoteByShareToken(db, token))!;
+    expect(result.quote.photos).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain(realStorageKey);
+    expect(JSON.stringify(result)).not.toContain("quote-photos/");
+  });
+
   it("records first/last viewed timestamps on resolution", async () => {
     const { db, session, quote } = await setUpBusinessWithQuote();
     const { token } = await generateShareLink(db, session, quote.id);
@@ -285,6 +310,18 @@ describe("acceptQuoteByToken / declineQuoteByToken", () => {
     const updated = await declineQuoteByToken(db, token);
     expect(updated.status).toBe("declined");
     expect(updated.declinedAt).toBeTruthy();
+  });
+
+  it("accept/decline also never leak photo storage keys to the public caller — same redaction as getQuoteByShareToken", async () => {
+    const { db, session, quote } = await setUpBusinessWithQuote("sent");
+    const { token } = await generateShareLink(db, session, quote.id);
+    await db.query(`UPDATE quotes SET photos_json = $1 WHERE id = $2`, [
+      JSON.stringify([{ id: "p0", storageKey: `quote-photos/${session.businessId}/photo_x.jpg` }]),
+      quote.id,
+    ]);
+
+    const accepted = await acceptQuoteByToken(db, token);
+    expect(accepted.photos).toEqual([]);
   });
 
   it("an invalid token cannot accept or decline anything", async () => {

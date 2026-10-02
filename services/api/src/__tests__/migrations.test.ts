@@ -44,6 +44,7 @@ describe("runMigrations (Postgres)", () => {
           "billing_charges",
           "businesses",
           "customers",
+          "feedback",
           "job_outcomes",
           "password_reset_tokens",
           "pricing_configurations",

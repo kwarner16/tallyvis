@@ -4,6 +4,7 @@ import * as quotesRepo from "../repositories/quotes";
 import { getCurrentBusiness } from "./business";
 import { generateShareLink } from "./quoteSharing";
 import { sendEmail } from "../notifications";
+import { escapeHtml } from "../notifications/htmlEscape";
 import { getEstimateDisplayTotal } from "./estimateDisplay";
 
 /**
@@ -35,22 +36,6 @@ async function requireOwnedQuote(db: Queryable, session: AuthSession, quoteId: s
   const quote = await quotesRepo.getQuoteById(db, session.businessId, quoteId);
   if (!quote) throw new Error(`Quote "${quoteId}" not found.`);
   return quote;
-}
-
-/**
- * `quote.customer.name` (customer-supplied, from the unauthenticated
- * public estimator) and `business.name` (business-owner-supplied at
- * signup) are both interpolated into the HTML email body below — without
- * this, a name containing `<`/`>` would be injected verbatim into HTML an
- * email client renders. The plain-text body has no equivalent risk.
- */
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /**

@@ -14,7 +14,7 @@ import {
 } from "../services/quotes";
 import { getActiveConfiguration, saveNewPricingConfigurationVersion } from "../services/pricing";
 import { getDefaultPublicBusiness } from "../services/business";
-import type { QuotePhoto } from "@tallyvis/types";
+import type { PendingQuotePhoto } from "../services/quotePhotos";
 
 const getDb = useTestDb();
 
@@ -28,7 +28,7 @@ const sampleInput = (windowCount = 18) => ({
     hardWaterTreatment: "unsure" as const,
   },
   notes: "Side gate is unlocked.",
-  photos: [] as QuotePhoto[],
+  photos: [] as PendingQuotePhoto[],
   analysis: {
     characteristics: {
       vertical: "window-cleaning" as const,
@@ -267,28 +267,37 @@ describe("createQuote / createQuotePublic — server-side photo sanity ceiling (
     const { db } = await setUp();
     const business = (await getDefaultPublicBusiness(db))!;
     const input = sampleInput();
-    input.photos = Array.from({ length: 13 }, (_, i) => ({ id: `p${i}`, url: "data:image/png;base64,AAAA" }));
+    input.photos = Array.from({ length: 13 }, (_, i) => ({ id: `p${i}`, dataUrl: "data:image/png;base64,AAAA" }));
 
     await expect(createQuotePublic(db, business.id, input)).rejects.toThrow(/too many photos/i);
   });
 
-  it("rejects a single photo whose url exceeds the size ceiling", async () => {
+  it("rejects a single photo whose data exceeds the size ceiling", async () => {
     const { db, session } = await setUp();
     const input = sampleInput();
-    input.photos = [{ id: "p0", url: "x".repeat(8_000_001) }];
+    input.photos = [{ id: "p0", dataUrl: "x".repeat(8_000_001) }];
 
     await expect(createQuote(db, session, input)).rejects.toThrow(/too large/i);
   });
 
-  it("accepts a normal, within-limits set of photos", async () => {
+  /**
+   * This test environment has no `BLOB_READ_WRITE_TOKEN` (see
+   * docs/decisions/0038-quote-photo-storage.md) — the real upload/persist
+   * round trip against a configured `PhotoStorage` is covered by
+   * `quotePhotos.test.ts` with an injected fake, not here. What this test
+   * actually guards is the degradation path: a within-limits photo set
+   * must never fail quote creation just because photo storage isn't
+   * configured in this environment.
+   */
+  it("still creates the quote (with no photos persisted) when photo storage isn't configured", async () => {
     const { db, session } = await setUp();
     const input = sampleInput();
     input.photos = [
-      { id: "p0", url: "data:image/png;base64,AAAA" },
-      { id: "p1", url: "data:image/png;base64,BBBB" },
+      { id: "p0", dataUrl: "data:image/png;base64,AAAA" },
+      { id: "p1", dataUrl: "data:image/png;base64,BBBB" },
     ];
 
     const quote = await createQuote(db, session, input);
-    expect(quote.photos).toHaveLength(2);
+    expect(quote.photos).toHaveLength(0);
   });
 });

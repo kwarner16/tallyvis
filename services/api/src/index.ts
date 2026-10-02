@@ -91,6 +91,9 @@ export {
   type CreateQuoteInput,
 } from "./services/quotes";
 
+export { getQuotePhoto, type PendingQuotePhoto } from "./services/quotePhotos";
+export { type StoredPhoto } from "./storage";
+
 export {
   recordJobOutcome,
   getJobOutcome,
@@ -236,3 +239,13 @@ export type {
   AdminSortDirection,
   AdminRecentEventRow,
 } from "./repositories/admin";
+
+// Business feedback / bug-report channel (production hardening — see
+// docs/decisions/0039-embed-logo-signup-notifications-and-feedback.md).
+export {
+  submitFeedback,
+  listFeedbackAdmin,
+  type Feedback,
+  type FeedbackType,
+  type SubmitFeedbackInput,
+} from "./services/feedback";

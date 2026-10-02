@@ -16,6 +16,7 @@ const NAV_LINKS = [
   { label: "Website", href: "/dashboard/website" },
   { label: "Billing", href: "/dashboard/billing" },
   { label: "Settings", href: "/dashboard/settings" },
+  { label: "Feedback", href: "/dashboard/feedback" },
 ];
 
 function isActive(pathname: string, href: string): boolean {

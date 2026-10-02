@@ -13,7 +13,7 @@ import {
   SESSION_COOKIE_NAME,
 } from "@tallyvis/api";
 import { isPlanId } from "@tallyvis/config";
-import { APP_URL } from "./urls";
+import { APP_URL, buildAdminBusinessUrl } from "./urls";
 import { INTENDED_PLAN_COOKIE_NAME } from "./constants";
 
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // matches services/api's session TTL
@@ -38,11 +38,16 @@ export async function signUpAction(
   formData: FormData,
 ): Promise<AuthActionState> {
   try {
-    const { token } = await signUp(getDb(), {
-      businessName: String(formData.get("businessName") ?? ""),
-      ownerEmail: String(formData.get("ownerEmail") ?? ""),
-      password: String(formData.get("password") ?? ""),
-    });
+    const { token } = await signUp(
+      getDb(),
+      {
+        businessName: String(formData.get("businessName") ?? ""),
+        ownerEmail: String(formData.get("ownerEmail") ?? ""),
+        password: String(formData.get("password") ?? ""),
+      },
+      buildAdminBusinessUrl,
+      (finished) => after(() => finished),
+    );
     await setSessionCookie(token);
 
     const plan = String(formData.get("plan") ?? "");

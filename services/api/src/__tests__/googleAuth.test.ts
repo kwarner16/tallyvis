@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTestDb } from "./testHarness";
 import { signUp } from "../services/auth";
 import { signInWithGoogle, GoogleSignInError } from "../services/googleAuth";
@@ -7,6 +7,7 @@ import { getIdentityByProviderAccountId } from "../repositories/authIdentities";
 import { getBusinessById } from "../repositories/businesses";
 import { validateSession } from "../auth/session";
 import type { VerifiedGoogleIdentity } from "../auth/googleOAuth";
+import * as adminNotifications from "../services/adminNotifications";
 
 const getDb = useTestDb();
 
@@ -166,6 +167,57 @@ describe("signInWithGoogle — linking from an authenticated session (Settings '
     const outcome = await signInWithGoogle(db, identity(), business.session);
     expect(outcome.kind).toBe("login");
     expect(outcome.session.userId).toBe(business.session.userId);
+  });
+});
+
+describe("signInWithGoogle — admin signup notification (production hardening, 2026-10)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fires exactly once, with method 'google', on a real fresh signup", async () => {
+    const spy = vi
+      .spyOn(adminNotifications, "notifyAdminOfNewSignup")
+      .mockReturnValue({ finished: Promise.resolve() });
+    const db = getDb();
+
+    const outcome = await signInWithGoogle(db, identity());
+    if (outcome.kind !== "signup") throw new Error("unreachable");
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [business, method] = spy.mock.calls[0]!;
+    expect(business.id).toBe(outcome.session.businessId);
+    expect(method).toBe("google");
+  });
+
+  it("never fires on a returning Google user's login — only the original signup created a business", async () => {
+    const db = getDb();
+    await signInWithGoogle(db, identity());
+
+    const spy = vi
+      .spyOn(adminNotifications, "notifyAdminOfNewSignup")
+      .mockReturnValue({ finished: Promise.resolve() });
+    const outcome = await signInWithGoogle(db, identity());
+
+    expect(outcome.kind).toBe("login");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("never fires when linking Google to an already-existing, already-authenticated account — no new business is created", async () => {
+    const db = getDb();
+    const { session } = await signUp(db, {
+      businessName: "Sparkle Windows",
+      ownerEmail: "owner@sparkle.example",
+      password: "correct-horse-battery",
+    });
+
+    const spy = vi
+      .spyOn(adminNotifications, "notifyAdminOfNewSignup")
+      .mockReturnValue({ finished: Promise.resolve() });
+    const outcome = await signInWithGoogle(db, identity({ email: "owner@gmail.example" }), session);
+
+    expect(outcome.kind).toBe("linked");
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

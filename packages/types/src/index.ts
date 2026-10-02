@@ -387,7 +387,18 @@ export interface Property {
 
 export interface QuotePhoto {
   id: string;
-  url: string;
+  /**
+   * An opaque key identifying this photo in private object storage —
+   * NEVER a directly-fetchable URL (there used to be a browser-only
+   * `blob:` object URL here, which was never valid outside the tab that
+   * created it and is why no customer photo ever actually reached a
+   * business's dashboard before this field existed — see
+   * docs/decisions/0038-quote-photo-storage.md). Render a photo by calling
+   * the business-authorized quote-photo route with this quote's id and
+   * this photo's `id`, never by using `storageKey` as an `<img src>`
+   * directly — it is meaningless to a browser and must stay server-side.
+   */
+  storageKey: string;
 }
 
 export type QuoteStatus =

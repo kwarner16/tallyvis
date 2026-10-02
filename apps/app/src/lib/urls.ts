@@ -30,3 +30,14 @@ export function buildQuoteShareUrl(token: string): string {
 export function buildQuoteDashboardUrl(quoteId: string): string {
   return `${APP_URL}/dashboard/quotes/${quoteId}`;
 }
+
+/**
+ * The internal CEO/admin dashboard's business detail page (see
+ * docs/decisions/0035-admin-dashboard.md) — used only by the new-signup
+ * admin notification (docs/decisions/0039) so Kyle can jump straight to a
+ * freshly created business. A plain authenticated route, never a bearer
+ * token, same reasoning as `buildQuoteDashboardUrl`.
+ */
+export function buildAdminBusinessUrl(businessId: string): string {
+  return `${APP_URL}/admin/businesses/${businessId}`;
+}

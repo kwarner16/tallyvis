@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -9,6 +8,7 @@ import { deriveEstimatorTheme } from "@tallyvis/config";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { getPublicBusinessAction } from "@/lib/publicActions";
 import { MARKETING_URL } from "@/lib/urls";
+import { isWordmarkNavigable } from "./wordmarkNavigation";
 
 const STEPS = [
   { key: "property", label: "Property", href: "/estimate/property" },
@@ -186,9 +186,23 @@ export function StepShell({ children }: StepShellProps) {
  * (https://tallyvis.com in production), the same env-driven URL
  * `PoweredByTallyvis` below already uses, rather than a hardcoded domain.
  *
- * For an embedded estimator (`embedded` true), this intentionally keeps the
- * original in-app `Link href="/estimate"` behavior: it must never carry a
- * customer away from the business's own website that's hosting the iframe.
+ * Production hardening (2026-10 — found during manual testing): for an
+ * EMBEDDED estimator, this wordmark used to keep that old internal
+ * `Link href="/estimate"`, which lands on `/estimate/page.tsx` — the bare
+ * welcome screen, whose copy ("This is a prototype experience... no
+ * request is sent to a real business") and generic, unbranded content is
+ * written for the direct Tallyvis demo and ONLY the direct Tallyvis demo.
+ * `EstimatorProvider` isn't remounted by this same-layout client-side
+ * navigation, so the embed's tenant identity (`embedId`) technically
+ * survives in memory — but the customer's screen still gets yanked out of
+ * the business's branded, in-progress flow and replaced with that generic
+ * "prototype"/demo welcome screen, which is exactly the "embedded business
+ * estimator turns into the Tallyvis demo" bug this closes. The simplest
+ * correct fix, and the one actually wanted here: inside an embed, the
+ * wordmark is not a link at all — nothing it's attached to should ever be
+ * able to navigate a customer away from the business's own in-progress
+ * estimator. See `docs/decisions/0038-quote-photo-storage.md`'s sibling
+ * ADR note in the same hardening pass (0039) for the full writeup.
  */
 function TallyvisWordmark({ embedded }: { embedded: boolean }) {
   const content = (
@@ -199,12 +213,8 @@ function TallyvisWordmark({ embedded }: { embedded: boolean }) {
   );
   const className = "flex items-center gap-2 text-base font-semibold text-ink";
 
-  if (embedded) {
-    return (
-      <Link href="/estimate" className={className}>
-        {content}
-      </Link>
-    );
+  if (!isWordmarkNavigable(embedded)) {
+    return <span className={cn(className, "select-none")}>{content}</span>;
   }
 
   return (

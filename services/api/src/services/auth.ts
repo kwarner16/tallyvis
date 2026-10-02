@@ -13,6 +13,8 @@ import {
 } from "../repositories/users";
 import { listIdentitiesForUser } from "../repositories/authIdentities";
 import { createInitialPricingConfiguration } from "../repositories/pricingConfigurations";
+import { notifyAdminOfNewSignup } from "./adminNotifications";
+import type { Business } from "@tallyvis/types";
 
 const EMAIL_PATTERN = /\S+@\S+\.\S+/;
 const MIN_PASSWORD_LENGTH = 8;
@@ -59,7 +61,12 @@ function validateSignUpInput(input: SignUpInput): void {
  * server-side and translated to a generic message — never a raw database
  * error — before reaching the caller.
  */
-export async function signUp(db: Queryable, input: SignUpInput): Promise<AuthResult> {
+export async function signUp(
+  db: Queryable,
+  input: SignUpInput,
+  buildAdminBusinessUrl?: (businessId: string) => string,
+  onAdminNotified?: (finished: Promise<void>) => void,
+): Promise<AuthResult> {
   validateSignUpInput(input);
 
   const email = input.ownerEmail.trim().toLowerCase();
@@ -69,9 +76,12 @@ export async function signUp(db: Queryable, input: SignUpInput): Promise<AuthRes
 
   const passwordHash = await hashPassword(input.password);
 
+  let createdBusiness: Business | undefined;
+  let result: AuthResult;
   try {
-    return await db.transaction(async (tx) => {
+    result = await db.transaction(async (tx) => {
       const business = await createBusiness(tx, { name: input.businessName.trim(), email });
+      createdBusiness = business;
       await createInitialPricingConfiguration(tx, business.id, windowCleaningDefaultPricingRules);
       const user = await createUser(tx, business.id, email, passwordHash);
       const token = await createSession(tx, user.id, business.id);
@@ -84,6 +94,27 @@ export async function signUp(db: Queryable, input: SignUpInput): Promise<AuthRes
     console.error("signUp failed:", err);
     throw new Error("Could not create your account. Please try again.");
   }
+
+  // Fired AFTER the transaction above has actually committed, using the
+  // row it committed — never from inside the transaction callback, where
+  // a later step in the SAME transaction (pricing config, user, session)
+  // could still fail and roll the business row back out from under an
+  // already-sent notification. See `notifyAdminOfNewSignup`'s own comment
+  // for why this is the one and only call site for the password-signup
+  // path. Deliberately OUTSIDE the try/catch above — this account was
+  // already successfully created by this point, and a problem in the
+  // notification call itself (synchronous or not) must never be mistaken
+  // for signup having failed and reported back to the customer as such.
+  if (createdBusiness) {
+    try {
+      const { finished } = notifyAdminOfNewSignup(createdBusiness, "password", buildAdminBusinessUrl);
+      onAdminNotified?.(finished);
+    } catch (err) {
+      console.error("signUp: notifyAdminOfNewSignup failed synchronously:", err);
+    }
+  }
+
+  return result;
 }
 
 export interface LogInInput {

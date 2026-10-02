@@ -20,6 +20,7 @@ import { QuoteStatusBadge } from "@/components/dashboard/QuoteStatusBadge";
 import { CharacteristicsEditor } from "@/components/dashboard/CharacteristicsEditor";
 import { CustomerEditor } from "@/components/dashboard/CustomerEditor";
 import { QuoteVisual } from "@/components/dashboard/QuoteVisual";
+import { QuotePhotoGallery } from "@/components/dashboard/QuotePhotoGallery";
 import { QuoteActions } from "@/components/dashboard/QuoteActions";
 import { ShareQuotePanel } from "@/components/dashboard/ShareQuotePanel";
 import { JobOutcomePanel } from "@/components/dashboard/JobOutcomePanel";
@@ -241,25 +242,8 @@ export function QuoteDetailClient({
       ) : null}
 
       <div className="flex flex-col gap-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Photos</p>
-        {quote.photos.length > 0 ? (
-          <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-            {quote.photos.map((photo) => (
-              // eslint-disable-next-line @next/next/no-img-element -- customer-submitted blob: preview, not an optimizable remote asset
-              <img
-                key={photo.id}
-                src={photo.url}
-                alt=""
-                className="aspect-square rounded-lg border border-line object-cover"
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-ink-faint">
-            No photos on file for this quote. Quotes submitted through the live estimator will show
-            the customer&rsquo;s actual photos here.
-          </p>
-        )}
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Customer photos</p>
+        <QuotePhotoGallery quoteId={quote.id} photos={quote.photos} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

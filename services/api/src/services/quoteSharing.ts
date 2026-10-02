@@ -123,6 +123,25 @@ export interface PublicQuoteView {
 }
 
 /**
+ * Production hardening (2026-10 — found during the customer-photo storage
+ * audit, docs/decisions/0038): `Quote.photos[].storageKey` is an opaque
+ * private-object-storage key that embeds this quote's real internal
+ * `businessId` (see `quotePhotos.ts`'s own comment on the pathname shape)
+ * — never meant to leave the server. Every function in this file that
+ * hands a `Quote` to an anonymous share-token holder (this is the ONE
+ * place that happens — `services/quotes.ts`'s session-authenticated
+ * functions are unaffected) must redact `photos` first. This is a
+ * deliberate product decision, not an oversight: the public/customer
+ * quote page has never rendered photos (see `CustomerQuoteView.tsx`) and
+ * doing so safely would need its own signed/short-lived access mechanism,
+ * not a bare id — out of scope for this pass. Centralized here, once,
+ * rather than remembered at each of the four call sites below.
+ */
+function redactQuoteForPublicView(quote: Quote): Quote {
+  return { ...quote, photos: [] };
+}
+
+/**
  * The public entry point for the customer-facing quote page
  * (`apps/app/src/app/quote/[token]/page.tsx`). The raw token is the ENTIRE
  * authorization credential — nothing about the caller (no id, no business,
@@ -143,7 +162,7 @@ export async function getQuoteByShareToken(db: Queryable, rawToken: string): Pro
 
   const active = await shareTokensRepo.getActiveShareToken(db, resolved.businessId, resolved.quoteId);
   return {
-    quote,
+    quote: redactQuoteForPublicView(quote),
     business: { name: business.name, phone: business.phone, logoUrl: business.logoUrl, brandColor: business.brandColor },
     expiresAt: active?.expiresAt ?? "",
   };
@@ -169,7 +188,7 @@ async function respondToQuote(
   }
   const updated = await quotesRepo.updateQuoteStatus(db, businessId, quoteId, target);
   if (!updated) throw new Error("This quote link is invalid or has expired.");
-  return updated;
+  return redactQuoteForPublicView(updated);
 }
 
 /**
@@ -214,5 +233,5 @@ export async function requestQuoteChangesByToken(db: Queryable, rawToken: string
     trimmed.slice(0, MAX_REQUEST_NOTE_LENGTH),
   );
   if (!updated) throw new Error("This quote link is invalid or has expired.");
-  return updated;
+  return redactQuoteForPublicView(updated);
 }

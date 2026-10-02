@@ -285,17 +285,19 @@ export async function updateQuoteFromReanalysis(
   pricingConfigId: string,
   status: QuoteStatus,
   aiObservation: RawPropertyObservation | undefined,
+  photos: Quote["photos"],
 ): Promise<Quote | undefined> {
   const now = new Date().toISOString();
   const result = await db.query(
-    `UPDATE quotes SET analysis_json = $1, estimate_json = $2, pricing_config_id = $3, status = $4, ai_observation_json = $5, updated_at = $6
-     WHERE id = $7 AND business_id = $8`,
+    `UPDATE quotes SET analysis_json = $1, estimate_json = $2, pricing_config_id = $3, status = $4, ai_observation_json = $5, photos_json = $6, updated_at = $7
+     WHERE id = $8 AND business_id = $9`,
     [
       JSON.stringify(analysis),
       JSON.stringify(estimate),
       pricingConfigId,
       status,
       aiObservation ? JSON.stringify(aiObservation) : null,
+      JSON.stringify(photos),
       now,
       id,
       businessId,

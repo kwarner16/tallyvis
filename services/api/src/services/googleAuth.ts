@@ -7,6 +7,8 @@ import { createUser, getUserWithPasswordHashByEmail } from "../repositories/user
 import { createAuthIdentity, getIdentityByProviderAccountId } from "../repositories/authIdentities";
 import { createInitialPricingConfiguration } from "../repositories/pricingConfigurations";
 import type { VerifiedGoogleIdentity } from "../auth/googleOAuth";
+import { notifyAdminOfNewSignup } from "./adminNotifications";
+import type { Business } from "@tallyvis/types";
 
 /**
  * Account-linking policy for Google sign-in (see
@@ -51,6 +53,8 @@ export async function signInWithGoogle(
   db: Queryable,
   identity: VerifiedGoogleIdentity,
   currentSession?: AuthSession,
+  buildAdminBusinessUrl?: (businessId: string) => string,
+  onAdminNotified?: (finished: Promise<void>) => void,
 ): Promise<GoogleAuthOutcome> {
   const existing = await getIdentityByProviderAccountId(db, GOOGLE_PROVIDER, identity.sub);
 
@@ -115,7 +119,7 @@ export async function signInWithGoogle(
     throw new GoogleSignInError("Your Google account's email isn't verified, so you can't sign up with it.");
   }
 
-  return createAccountFromGoogle(db, identity);
+  return createAccountFromGoogle(db, identity, buildAdminBusinessUrl, onAdminNotified);
 }
 
 async function businessIdForUser(db: Queryable, userId: string): Promise<string> {
@@ -135,12 +139,20 @@ async function businessIdForUser(db: Queryable, userId: string): Promise<string>
  * (`/dashboard`), not a separate onboarding path, so both signup routes
  * share one in-dashboard onboarding experience rather than two.
  */
-async function createAccountFromGoogle(db: Queryable, identity: VerifiedGoogleIdentity): Promise<GoogleAuthOutcome> {
+async function createAccountFromGoogle(
+  db: Queryable,
+  identity: VerifiedGoogleIdentity,
+  buildAdminBusinessUrl?: (businessId: string) => string,
+  onAdminNotified?: (finished: Promise<void>) => void,
+): Promise<GoogleAuthOutcome> {
   const businessName = deriveBusinessName(identity.email);
 
+  let createdBusiness: Business | undefined;
+  let outcome: GoogleAuthOutcome;
   try {
-    return await db.transaction(async (tx) => {
+    outcome = await db.transaction(async (tx) => {
       const business = await createBusiness(tx, { name: businessName, email: identity.email, needsOnboarding: true });
+      createdBusiness = business;
       await createInitialPricingConfiguration(tx, business.id, windowCleaningDefaultPricingRules);
       const user = await createUser(tx, business.id, identity.email, null);
       await createAuthIdentity(tx, user.id, {
@@ -149,7 +161,7 @@ async function createAccountFromGoogle(db: Queryable, identity: VerifiedGoogleId
         email: identity.email,
       });
       const token = await createSession(tx, user.id, business.id);
-      return { kind: "signup", session: { userId: user.id, businessId: business.id }, token };
+      return { kind: "signup" as const, session: { userId: user.id, businessId: business.id }, token };
     });
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -161,6 +173,26 @@ async function createAccountFromGoogle(db: Queryable, identity: VerifiedGoogleId
     console.error("createAccountFromGoogle failed:", err);
     throw new GoogleSignInError("Could not create your account. Please try again.");
   }
+
+  // Same "only after the transaction has committed, and never able to
+  // make a successful signup look like a failure" rule as `signUp`'s
+  // identical notification call — see that function's own comment. This
+  // is the ONE place a Google-originated business is created (a
+  // returning Google user hits the `existing` branch above, never this
+  // function, and "Connect Google" from Settings links an identity onto
+  // an ALREADY-existing business rather than creating one) — so this
+  // fires exactly once per real new Google-signup business, never on a
+  // repeated/retried OAuth callback.
+  if (createdBusiness) {
+    try {
+      const { finished } = notifyAdminOfNewSignup(createdBusiness, "google", buildAdminBusinessUrl);
+      onAdminNotified?.(finished);
+    } catch (err) {
+      console.error("createAccountFromGoogle: notifyAdminOfNewSignup failed synchronously:", err);
+    }
+  }
+
+  return outcome;
 }
 
 /** A placeholder starter name only — same spirit as the password signup form's business-name field, which the owner is always free to change later in Settings. Google never supplies a business name, so one is derived from the email's local part. */

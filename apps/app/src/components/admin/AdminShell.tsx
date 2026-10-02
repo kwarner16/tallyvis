@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { label: "Businesses", href: "/admin/businesses" },
   { label: "Subscriptions", href: "/admin/subscriptions" },
   { label: "Activity", href: "/admin/activity" },
+  { label: "Feedback", href: "/admin/feedback" },
 ];
 
 function isActive(pathname: string, href: string): boolean {

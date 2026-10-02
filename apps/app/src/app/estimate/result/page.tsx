@@ -9,6 +9,7 @@ import { buttonVariants } from "@tallyvis/ui";
 import { reconcilePricingInput, calculateEstimate } from "@tallyvis/pricing";
 import { useEstimator } from "@/lib/estimator/EstimatorContext";
 import { getEstimateDisplay } from "@/lib/estimateDisplay";
+import { blobUrlToDataUrl } from "@/lib/imageEncoding";
 import {
   createPublicQuoteAction,
   updatePublicQuoteAction,
@@ -103,44 +104,60 @@ export default function ResultStepPage() {
   useEffect(() => {
     if (!analysis || !embedId || lastSubmittedAnalysis.current === analysis) return;
     lastSubmittedAnalysis.current = analysis;
-    const payload = {
-      customer: {
-        name: input.contact.name,
-        email: input.contact.email,
-        phone: input.contact.phone || undefined,
-        // Twilio A2P 10DLC compliance (see
-        // docs/decisions/0029-sms-consent-and-a2p-10dlc.md) — only ever
-        // meaningful server-side when a phone number was also given (see
-        // createCustomerForBusiness's own guard); sent as typed, never
-        // inferred from phone presence.
-        smsConsent: input.contact.smsConsent,
-      },
-      property: {
-        propertyType: input.property.propertyType!,
-        stories: input.property.stories!,
-        address: input.property.address.trim(),
-      },
-      servicePreferences: input.services,
-      notes: input.notes,
-      photos: input.photos.map((p) => ({ id: p.id, url: p.previewUrl })),
-      analysis,
-      aiObservation: aiObservation ?? undefined,
-    };
-    const action = quoteId
-      ? updatePublicQuoteAction(quoteId, payload, embedId ?? undefined)
-      : createPublicQuoteAction(payload, embedId ?? undefined);
-    action.then((result) => {
-      if (result.ok) {
-        setQuoteId(result.data.id);
-        setQuoteSaveFailed(false);
-        return;
-      }
-      // The customer still sees their price either way (that's the whole
-      // point of showing it from client-side pricing above, not waiting on
-      // this) — only the business-visible record failed to save. Surfaced
-      // as a small non-blocking notice below, not a page-level failure.
-      setQuoteSaveFailed(true);
+    let cancelled = false;
+    // Photos live only as blob: URLs in this tab (see EstimatorContext) —
+    // meaningless to the server — so each is read into a base64 data: URI
+    // here, exactly like `/estimate/analyzing` already does before its own
+    // AI-analysis call, right before the one request that actually
+    // persists this quote. This is the one and only place a customer's
+    // photo bytes leave the browser for good — see
+    // docs/decisions/0038-quote-photo-storage.md for where the server puts
+    // them from here.
+    Promise.all(input.photos.map((photo) => blobUrlToDataUrl(photo.previewUrl))).then((dataUrls) => {
+      if (cancelled) return;
+      const payload = {
+        customer: {
+          name: input.contact.name,
+          email: input.contact.email,
+          phone: input.contact.phone || undefined,
+          // Twilio A2P 10DLC compliance (see
+          // docs/decisions/0029-sms-consent-and-a2p-10dlc.md) — only ever
+          // meaningful server-side when a phone number was also given (see
+          // createCustomerForBusiness's own guard); sent as typed, never
+          // inferred from phone presence.
+          smsConsent: input.contact.smsConsent,
+        },
+        property: {
+          propertyType: input.property.propertyType!,
+          stories: input.property.stories!,
+          address: input.property.address.trim(),
+        },
+        servicePreferences: input.services,
+        notes: input.notes,
+        photos: input.photos.map((p, i) => ({ id: p.id, dataUrl: dataUrls[i]! })),
+        analysis,
+        aiObservation: aiObservation ?? undefined,
+      };
+      const action = quoteId
+        ? updatePublicQuoteAction(quoteId, payload, embedId ?? undefined)
+        : createPublicQuoteAction(payload, embedId ?? undefined);
+      action.then((result) => {
+        if (cancelled) return;
+        if (result.ok) {
+          setQuoteId(result.data.id);
+          setQuoteSaveFailed(false);
+          return;
+        }
+        // The customer still sees their price either way (that's the whole
+        // point of showing it from client-side pricing above, not waiting on
+        // this) — only the business-visible record failed to save. Surfaced
+        // as a small non-blocking notice below, not a page-level failure.
+        setQuoteSaveFailed(true);
+      });
     });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis]);
 
