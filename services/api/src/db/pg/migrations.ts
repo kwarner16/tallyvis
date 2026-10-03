@@ -38,4 +38,5 @@ export const MIGRATION_FILENAMES: readonly string[] = [
   "0015_creator_program.sql",
   "0016_creator_program_v1_1.sql",
   "0017_sales_call_tracker.sql",
+  "0018_creator_outreach.sql",
 ];

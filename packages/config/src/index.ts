@@ -28,6 +28,16 @@ export {
 } from "./salesCallTracker";
 
 export {
+  CREATOR_OUTREACH_STATUSES,
+  CREATOR_OUTREACH_STATUS_LABELS,
+  isCreatorOutreachStatus,
+  CREATOR_OUTREACH_FOLLOW_UP_QUICK_OPTIONS,
+  type CreatorOutreachStatus,
+} from "./creatorOutreachTracker";
+
+export { firstNameOf, renderOutreachEmail1, renderOutreachEmail2, OUTREACH_EMAIL_SUBJECT_1 } from "./creatorOutreachTemplates";
+
+export {
   normalizeHexColor,
   getContrastForeground,
   deriveEstimatorTheme,

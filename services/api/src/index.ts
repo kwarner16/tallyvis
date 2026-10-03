@@ -321,3 +321,36 @@ export {
   type SalesMetrics,
   type TodaySalesSummary,
 } from "./services/salesCalls";
+
+export {
+  getCreatorProspectById,
+  getCreatorProspectDetailAdmin,
+  updateCreatorProspectAdmin,
+  listCreatorOutreachQueueAdmin,
+  previewCreatorProspectImportAdmin,
+  commitCreatorProspectImportAdmin,
+  convertProspectToCreatorAdmin,
+  normalizeEmail as normalizeCreatorProspectEmail,
+  isSafeHttpUrl,
+  normalizeProfileUrl,
+  type CreatorProspect,
+  type CreatorOutreachQueueRow,
+  type CreatorProspectDetail,
+  type UpdateCreatorProspectAdminInput,
+  type CreatorOutreachQueueEntry,
+  type CreatorProspectImportRowStatus,
+  type ClassifiedCreatorProspectImportRow,
+  type CreatorProspectImportClassification,
+  type CreatorProspectImportResult,
+  type ConvertCreatorProspectInput,
+} from "./services/creatorProspects";
+
+export {
+  recordCreatorOutreachActivityAdmin,
+  listCreatorFollowUpsDueAdmin,
+  getCreatorOutreachMetricsAdmin,
+  type CreatorOutreachActivity,
+  type RecordCreatorOutreachActivityInput,
+  type CreatorFollowUpDueEntry,
+  type CreatorOutreachMetrics,
+} from "./services/creatorOutreachActivities";

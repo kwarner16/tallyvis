@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { listCreatorsAdmin, type CreatorAdminListRow } from "@tallyvis/api";
 import { formatBasisPointsAsPercent } from "@tallyvis/config";
+import { buttonVariants } from "@tallyvis/ui";
 import { requireAdminContext } from "@/lib/adminSession";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { CreatorForm } from "@/components/admin/CreatorForm";
@@ -32,10 +33,15 @@ export default async function AdminCreatorsPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-accent-strong">TallyVis Admin</p>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Creators / Affiliates</h1>
-        <p className="text-ink-soft">The TallyVis Founding Creator Program — referral attribution and commissions.</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-accent-strong">TallyVis Admin</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Creators / Affiliates</h1>
+          <p className="text-ink-soft">The TallyVis Founding Creator Program — referral attribution and commissions.</p>
+        </div>
+        <Link href="/admin/creators/outreach" className={buttonVariants({ variant: "outline" })}>
+          Creator Outreach pipeline →
+        </Link>
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

@@ -45,6 +45,8 @@ describe("runMigrations (Postgres)", () => {
           "businesses",
           "creator_commission_adjustments",
           "creator_commissions",
+          "creator_outreach_activities",
+          "creator_prospects",
           "creator_referrals",
           "creators",
           "customers",
