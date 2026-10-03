@@ -116,6 +116,12 @@ describe("linkCreatorBusinessAdmin / setCreatorComplimentaryAccessAdmin / hasCom
     await expect(setCreatorComplimentaryAccessAdmin(db, session, creator.id, true)).rejects.toThrow(/link this creator/i);
   });
 
+  it("refuses to link a business id that doesn't exist — the server-side guard against an arbitrary/tampered id, independent of whatever the UI allows an admin to type", async () => {
+    const { db, session } = await newAdmin();
+    const creator = await createCreatorAdmin(db, session, { slug: "ben", name: "Ben", email: "ben@example.com" });
+    await expect(linkCreatorBusinessAdmin(db, session, creator.id, "business_does-not-exist")).rejects.toThrow(/not found/i);
+  });
+
   it("links a business, grants complimentary access, and hasComplimentaryAccess becomes true only once both the link AND active status hold", async () => {
     const { db, session } = await newAdmin();
     const creator = await createCreatorAdmin(db, session, {

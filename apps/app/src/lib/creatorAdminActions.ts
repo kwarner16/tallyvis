@@ -8,6 +8,7 @@ import {
   setCreatorComplimentaryAccessAdmin,
   markCommissionPaidAdmin,
   recordCreatorActivityAdmin,
+  listBusinessesAdmin,
   type CreatorStatus,
 } from "@tallyvis/api";
 import { requireAdminContext } from "@/lib/adminSession";
@@ -95,6 +96,51 @@ export async function linkCreatorBusinessAction(_prevState: CreatorFormState, fo
   }
 
   redirect(`/admin/creators/${id}`);
+}
+
+export interface BusinessSearchResult {
+  id: string;
+  name: string;
+  ownerEmail: string;
+}
+
+export interface BusinessSearchState {
+  error?: string;
+  query?: string;
+  results?: BusinessSearchResult[];
+}
+
+const BUSINESS_SEARCH_RESULT_LIMIT = 8;
+
+/**
+ * Backs `LinkBusinessForm`'s business search/select step — reuses
+ * `listBusinessesAdmin` (the exact same search `/admin/businesses`
+ * already offers, by business name or owner email) rather than
+ * duplicating any search logic. Returns only the fields the picker UI
+ * needs (id/name/ownerEmail), never the full admin business-list row.
+ * `listBusinessesAdmin` independently re-checks admin access itself
+ * (defense-in-depth, same as every other creator-admin function here).
+ */
+export async function searchBusinessesForCreatorLinkAction(
+  _prevState: BusinessSearchState,
+  formData: FormData,
+): Promise<BusinessSearchState> {
+  const { db, session } = await requireAdminContext();
+  const query = String(formData.get("query") ?? "").trim();
+
+  if (!query) {
+    return { query, results: [] };
+  }
+
+  try {
+    const { rows } = await listBusinessesAdmin(db, session, { search: query, page: 1, pageSize: BUSINESS_SEARCH_RESULT_LIMIT });
+    return {
+      query,
+      results: rows.map((row) => ({ id: row.id, name: row.name, ownerEmail: row.ownerEmail ?? row.email })),
+    };
+  } catch (err) {
+    return { query, error: err instanceof Error ? err.message : "Could not search businesses." };
+  }
 }
 
 export async function unlinkCreatorBusinessAction(formData: FormData): Promise<void> {

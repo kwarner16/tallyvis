@@ -146,15 +146,22 @@ export default async function AdminCreatorDetailPage({ params }: { params: Promi
       </section>
 
       <section className="rounded-2xl border border-line bg-paper p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-faint">Free TallyVis access (founding creator)</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-faint">Complimentary TallyVis Access</h2>
         <p className="mt-2 text-sm text-ink-soft">
-          For a creator who also operates their own TallyVis business — see docs/decisions/0040 for why this is a plain grant,
-          never a fabricated Stripe subscription.
+          Link this creator to their TallyVis business to give them complimentary access while they&rsquo;re an active
+          Founding Creator. This does not create a Stripe subscription or affect MRR.
         </p>
         <div className="mt-3 flex flex-col gap-3">
           {creator.businessId ? (
             <>
-              <Row label="Linked business ID" value={<code className="text-xs">{creator.businessId}</code>} />
+              <Row
+                label="Linked business"
+                value={
+                  <Link href={`/admin/businesses/${creator.businessId}`} className="font-mono text-xs underline">
+                    {creator.businessId}
+                  </Link>
+                }
+              />
               <div className="flex flex-wrap items-center gap-3">
                 <form action={setComplimentaryAccessAction}>
                   <input type="hidden" name="creatorId" value={creator.id} />

@@ -307,6 +307,17 @@ describe("listBusinessesAdmin — cross-tenant visibility and pagination", () =>
     expect(byEmail.rows.map((row) => row.name)).toEqual(["Shiny Panes LLC"]);
   });
 
+  it("includes each business's ownerEmail — the field the creator-linking business picker displays alongside name to distinguish results", async () => {
+    const admin = await createBusiness("Owner Email Admin Co", "owner-email-admin@example.com");
+    await makeAdmin(admin.userId);
+    await createBusiness("Distinct Panes Co", "distinct-owner@example.com");
+    const db = getDb();
+
+    const result = await listBusinessesAdmin(db, admin, { search: "Distinct Panes" });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.ownerEmail).toBe("distinct-owner@example.com");
+  });
+
   it("paginates with a stable total across pages", async () => {
     const admin = await createBusiness("Page Admin Co", "page-admin@example.com");
     await makeAdmin(admin.userId);
