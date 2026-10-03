@@ -14,6 +14,20 @@ export { TRIAL_POLICY, TRIAL_DAYS, getTrialDaysForNewSubscription } from "./tria
 export { CREATOR_PROGRAM_POLICY, formatBasisPointsAsPercent } from "./creatorProgram";
 
 export {
+  SALES_CALL_OUTCOMES,
+  SALES_CALL_OUTCOME_LABELS,
+  CONNECTED_SALES_CALL_OUTCOMES,
+  isSalesCallOutcome,
+  isConnectedSalesCallOutcome,
+  SALES_OBJECTIONS,
+  SALES_OBJECTION_LABELS,
+  isSalesObjection,
+  FOLLOW_UP_QUICK_OPTIONS,
+  type SalesCallOutcome,
+  type SalesObjection,
+} from "./salesCallTracker";
+
+export {
   normalizeHexColor,
   getContrastForeground,
   deriveEstimatorTheme,

@@ -286,3 +286,38 @@ export {
   type CreatorReferralDetailRow,
   type CreatorAdminDetail,
 } from "./services/creators";
+
+export {
+  getSalesProspectById,
+  getSalesProspectDetailAdmin,
+  updateSalesProspectAdmin,
+  listProspectQueueAdmin,
+  previewProspectImportAdmin,
+  commitProspectImportAdmin,
+  type SalesProspect,
+  type SalesQueueRow,
+  type UpdateSalesProspectAdminInput,
+  type SalesQueueEntry,
+  type ProspectImportRowStatus,
+  type ClassifiedProspectImportRow,
+  type ProspectImportClassification,
+  type ProspectImportResult,
+  type SalesProspectDetail,
+} from "./services/salesProspects";
+
+export {
+  startSalesCallAdmin,
+  getActiveSalesCallAdmin,
+  getSalesCallDetailAdmin,
+  endSalesCallAdmin,
+  listFollowUpsDueAdmin,
+  getSalesMetricsAdmin,
+  getTodaySalesSummaryAdmin,
+  type SalesCall,
+  type SalesCallDetail,
+  type EndSalesCallAdminInput,
+  type FollowUpDueEntry,
+  type SalesMetricsPeriod,
+  type SalesMetrics,
+  type TodaySalesSummary,
+} from "./services/salesCalls";

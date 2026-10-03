@@ -54,6 +54,8 @@ describe("runMigrations (Postgres)", () => {
           "pricing_configurations",
           "quote_share_tokens",
           "quotes",
+          "sales_calls",
+          "sales_prospects",
           "schema_migrations",
           "sessions",
           "subscriptions",
