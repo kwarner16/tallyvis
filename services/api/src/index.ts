@@ -263,6 +263,7 @@ export {
   updateCreatorAdmin,
   linkCreatorBusinessAdmin,
   setCreatorComplimentaryAccessAdmin,
+  hasComplimentaryAccess,
   listCreatorsAdmin,
   getCreatorDetailAdmin,
   markCommissionPaidAdmin,

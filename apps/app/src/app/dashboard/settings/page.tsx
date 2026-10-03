@@ -1,13 +1,21 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { getPlan } from "@tallyvis/config";
-import { getCurrentBusiness, getCurrentUser, getSubscription, isUsingDevSmsProvider, resolveEffectiveStatus } from "@tallyvis/api";
+import {
+  getCurrentBusiness,
+  getCurrentUser,
+  getSubscription,
+  hasComplimentaryAccess,
+  isUsingDevSmsProvider,
+  resolveEffectiveStatus,
+} from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { requireContext } from "@/lib/session";
 import { grantedTrialDays } from "@/lib/trialDisplay";
 import { SettingsPageClient } from "@/components/dashboard/SettingsPageClient";
 import { ManageBillingButton } from "@/components/dashboard/ManageBillingButton";
 import { DangerZoneClient } from "@/components/dashboard/DangerZoneClient";
+import { FoundingCreatorAccessNotice } from "@/components/dashboard/FoundingCreatorAccessNotice";
 import { GoogleErrorBanner } from "@/components/auth/GoogleErrorBanner";
 import { GoogleLinkedBanner } from "@/components/auth/GoogleLinkedBanner";
 import { CreatePasswordForm } from "@/components/dashboard/CreatePasswordForm";
@@ -36,9 +44,12 @@ export default async function SettingsPage() {
   const business = await getCurrentBusiness(db, session);
   const user = await getCurrentUser(db, session);
   const subscription = await getSubscription(db, session);
+  const complimentaryAccess = await hasComplimentaryAccess(db, session.businessId);
 
   const plan = subscription ? getPlan(subscription.planId) : undefined;
   const effectiveStatus = subscription ? resolveEffectiveStatus(subscription) : undefined;
+  // Display-only substitution — see billing/page.tsx's identical comment.
+  const badgeStatus = complimentaryAccess && effectiveStatus === "expired" ? subscription?.status : effectiveStatus;
 
   return (
     <div className="flex flex-col gap-6">
@@ -91,13 +102,20 @@ export default async function SettingsPage() {
 
       <div className="rounded-2xl border border-line bg-paper p-6">
         <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Billing</p>
-        {!subscription ? (
+        {complimentaryAccess ? (
           <div className="mt-3">
-            <p className="text-sm text-ink-soft">You haven&rsquo;t chosen a plan yet.</p>
-            <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "primary", className: "mt-3" })}>
-              Choose a plan
-            </Link>
+            <FoundingCreatorAccessNotice compact />
           </div>
+        ) : null}
+        {!subscription ? (
+          complimentaryAccess ? null : (
+            <div className="mt-3">
+              <p className="text-sm text-ink-soft">You haven&rsquo;t chosen a plan yet.</p>
+              <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "primary", className: "mt-3" })}>
+                Choose a plan
+              </Link>
+            </div>
+          )
         ) : (
           <div className="mt-3 flex flex-col gap-3">
             <div className="flex items-center justify-between gap-3">
@@ -109,7 +127,7 @@ export default async function SettingsPage() {
                     : "rounded-full bg-paper-alt px-3 py-1 text-xs font-medium text-ink-soft"
                 }
               >
-                {STATUS_LABELS[effectiveStatus ?? subscription.status] ?? subscription.status}
+                {STATUS_LABELS[badgeStatus ?? subscription.status] ?? subscription.status}
                 {subscription.cancelAtPeriodEnd ? " · Canceling" : ""}
               </span>
             </div>

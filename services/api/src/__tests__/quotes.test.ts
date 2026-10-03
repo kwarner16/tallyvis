@@ -14,6 +14,9 @@ import {
 } from "../services/quotes";
 import { getActiveConfiguration, saveNewPricingConfigurationVersion } from "../services/pricing";
 import { getDefaultPublicBusiness } from "../services/business";
+import { createCreator, updateCreator } from "../repositories/creators";
+import { upsertSubscription } from "../repositories/subscriptions";
+import { hasComplimentaryAccess } from "../services/creators";
 import type { PendingQuotePhoto } from "../services/quotePhotos";
 
 const getDb = useTestDb();
@@ -306,7 +309,6 @@ describe("createQuote — Founding Creator Program complimentary access (product
   it("a business with granted complimentary access can create quotes with NO subscription row at all — never a fabricated subscription", async () => {
     const { db, session } = await setUp();
 
-    const { createCreator, updateCreator } = await import("../repositories/creators");
     const creator = await createCreator(db, {
       slug: "complimentary-test",
       name: "Complimentary Creator",
@@ -330,7 +332,6 @@ describe("createQuote — Founding Creator Program complimentary access (product
   it("revoking complimentary access (creator paused) restores the normal subscription gate for that same business", async () => {
     const { db, session } = await setUp();
 
-    const { createCreator, updateCreator } = await import("../repositories/creators");
     const creator = await createCreator(db, {
       slug: "complimentary-test-2",
       name: "Complimentary Creator 2",
@@ -352,7 +353,110 @@ describe("createQuote — Founding Creator Program complimentary access (product
     // own comment), so this business is STILL allowed to quote — this
     // test only confirms complimentary access is no longer the REASON,
     // by checking the flag's own gate directly.
-    const { hasComplimentaryAccess } = await import("../services/creators");
     expect(await hasComplimentaryAccess(db, session.businessId)).toBe(false);
+  });
+
+  /**
+   * Root-cause regression coverage (2026-10 production incident — see
+   * docs/decisions/0040's V1.1 addendum): the two tests above only ever
+   * exercised a business with NO subscription row at all ("legacy
+   * access"). The real incident involved a business whose subscription
+   * row EXISTS and has genuinely EXPIRED (a past-dated trial,
+   * `resolveEffectiveStatus` -> "expired") — a case neither prior test
+   * touched. `requireProductAccess`/`requirePublicProductAccess` check
+   * `hasComplimentaryAccess` BEFORE ever fetching the subscription, so
+   * this should already succeed; these tests prove that against a real,
+   * expired subscription ROW rather than the absence of one.
+   */
+  function expiredTrialSubscriptionInput() {
+    const now = Date.now();
+    return {
+      planId: "starter",
+      status: "trialing" as const,
+      trialStartedAt: new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString(),
+      trialEndsAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ago.
+    };
+  }
+
+  it("createQuote succeeds for a business whose subscription row EXISTS and is genuinely expired, when complimentary access is active", async () => {
+    const { db, session } = await setUp();
+
+    const creator = await createCreator(db, {
+      slug: "complimentary-expired-dashboard",
+      name: "Complimentary Creator (expired sub, dashboard)",
+      email: "comp-expired-dashboard@example.com",
+      platform: "",
+      profileUrl: "",
+      status: "active",
+      commissionRateBps: 2000,
+      commissionDurationMonths: 12,
+      notes: "",
+    });
+    await updateCreator(db, creator.id, { businessId: session.businessId, complimentaryAccess: true });
+    await upsertSubscription(db, session.businessId, expiredTrialSubscriptionInput());
+
+    const { resolveEffectiveStatus, getSubscription } = await import("../services/subscriptions");
+    const subscription = await getSubscription(db, session);
+    expect(resolveEffectiveStatus(subscription!)).toBe("expired"); // confirms the subscription really is expired, not a no-op fixture.
+    expect(await hasComplimentaryAccess(db, session.businessId)).toBe(true);
+
+    const quote = await createQuote(db, session, sampleInput());
+    expect(quote.id).toBeTruthy();
+  });
+
+  it("createQuotePublic (the public/embed path) succeeds for the same expired-subscription business when complimentary access is active", async () => {
+    const { db, session } = await setUp();
+
+    const creator = await createCreator(db, {
+      slug: "complimentary-expired-public",
+      name: "Complimentary Creator (expired sub, public)",
+      email: "comp-expired-public@example.com",
+      platform: "",
+      profileUrl: "",
+      status: "active",
+      commissionRateBps: 2000,
+      commissionDurationMonths: 12,
+      notes: "",
+    });
+    await updateCreator(db, creator.id, { businessId: session.businessId, complimentaryAccess: true });
+    await upsertSubscription(db, session.businessId, expiredTrialSubscriptionInput());
+
+    const quote = await createQuotePublic(db, session.businessId, sampleInput());
+    expect(quote.id).toBeTruthy();
+  });
+
+  it("INVERSE: the same expired-subscription business WITHOUT complimentary access remains blocked, via both createQuote and createQuotePublic", async () => {
+    const { db, session } = await setUp();
+    await upsertSubscription(db, session.businessId, expiredTrialSubscriptionInput());
+
+    expect(await hasComplimentaryAccess(db, session.businessId)).toBe(false);
+    await expect(createQuote(db, session, sampleInput())).rejects.toThrow(/trial or subscription has ended/i);
+    await expect(createQuotePublic(db, session.businessId, sampleInput())).rejects.toThrow(/temporarily unavailable/i);
+  });
+
+  it("INVERSE: once the creator becomes inactive, the business falls back to its real (still-expired) subscription entitlement and is blocked again", async () => {
+    const { db, session } = await setUp();
+
+    const creator = await createCreator(db, {
+      slug: "complimentary-expired-then-inactive",
+      name: "Complimentary Creator (then inactive)",
+      email: "comp-expired-then-inactive@example.com",
+      platform: "",
+      profileUrl: "",
+      status: "active",
+      commissionRateBps: 2000,
+      commissionDurationMonths: 12,
+      notes: "",
+    });
+    await updateCreator(db, creator.id, { businessId: session.businessId, complimentaryAccess: true });
+    await upsertSubscription(db, session.businessId, expiredTrialSubscriptionInput());
+
+    await createQuote(db, session, sampleInput()); // succeeds while complimentary access holds, even though the subscription is already expired.
+
+    await updateCreator(db, creator.id, { status: "inactive" });
+    expect(await hasComplimentaryAccess(db, session.businessId)).toBe(false);
+
+    await expect(createQuote(db, session, sampleInput())).rejects.toThrow(/trial or subscription has ended/i);
+    await expect(createQuotePublic(db, session.businessId, sampleInput())).rejects.toThrow(/temporarily unavailable/i);
   });
 });

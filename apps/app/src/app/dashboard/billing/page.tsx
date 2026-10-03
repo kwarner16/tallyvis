@@ -1,10 +1,17 @@
 import Link from "next/link";
 import { getPlan } from "@tallyvis/config";
-import { billingConfigured, getSubscriptionReconciled, listBillingCharges, resolveEffectiveStatus } from "@tallyvis/api";
+import {
+  billingConfigured,
+  getSubscriptionReconciled,
+  hasComplimentaryAccess,
+  listBillingCharges,
+  resolveEffectiveStatus,
+} from "@tallyvis/api";
 import { buttonVariants } from "@tallyvis/ui";
 import { requireContext } from "@/lib/session";
 import { InstallationChoice } from "@/components/dashboard/InstallationChoice";
 import { ManageBillingButton } from "@/components/dashboard/ManageBillingButton";
+import { FoundingCreatorAccessNotice } from "@/components/dashboard/FoundingCreatorAccessNotice";
 import { grantedTrialDays } from "@/lib/trialDisplay";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -38,17 +45,22 @@ export default async function BillingPage({
   const subscription = await getSubscriptionReconciled(db, session);
   const charges = await listBillingCharges(db, session);
   const installationCharge = charges.find((charge) => charge.kind === "website_installation");
+  const complimentaryAccess = await hasComplimentaryAccess(db, session.businessId);
 
   if (!subscription) {
     return (
       <div className="flex flex-col gap-6">
         <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Billing</h1>
-        <div className="rounded-2xl border border-line bg-paper p-6">
-          <p className="text-sm text-ink-soft">You haven&rsquo;t chosen a plan yet.</p>
-          <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "primary", className: "mt-4" })}>
-            Choose a plan
-          </Link>
-        </div>
+        {complimentaryAccess ? (
+          <FoundingCreatorAccessNotice />
+        ) : (
+          <div className="rounded-2xl border border-line bg-paper p-6">
+            <p className="text-sm text-ink-soft">You haven&rsquo;t chosen a plan yet.</p>
+            <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "primary", className: "mt-4" })}>
+              Choose a plan
+            </Link>
+          </div>
+        )}
       </div>
     );
   }
@@ -57,10 +69,20 @@ export default async function BillingPage({
   const effectiveStatus = resolveEffectiveStatus(subscription);
   const trialDaysRemaining =
     effectiveStatus === "trialing" && subscription.trialEndsAt ? daysRemainingUntil(subscription.trialEndsAt) : null;
+  // Display-only — never the raw `effectiveStatus` a complimentary creator's
+  // actual access decision would use (that's `hasComplimentaryAccess`,
+  // checked above, which never touches this derived label at all). Swaps
+  // only the word shown in the status pill when complimentary access would
+  // otherwise make it read "Expired" — everywhere else on this page keeps
+  // using the real `effectiveStatus`/`subscription.status`, per "Stripe
+  // subscription/trial status remains subscription/trial status."
+  const badgeStatus = complimentaryAccess && effectiveStatus === "expired" ? subscription.status : effectiveStatus;
 
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">Billing</h1>
+
+      {complimentaryAccess ? <FoundingCreatorAccessNotice /> : null}
 
       {checkout === "success" ? (
         <p className="rounded-lg border border-accent bg-accent-soft px-4 py-2.5 text-sm text-accent-strong">
@@ -96,7 +118,7 @@ export default async function BillingPage({
                 : "rounded-full bg-paper-alt px-3 py-1 text-xs font-medium text-ink-soft"
             }
           >
-            {STATUS_LABELS[effectiveStatus] ?? effectiveStatus}
+            {STATUS_LABELS[badgeStatus] ?? badgeStatus}
             {subscription.cancelAtPeriodEnd ? " · Canceling" : ""}
           </span>
         </div>
@@ -107,7 +129,7 @@ export default async function BillingPage({
               : "Your trial ends today."}
           </p>
         ) : null}
-        {effectiveStatus === "expired" ? (
+        {effectiveStatus === "expired" && !complimentaryAccess ? (
           <p className="mt-3 text-sm text-ink-soft">
             Your trial has ended. Reactivate to keep creating quotes from the dashboard.
           </p>
@@ -138,8 +160,14 @@ export default async function BillingPage({
             offer a fresh Checkout when there's genuinely nothing live to
             manage: no Customer yet, or Stripe confirmed the previous
             subscription actually ended.
+
+            Also never offered to a complimentary Founding Creator —
+            their access doesn't depend on this subscription, so there is
+            nothing to "reactivate" (requirement: never send a
+            complimentary creator into Stripe checkout merely because
+            their underlying trial/subscription expired).
           */}
-          {subscription.billingCustomerId && (effectiveStatus === "trialing" || effectiveStatus === "active") ? null : (
+          {complimentaryAccess || (subscription.billingCustomerId && (effectiveStatus === "trialing" || effectiveStatus === "active")) ? null : (
             <Link href="/dashboard/onboarding" className={buttonVariants({ variant: "outline" })}>
               {effectiveStatus === "active" ? "Change plan" : "Reactivate / change plan"}
             </Link>

@@ -1,13 +1,21 @@
 import Link from "next/link";
 import type { Quote } from "@tallyvis/types";
 import { buttonVariants } from "@tallyvis/ui";
-import { getActiveConfiguration, getCurrentBusiness, getSubscription, listQuotes, resolveEffectiveStatus } from "@tallyvis/api";
+import {
+  getActiveConfiguration,
+  getCurrentBusiness,
+  getSubscription,
+  hasComplimentaryAccess,
+  listQuotes,
+  resolveEffectiveStatus,
+} from "@tallyvis/api";
 import { getTrialDaysForNewSubscription } from "@tallyvis/config";
 import { requireContext } from "@/lib/session";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { QuoteList } from "@/components/dashboard/QuoteList";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { OnboardingChecklist } from "@/components/dashboard/OnboardingChecklist";
+import { FoundingCreatorAccessNotice } from "@/components/dashboard/FoundingCreatorAccessNotice";
 
 const ACTIVE_STATUSES: Quote["status"][] = [
   "new",
@@ -23,6 +31,7 @@ export default async function DashboardHomePage() {
   const business = await getCurrentBusiness(db, session);
   const subscription = await getSubscription(db, session);
   const pricingConfiguration = await getActiveConfiguration(db, session);
+  const complimentaryAccess = await hasComplimentaryAccess(db, session.businessId);
 
   const checklistItems = [
     { key: "plan", label: "Choose a plan", href: "/dashboard/onboarding", done: subscription !== undefined },
@@ -66,7 +75,9 @@ export default async function DashboardHomePage() {
         </Link>
       </div>
 
-      {!subscription ? (
+      {complimentaryAccess ? (
+        <FoundingCreatorAccessNotice />
+      ) : !subscription ? (
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-accent bg-accent-soft p-5">
           <div>
             <p className="text-sm font-semibold text-accent-strong">
